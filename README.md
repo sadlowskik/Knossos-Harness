@@ -25,6 +25,26 @@ the question of which line continues is still open:
 - **Rust** (`harness-rs/`) is architecturally further along and could be linked
   directly into an editor fork rather than spawned as a subprocess.
 
+## Adding the editor fork
+
+The editor is deliberately **not** vendored here. Lapce is a large, actively
+developed upstream, and copying its source in makes `git pull upstream main`
+painful forever. Fork it, then link it:
+
+```bash
+# 1. Fork lapce/lapce on GitHub, then from this repository:
+git submodule add https://github.com/<you>/lapce editor
+cd editor
+git remote add upstream https://github.com/lapce/lapce
+git fetch upstream
+```
+
+Thereafter `git pull upstream main` inside `editor/` keeps the fork current,
+and this repository records only which commit of it you are on.
+
+Lapce is Apache-2.0, which is why it was chosen over Zed — Zed's editor is
+GPL-3.0, so a fork of it would force the whole harness GPL.
+
 ## The mapping
 
 Each harness component is the system-level form of a tensor-level mechanism in
