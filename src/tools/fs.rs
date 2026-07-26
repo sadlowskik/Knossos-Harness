@@ -47,7 +47,7 @@ impl Tool for ReadFile {
 
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
-        let text = match tokio::fs::read_to_string(&path).await {
+        let text = match ctx.read(&path) {
             Ok(t) => t,
             Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
         };
@@ -97,14 +97,11 @@ impl Tool for WriteFile {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let content = req_str(input, "content")?;
 
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        tokio::fs::write(&path, content).await?;
+        ctx.write(&path, content)?;
 
         let n = content.lines().count();
-        Ok(ToolOutput::ok(format!("wrote {} ({n} lines)", ctx.display(&path)))
-            .changed(path))
+        let verb = if ctx.is_dry_run() { "staged" } else { "wrote" };
+        Ok(ToolOutput::ok(format!("{verb} {} ({n} lines)", ctx.display(&path))).changed(path))
     }
 }
 
@@ -137,7 +134,7 @@ impl Tool for EditFile {
         let old = req_str(input, "old_string")?;
         let new = req_str(input, "new_string")?;
 
-        let text = match tokio::fs::read_to_string(&path).await {
+        let text = match ctx.read(&path) {
             Ok(t) => t,
             Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
         };
@@ -150,8 +147,9 @@ impl Tool for EditFile {
                 ctx.display(&path)
             ))),
             1 => {
-                tokio::fs::write(&path, text.replacen(old, new, 1)).await?;
-                Ok(ToolOutput::ok(format!("edited {}", ctx.display(&path))).changed(path))
+                ctx.write(&path, &text.replacen(old, new, 1))?;
+                let verb = if ctx.is_dry_run() { "staged edit to" } else { "edited" };
+                Ok(ToolOutput::ok(format!("{verb} {}", ctx.display(&path))).changed(path))
             }
             n => Ok(ToolOutput::error(format!(
                 "old_string appears {n} times in {}; add surrounding context to make it unique",
@@ -258,6 +256,115 @@ mod tests {
         assert!(!e.is_error, "{}", e.content);
         let after = std::fs::read_to_string(c.root().join("d.rs")).unwrap();
         assert_eq!(after, "let y = 2;\n");
+    }
+
+    fn dry_ctx() -> (tempfile::TempDir, ToolCtx) {
+        let (d, c) = ctx();
+        (d, c.dry_run())
+    }
+
+    #[tokio::test]
+    async fn a_dry_run_write_never_touches_disk() {
+        let (_d, c) = dry_ctx();
+        let out = WriteFile
+            .run(&json!({"path": "a.rs", "content": "pub fn a() {}\n"}), &c)
+            .await
+            .unwrap();
+
+        assert!(!out.is_error);
+        assert!(out.content.contains("staged"));
+        assert_eq!(out.changed.len(), 1, "still reported as a change");
+        assert!(!c.root().join("a.rs").exists(), "nothing may reach disk");
+    }
+
+    /// A staged edit has to be visible to later reads, or a multi-step change
+    /// previews something that would never have happened.
+    #[tokio::test]
+    async fn staged_content_is_visible_to_later_reads_and_edits() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\n").unwrap();
+        let c = c.dry_run();
+
+        EditFile
+            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}), &c)
+            .await
+            .unwrap();
+
+        let read = ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+        assert!(read.content.contains("let x = 2;"), "read must see the staged edit");
+
+        // A second edit chains off the first.
+        let second = EditFile
+            .run(&json!({"path": "a.rs", "old_string": "let x = 2;", "new_string": "let x = 3;"}), &c)
+            .await
+            .unwrap();
+        assert!(!second.is_error, "{}", second.content);
+
+        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "let x = 1;\n");
+    }
+
+    #[tokio::test]
+    async fn dry_run_diffs_describe_the_proposed_change() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "one\ntwo\n").unwrap();
+        let c = c.dry_run();
+
+        WriteFile
+            .run(&json!({"path": "a.rs", "content": "one\nTWO\nthree\n"}), &c)
+            .await
+            .unwrap();
+        WriteFile
+            .run(&json!({"path": "new.rs", "content": "fresh\n"}), &c)
+            .await
+            .unwrap();
+
+        let diffs = c.diffs();
+        assert_eq!(diffs.len(), 2);
+
+        let rendered = crate::diff::render(&diffs);
+        assert!(rendered.contains("+TWO"));
+        assert!(rendered.contains("-two"));
+        assert!(rendered.contains("(new)"));
+    }
+
+    #[tokio::test]
+    async fn applying_staged_changes_writes_them_all() {
+        let (_d, c) = ctx();
+        let c = c.dry_run();
+        WriteFile
+            .run(&json!({"path": "x/a.rs", "content": "written\n"}), &c)
+            .await
+            .unwrap();
+        assert!(!c.root().join("x/a.rs").exists());
+
+        let written = c.apply_staged().unwrap();
+        assert_eq!(written.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("x/a.rs")).unwrap(),
+            "written\n"
+        );
+        assert!(c.diffs().is_empty(), "staging area clears after apply");
+    }
+
+    #[tokio::test]
+    async fn discarding_staged_changes_leaves_nothing_behind() {
+        let (_d, c) = dry_ctx();
+        WriteFile
+            .run(&json!({"path": "a.rs", "content": "nope\n"}), &c)
+            .await
+            .unwrap();
+        c.discard_staged();
+        assert!(c.diffs().is_empty());
+        assert!(!c.root().join("a.rs").exists());
+    }
+
+    #[tokio::test]
+    async fn the_path_jail_still_applies_in_dry_run() {
+        let (_d, c) = dry_ctx();
+        assert!(WriteFile
+            .run(&json!({"path": "../escaped.rs", "content": "x"}), &c)
+            .await
+            .is_err());
     }
 
     #[tokio::test]

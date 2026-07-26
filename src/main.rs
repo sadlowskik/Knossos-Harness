@@ -6,13 +6,13 @@ use clap::{Parser, Subcommand};
 use daedalus_harness::ariadne::Ariadne;
 use daedalus_harness::config::{Config, EngineKind};
 use daedalus_harness::engine::{self, Message, Request};
-use daedalus_harness::metis;
 use daedalus_harness::oracle::Oracle;
 use daedalus_harness::scribe::SymbolIndex;
 use daedalus_harness::session::{Session, TraceEvent};
 use daedalus_harness::talos::Talos;
 use daedalus_harness::themis::Themis;
 use daedalus_harness::tools::{ToolCtx, ToolRegistry};
+use daedalus_harness::{diff, metis, repl};
 
 #[derive(Parser)]
 #[command(
@@ -42,6 +42,26 @@ struct Cli {
     verbose: bool,
 }
 
+/// Options shared by `task` and `repl`.
+#[derive(clap::Args, Clone)]
+struct LoopArgs {
+    /// Hard ceiling on engine turns.
+    #[arg(long, default_value = "12")]
+    max_steps: usize,
+    /// Where budget pressure begins.
+    #[arg(long, default_value = "6")]
+    target_steps: usize,
+    /// JSONL trajectory log. Defaults to .daedalus/trace-<pid>.jsonl.
+    #[arg(long)]
+    trace: Option<PathBuf>,
+    /// Stage edits in memory and show diffs instead of writing to disk.
+    #[arg(long)]
+    dry_run: bool,
+    /// Skip Oracle tier 4 (model judgement against the constitution).
+    #[arg(long)]
+    no_judge: bool,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// One turn against the configured engine. Smoke test for the engine slot.
@@ -66,18 +86,16 @@ enum Command {
     /// Plan and execute a task, verifying as it goes.
     Task {
         task: String,
-        /// Hard ceiling on engine turns.
-        #[arg(long, default_value = "12")]
-        max_steps: usize,
-        /// Where budget pressure begins.
-        #[arg(long, default_value = "6")]
-        target_steps: usize,
-        /// JSONL trajectory log. Defaults to .daedalus/trace-<pid>.jsonl.
-        #[arg(long)]
-        trace: Option<PathBuf>,
-        /// Skip Oracle tier 4 (model judgement against the constitution).
-        #[arg(long)]
-        no_judge: bool,
+        #[command(flatten)]
+        opts: LoopArgs,
+    },
+
+    /// Interactive session that keeps context between turns.
+    Repl {
+        /// Optional first task. Omit it to start at the prompt.
+        task: Option<String>,
+        #[command(flatten)]
+        opts: LoopArgs,
     },
 }
 
@@ -98,9 +116,8 @@ async fn main() -> Result<()> {
         Command::Index { full, ref lookup } => index(&cfg, full, lookup.as_deref()),
         Command::Verify => verify(&cfg).await,
         Command::Plan { ref task } => plan_only(&cfg, task).await,
-        Command::Task { ref task, max_steps, target_steps, ref trace, no_judge } => {
-            run_task(&cfg, task, max_steps, target_steps, trace.clone(), !no_judge).await
-        }
+        Command::Task { ref task, ref opts } => run_task(&cfg, task, opts).await,
+        Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
     }
 }
 
@@ -191,68 +208,88 @@ async fn plan_only(cfg: &Config, task: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_task(
-    cfg: &Config,
-    task: &str,
-    max_steps: usize,
-    target_steps: usize,
-    trace: Option<PathBuf>,
-    judge: bool,
-) -> Result<()> {
+/// Assemble a Talos and announce the configuration.
+fn build_talos(cfg: &Config, opts: &LoopArgs) -> Result<(Talos, PathBuf)> {
     let root = cfg.workspace_root()?;
     let eng = cfg.build_engine()?;
     let engine_name = eng.name().to_string();
 
     let idx = SymbolIndex::build(&root)?;
     let themis = Themis::load(&root);
-    let ariadne = Ariadne::new(max_steps, target_steps);
 
-    let trace_path = trace.unwrap_or_else(|| {
+    let trace_path = opts.trace.clone().unwrap_or_else(|| {
         root.join(".daedalus")
             .join(format!("trace-{}.jsonl", std::process::id()))
     });
     let session = Session::new(&root, &engine_name).with_trace(&trace_path)?;
 
-    session.log(&TraceEvent::TaskStarted {
+    eprintln!("engine       {engine_name}");
+    eprintln!("workspace    {}", root.display());
+    eprintln!("constitution {}", themis.source());
+    eprintln!("symbols      {} across {} files", idx.symbol_count(), idx.file_count());
+    eprintln!("budget       {} target / {} max", opts.target_steps, opts.max_steps);
+    if opts.dry_run {
+        eprintln!("mode         DRY RUN — nothing is written to disk");
+    }
+    eprintln!("trace        {}\n", trace_path.display());
+
+    let mut ctx = ToolCtx::new(&root);
+    if opts.dry_run {
+        ctx = ctx.dry_run();
+    }
+
+    let talos = Talos::new(
+        eng,
+        ToolRegistry::standard(),
+        ctx,
+        Oracle::new(&root),
+        idx,
+        themis,
+        Ariadne::new(opts.max_steps, opts.target_steps),
+        session,
+        cfg.max_tokens,
+        !opts.no_judge,
+    );
+
+    Ok((talos, trace_path))
+}
+
+async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
+    let (mut talos, trace_path) = build_talos(cfg, opts)?;
+
+    talos.session.log(&TraceEvent::TaskStarted {
         task: task.to_string(),
-        engine: engine_name.clone(),
-        workspace: root.display().to_string(),
-        max_steps,
-        target_steps,
+        engine: talos.session.engine_name.clone(),
+        workspace: talos.oracle.root().display().to_string(),
+        max_steps: opts.max_steps,
+        target_steps: opts.target_steps,
     });
 
-    eprintln!("engine      {engine_name}");
-    eprintln!("workspace   {}", root.display());
-    eprintln!("constitution {}", themis.source());
-    eprintln!("symbols     {} across {} files", idx.symbol_count(), idx.file_count());
-    eprintln!("budget      {target_steps} target / {max_steps} max");
-    eprintln!("trace       {}\n", trace_path.display());
-
-    let plan = metis::plan(eng.as_ref(), &themis, &idx, task, cfg.max_tokens).await?;
+    let plan = metis::plan(
+        talos.engine.as_ref(),
+        &talos.themis,
+        &talos.scribe,
+        task,
+        cfg.max_tokens,
+    )
+    .await?;
     eprintln!("Plan:\n{}\n", plan.render());
-
-    let mut talos = Talos {
-        engine: eng,
-        tools: ToolRegistry::standard(),
-        ctx: ToolCtx::new(&root),
-        oracle: Oracle::new(&root),
-        scribe: idx,
-        themis,
-        ariadne,
-        session,
-        max_tokens: cfg.max_tokens,
-        judge,
-    };
 
     let outcome = talos.run(task, &plan).await?;
 
     println!("\n{}", outcome.summary);
-    if !outcome.changed.is_empty() {
+
+    if outcome.dry_run {
+        println!("\n{}", diff::render(&talos.diffs()));
+        println!("Nothing was written. Re-run without --dry-run to apply, or use `repl` to \
+                  review and /apply interactively.");
+    } else if !outcome.changed.is_empty() {
         println!("\nChanged {} file(s):", outcome.changed.len());
         for p in &outcome.changed {
-            println!("  {}", p.display());
+            println!("  {}", talos.ctx.display(p));
         }
     }
+
     eprintln!(
         "\n[{} in {} step(s); trace: {}]",
         outcome.halt.label(),
@@ -264,6 +301,20 @@ async fn run_task(
         std::process::exit(1);
     }
     Ok(())
+}
+
+async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result<()> {
+    let (talos, _) = build_talos(cfg, opts)?;
+
+    talos.session.log(&TraceEvent::TaskStarted {
+        task: task.clone().unwrap_or_else(|| "(interactive)".to_string()),
+        engine: talos.session.engine_name.clone(),
+        workspace: talos.oracle.root().display().to_string(),
+        max_steps: opts.max_steps,
+        target_steps: opts.target_steps,
+    });
+
+    repl::run(talos, task, cfg.max_tokens).await
 }
 
 fn init_tracing(verbose: bool) {

@@ -63,14 +63,23 @@ impl SymbolIndex {
         Ok(())
     }
 
-    /// Re-parse a single file. Called after every write so the index tracks
-    /// the agent's own edits.
+    /// Re-parse a single file from disk. Called after every write so the index
+    /// tracks the agent's own edits.
     pub fn refresh(&mut self, path: &Path) -> Result<()> {
         let source = std::fs::read_to_string(path)?;
-        let rel = path.strip_prefix(&self.root).unwrap_or(path).to_path_buf();
-        let symbols = self.adapter.symbols(&source, &rel);
-        self.files.insert(rel, symbols);
+        self.refresh_from(path, &source);
         Ok(())
+    }
+
+    /// Re-parse from supplied content rather than disk.
+    ///
+    /// Needed for dry runs: the file on disk is still the old version, so
+    /// reading it would leave the exact tier describing code the agent has
+    /// already replaced.
+    pub fn refresh_from(&mut self, path: &Path, source: &str) {
+        let rel = path.strip_prefix(&self.root).unwrap_or(path).to_path_buf();
+        let symbols = self.adapter.symbols(source, &rel);
+        self.files.insert(rel, symbols);
     }
 
     pub fn adapter(&self) -> &dyn LanguageAdapter {

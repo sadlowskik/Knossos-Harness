@@ -20,27 +20,119 @@ pub mod fs;
 pub mod search;
 pub mod shell;
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 
+use crate::diff::{diff_file, FileDiff};
 use crate::engine::ToolDef;
 
 /// What a tool is allowed to touch.
+///
+/// In dry-run mode no write reaches disk. Edits are staged in memory instead,
+/// and reads consult the staging area first — so a sequence of edits to the
+/// same file behaves exactly as it would on disk, and the agent sees its own
+/// work. That is what makes a previewed multi-step change trustworthy rather
+/// than a guess about what would have happened.
 #[derive(Debug, Clone)]
 pub struct ToolCtx {
     root: PathBuf,
+    dry_run: bool,
+    staged: Arc<Mutex<BTreeMap<PathBuf, String>>>,
 }
 
 impl ToolCtx {
     /// `root` must already be canonical — see `Config::workspace_root`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        ToolCtx { root: root.into() }
+        ToolCtx {
+            root: root.into(),
+            dry_run: false,
+            staged: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// Stage writes in memory instead of applying them.
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+
+    pub fn is_dry_run(&self) -> bool {
+        self.dry_run
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Read a file, preferring staged content over what is on disk.
+    pub fn read(&self, path: &Path) -> std::io::Result<String> {
+        if let Some(staged) = self.staged.lock().unwrap().get(path) {
+            return Ok(staged.clone());
+        }
+        std::fs::read_to_string(path)
+    }
+
+    /// Write a file, or stage it when running dry.
+    pub fn write(&self, path: &Path, content: &str) -> std::io::Result<()> {
+        if self.dry_run {
+            self.staged
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf(), content.to_string());
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, content)
+    }
+
+    /// Staged (path, content) pairs. Empty unless running dry.
+    pub fn staged_contents(&self) -> Vec<(PathBuf, String)> {
+        self.staged
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(p, c)| (p.clone(), c.clone()))
+            .collect()
+    }
+
+    /// Diffs for everything staged, against what is currently on disk.
+    pub fn diffs(&self) -> Vec<FileDiff> {
+        self.staged
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(path, after)| {
+                let before = std::fs::read_to_string(path).ok();
+                let rel = path.strip_prefix(&self.root).unwrap_or(path);
+                diff_file(rel, before.as_deref(), after)
+            })
+            .filter(|d| !d.is_empty())
+            .collect()
+    }
+
+    /// Write every staged change to disk and clear the staging area.
+    pub fn apply_staged(&self) -> Result<Vec<PathBuf>> {
+        let mut staged = self.staged.lock().unwrap();
+        let mut written = Vec::new();
+        for (path, content) in staged.iter() {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, content)?;
+            written.push(path.clone());
+        }
+        staged.clear();
+        Ok(written)
+    }
+
+    pub fn discard_staged(&self) {
+        self.staged.lock().unwrap().clear();
     }
 
     /// Resolve a caller-supplied path against the workspace root, refusing

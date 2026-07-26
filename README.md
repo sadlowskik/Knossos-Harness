@@ -92,7 +92,62 @@ daedalus plan "add a --json flag" -w ./my-crate
 
 # plan and execute, verifying as it goes
 daedalus task "add a --json flag" -w ./my-crate --max-steps 12 --target-steps 6
+
+# propose changes without writing them, and print unified diffs
+daedalus task "add a --json flag" -w ./my-crate --dry-run
+
+# interactive session that keeps context between turns
+daedalus repl -w ./my-crate --dry-run
 ```
+
+### Dry run
+
+`--dry-run` stages every edit in memory instead of writing it. Reads and later
+edits see the staged content, so a multi-step change previews exactly what it
+would have done rather than approximating it.
+
+The honest limitation is built into the verdict: with nothing on disk, cargo
+would compile the *old* source and report a pass about the wrong code. So the
+ladder stops at tier 0, the verdict is flagged `dry_run`, and
+`deterministic_tiers_passed()` returns false — which means **a dry run can never
+reach tier 4**, and every message it produces says "preview, not verification".
+
+### Interactive session
+
+`daedalus repl` keeps the conversation, the symbol index and the staged changes
+alive between turns, so you can redirect the agent without losing what it
+already worked out.
+
+```
+/diff              show staged changes
+/apply             write them to disk
+/discard           throw them away
+/verify            run the verification ladder now
+/index [name]      symbol counts, or look one up
+/plan <task>       plan without executing
+/reset             clear the conversation, keep the workspace
+/steps <n>         change the step ceiling
+/quit
+```
+
+Each turn gets its own step budget, rather than one allowance draining across a
+long session. An engine failure prints and returns you to the prompt — it does
+not end the session, because staged work would go with it.
+
+## Editor integration
+
+A VS Code extension lives in [`editor/vscode`](editor/vscode). It is a thin
+front end: it spawns this binary and uses VS Code for input prompts, an output
+channel, diff highlighting and cancellation. No harness logic is reimplemented
+there, so the editor cannot drift from the CLI.
+
+```bash
+cd editor/vscode && npm install && npm run compile
+```
+
+Then open that folder in VS Code and press F5. **Daedalus: Preview Task** is the
+command worth reaching for first — it gives you the accept/reject step that
+makes an agent safe to point at a real repository.
 
 ### Engines
 
@@ -160,6 +215,10 @@ What the tests defend:
 | The path jail refuses a hostile tool call | `the_path_jail_survives_a_hostile_tool_call` |
 | The allowlist refuses `rm` | `disallowed_shell_commands_are_refused` |
 | The exact index stays exact as the agent edits | `scribe_tracks_edits_made_during_the_run` |
+| A dry run writes nothing and still produces usable diffs | `a_dry_run_proposes_changes_without_writing_them` |
+| A passing dry run cannot be mistaken for verification | `a_passing_dry_run_still_blocks_tier_four_and_says_why` |
+| Staged edits are visible to later reads, so chains preview correctly | `staged_content_is_visible_to_later_reads_and_edits` |
+| Resume keeps the conversation instead of restarting | `resume_continues_the_same_conversation` |
 
 ## Honest scope
 
@@ -181,6 +240,14 @@ evidence or on a budget. That is a working agent, not a frontier one.
   the diagnostic that made it studiable. The research repo isolates Proteus so
   it cannot destabilize the main line, and that argument only gets stronger when
   the blast radius is a tool-using agent on a filesystem.
+- **A chat panel in the editor.** The interactive session lives in the terminal,
+  where slash commands are already the natural interface. A webview duplicating
+  it would add surface without adding capability.
+- **Repo-wide retrieval.** Scribe is exact but holds declarations only, so it
+  cannot answer "where is auth handled". This is the one remaining place
+  Mnemosyne would genuinely earn its keep.
+- **Streaming output.** Responses arrive whole. Cosmetic, but it is most of what
+  makes an agent feel alive rather than hung.
 - **A second language.** The `LanguageAdapter` trait exists and Rust is its only
   implementation. The trait will need revision when a second one lands —
   interfaces designed against one example usually do. It is there to keep

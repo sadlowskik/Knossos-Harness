@@ -19,9 +19,11 @@
 
 pub mod ariadne;
 pub mod config;
+pub mod diff;
 pub mod engine;
 pub mod metis;
 pub mod oracle;
+pub mod repl;
 pub mod scribe;
 pub mod session;
 pub mod talos;

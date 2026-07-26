@@ -42,6 +42,10 @@ pub struct Verdict {
     /// Highest tier actually executed.
     pub reached_tier: u8,
     pub tiers: Vec<TierResult>,
+    /// True when only tier 0 could run because nothing was written to disk.
+    /// A passing dry-run verdict is **not** full verification, and every
+    /// message this type produces says so.
+    pub dry_run: bool,
 }
 
 impl Verdict {
@@ -53,6 +57,9 @@ impl Verdict {
     pub fn summary(&self) -> String {
         match self.failure() {
             Some(f) => format!("FAILED at {} (tier {})", f.label, f.tier),
+            None if self.dry_run => {
+                "syntax only — cargo cannot see unwritten changes".to_string()
+            }
             None => format!(
                 "passed {} tier(s): {}",
                 self.tiers.len(),
@@ -72,14 +79,20 @@ impl Verdict {
                 "Verification FAILED at `{}`.\n\n{}\n\nFix this before continuing.",
                 f.label, f.detail
             ),
+            None if self.dry_run => format!(
+                "Syntax check passed ({}). Nothing was written to disk, so the compiler, \
+                 linter and tests could not run — this is a preview, not verification.",
+                self.summary()
+            ),
             None => format!("Verification passed: {}.", self.summary()),
         }
     }
 
     /// Whether model judgement (tier 4) is permitted. Only when every
-    /// deterministic tier passed.
+    /// deterministic tier passed — which a dry run can never satisfy, because
+    /// most of them never ran.
     pub fn deterministic_tiers_passed(&self) -> bool {
-        self.passed
+        self.passed && !self.dry_run
     }
 }
 
@@ -109,7 +122,7 @@ impl Oracle {
         let tier0_num = t0.tier;
         tiers.push(t0);
         if !passed0 {
-            return Ok(Verdict { passed: false, reached_tier: tier0_num, tiers });
+            return Ok(Verdict { passed: false, reached_tier: tier0_num, tiers, dry_run: false });
         }
 
         // Tiers 1.. — the adapter's command chain, cheapest first.
@@ -120,11 +133,54 @@ impl Oracle {
             let passed = result.passed;
             tiers.push(result);
             if !passed {
-                return Ok(Verdict { passed: false, reached_tier: reached, tiers });
+                return Ok(Verdict { passed: false, reached_tier: reached, tiers, dry_run: false });
             }
         }
 
-        Ok(Verdict { passed: true, reached_tier: reached, tiers })
+        Ok(Verdict { passed: true, reached_tier: reached, tiers, dry_run: false })
+    }
+
+    /// Tier 0 over in-memory content, for dry runs.
+    ///
+    /// Nothing has been written, so cargo would compile the *old* code and
+    /// report a misleading pass. Rather than run a check whose answer is about
+    /// the wrong source, the ladder stops at syntax and the verdict is marked
+    /// `dry_run` so no caller can mistake it for verification.
+    pub fn verify_staged(
+        &self,
+        adapter: &dyn LanguageAdapter,
+        staged: &[(PathBuf, String)],
+    ) -> Verdict {
+        let mut broken = Vec::new();
+        let mut checked = 0usize;
+
+        for (path, source) in staged {
+            if !adapter.handles(path) {
+                continue;
+            }
+            checked += 1;
+            if !adapter.parses_cleanly(source) {
+                let rel = path.strip_prefix(&self.root).unwrap_or(path);
+                broken.push(rel.display().to_string());
+            }
+        }
+
+        let passed = broken.is_empty();
+        Verdict {
+            passed,
+            reached_tier: 0,
+            tiers: vec![TierResult {
+                tier: 0,
+                label: "syntax".to_string(),
+                passed,
+                detail: if passed {
+                    format!("{checked} staged file(s) parse cleanly")
+                } else {
+                    format!("syntax errors in staged: {}", broken.join(", "))
+                },
+            }],
+            dry_run: true,
+        }
     }
 
     fn tier0(&self, adapter: &dyn LanguageAdapter, changed: &[PathBuf]) -> TierResult {
@@ -398,9 +454,45 @@ mod tests {
                 passed: false,
                 detail: "error[E0308]".into(),
             }],
+            dry_run: false,
         };
         assert!(v.report().contains("cargo check"));
         assert!(v.report().contains("E0308"));
         assert!(!v.deterministic_tiers_passed());
+    }
+
+    #[test]
+    fn staged_verification_checks_syntax_of_unwritten_content() {
+        let dir = workspace("pub fn a() {}\n");
+        let oracle = Oracle::new(dir.path());
+
+        let good = oracle.verify_staged(
+            &RustAdapter,
+            &[(PathBuf::from("src/lib.rs"), "pub fn b() -> u32 { 1 }".to_string())],
+        );
+        assert!(good.passed);
+        assert!(good.dry_run);
+
+        let bad = oracle.verify_staged(
+            &RustAdapter,
+            &[(PathBuf::from("src/lib.rs"), "pub fn b( {{{ ~~~".to_string())],
+        );
+        assert!(!bad.passed);
+        assert_eq!(bad.failure().unwrap().tier, 0);
+    }
+
+    /// A dry run must never be mistaken for verification, even when it passes.
+    #[test]
+    fn a_passing_dry_run_still_blocks_tier_four_and_says_why() {
+        let dir = workspace("pub fn a() {}\n");
+        let v = Oracle::new(dir.path()).verify_staged(
+            &RustAdapter,
+            &[(PathBuf::from("src/lib.rs"), "pub fn b() {}".to_string())],
+        );
+
+        assert!(v.passed);
+        assert!(!v.deterministic_tiers_passed(), "dry run must gate tier 4");
+        assert!(v.report().contains("preview, not verification"));
+        assert!(v.summary().contains("syntax only"));
     }
 }

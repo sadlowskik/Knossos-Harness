@@ -1,0 +1,100 @@
+{
+  "name": "daedalus-harness",
+  "displayName": "Daedalus Harness",
+  "description": "Agentic coding with exact symbol grounding, tiered verification and an explicit halting policy.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "publisher": "korbinsadlowski",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "daedalus.task",
+        "title": "Daedalus: Run Task",
+        "category": "Daedalus"
+      },
+      {
+        "command": "daedalus.preview",
+        "title": "Daedalus: Preview Task (dry run)",
+        "category": "Daedalus"
+      },
+      {
+        "command": "daedalus.verify",
+        "title": "Daedalus: Verify Workspace",
+        "category": "Daedalus"
+      },
+      {
+        "command": "daedalus.index",
+        "title": "Daedalus: Show Symbol Index",
+        "category": "Daedalus"
+      },
+      {
+        "command": "daedalus.lookup",
+        "title": "Daedalus: Look Up Symbol",
+        "category": "Daedalus"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "daedalus.lookup",
+          "when": "editorHasSelection",
+          "group": "navigation@99"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Daedalus Harness",
+      "properties": {
+        "daedalus.binaryPath": {
+          "type": "string",
+          "default": "daedalus",
+          "description": "Path to the daedalus executable. Leave as 'daedalus' if it is on your PATH."
+        },
+        "daedalus.engine": {
+          "type": "string",
+          "enum": ["anthropic", "ollama"],
+          "default": "anthropic",
+          "description": "Which engine backend to drive."
+        },
+        "daedalus.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model id. Empty uses the engine's default."
+        },
+        "daedalus.maxSteps": {
+          "type": "number",
+          "default": 12,
+          "description": "Hard ceiling on engine turns (Ariadne's forced halt)."
+        },
+        "daedalus.targetSteps": {
+          "type": "number",
+          "default": 6,
+          "description": "Where budget pressure begins."
+        },
+        "daedalus.judge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run Oracle tier 4 (model judgement against the constitution) once the deterministic tiers pass."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

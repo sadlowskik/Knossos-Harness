@@ -56,23 +56,29 @@ impl Harness {
         Harness { _dir: dir, root, trace }
     }
 
-    async fn run(&self, scripted: Vec<daedalus_harness::engine::Response>, max_steps: usize) -> Outcome {
-        let idx = SymbolIndex::build(&self.root).unwrap();
-        let mut talos = Talos {
-            engine: Box::new(MockEngine::new(scripted)),
-            tools: ToolRegistry::standard(),
-            ctx: ToolCtx::new(&self.root),
-            oracle: Oracle::new(&self.root),
-            scribe: idx,
-            themis: Themis::from_text("Be correct."),
-            ariadne: Ariadne::new(max_steps, max_steps.saturating_sub(1).max(1)),
-            session: Session::new(&self.root, "mock").with_trace(&self.trace).unwrap(),
-            max_tokens: 1024,
-            // Tier 4 needs an engine turn of its own; the scripted-response
-            // tests below control that explicitly where they exercise it.
-            judge: false,
-        };
+    fn talos(&self, scripted: Vec<daedalus_harness::engine::Response>, max_steps: usize, dry: bool) -> Talos {
+        let mut ctx = ToolCtx::new(&self.root);
+        if dry {
+            ctx = ctx.dry_run();
+        }
+        Talos::new(
+            Box::new(MockEngine::new(scripted)),
+            ToolRegistry::standard(),
+            ctx,
+            Oracle::new(&self.root),
+            SymbolIndex::build(&self.root).unwrap(),
+            Themis::from_text("Be correct."),
+            Ariadne::new(max_steps, max_steps.saturating_sub(1).max(1)),
+            Session::new(&self.root, "mock").with_trace(&self.trace).unwrap(),
+            1024,
+            // Tier 4 needs an engine turn of its own; the tests that exercise
+            // it script that turn explicitly.
+            false,
+        )
+    }
 
+    async fn run(&self, scripted: Vec<daedalus_harness::engine::Response>, max_steps: usize) -> Outcome {
+        let mut talos = self.talos(scripted, max_steps, false);
         let plan = Plan { steps: vec!["do the thing".into()] };
         talos.run("test task", &plan).await.unwrap()
     }
@@ -310,6 +316,139 @@ async fn the_trace_records_the_whole_trajectory() {
     assert_eq!(tool["tool"], "write_file");
     assert!(tool["input"]["path"].is_string());
     assert_eq!(tool["changed"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_dry_run_proposes_changes_without_writing_them() {
+    let h = Harness::new("passing");
+    let before = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
+
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "pub fn double(x: u32) -> u32 { x * 2 }\npub fn triple(x: u32) -> u32 { x * 3 }\n"
+                }),
+            ),
+            text_response("Done."),
+        ],
+        6,
+        true,
+    );
+
+    let outcome = talos
+        .run("test task", &Plan { steps: vec!["s".into()] })
+        .await
+        .unwrap();
+
+    assert!(outcome.dry_run);
+    assert_eq!(
+        std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap(),
+        before,
+        "dry run must leave the file untouched"
+    );
+
+    let diffs = talos.diffs();
+    assert_eq!(diffs.len(), 1);
+    assert!(diffs[0].unified.contains("+pub fn triple"));
+
+    // A dry run can only check syntax, and must not be mistaken for more.
+    let verdict = outcome.verdict.unwrap();
+    assert!(verdict.dry_run);
+    assert!(!verdict.deterministic_tiers_passed());
+}
+
+#[tokio::test]
+async fn applying_a_dry_run_writes_the_staged_content() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({"path": "src/added.rs", "content": "pub fn added() {}\n"}),
+            ),
+            text_response("Done."),
+        ],
+        6,
+        true,
+    );
+
+    talos.run("t", &Plan { steps: vec!["s".into()] }).await.unwrap();
+    assert!(!h.root.join("src/added.rs").exists());
+
+    let written = talos.apply().unwrap();
+    assert_eq!(written.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(h.root.join("src/added.rs")).unwrap(),
+        "pub fn added() {}\n"
+    );
+    // And the exact index picked it up.
+    assert_eq!(talos.scribe.lookup("added").len(), 1);
+}
+
+#[tokio::test]
+async fn resume_continues_the_same_conversation() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            // First turn.
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({"path": "src/lib.rs", "content": "pub fn one() -> u32 { 1 }\n"}),
+            ),
+            text_response("Added one."),
+            // Second turn, after the user speaks again.
+            tool_call(
+                "2",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "pub fn one() -> u32 { 1 }\npub fn two() -> u32 { 2 }\n"
+                }),
+            ),
+            text_response("Added two as well."),
+        ],
+        6,
+        false,
+    );
+
+    let first = talos
+        .run("add one()", &Plan { steps: vec!["add one".into()] })
+        .await
+        .unwrap();
+    assert_eq!(first.halt, Halt::Done, "{}", first.summary);
+    let messages_after_first = talos.messages.len();
+
+    let second = talos.resume("now add two() as well").await.unwrap();
+    assert_eq!(second.halt, Halt::Done, "{}", second.summary);
+
+    // Context was kept, not restarted.
+    assert!(talos.messages.len() > messages_after_first);
+    assert!(talos.task == "add one()", "the original task is retained for tier 4");
+
+    // Both functions exist, so the second turn built on the first.
+    let src = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
+    assert!(src.contains("pub fn one"));
+    assert!(src.contains("pub fn two"));
+
+    // The step budget resets per turn rather than draining across the session.
+    assert_eq!(second.steps_used, 2);
+}
+
+#[tokio::test]
+async fn resume_on_a_fresh_talos_behaves_like_a_first_task() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("Nothing to do.")], 4, false);
+
+    let outcome = talos.resume("look around").await.unwrap();
+    assert!(!talos.messages.is_empty());
+    assert_eq!(talos.task, "look around");
+    assert!(outcome.steps_used >= 1);
 }
 
 #[tokio::test]
