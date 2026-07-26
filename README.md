@@ -23,6 +23,7 @@ kept:
 | Component | Model-level origin | The decision it forces |
 |---|---|---|
 | **Scribe** | exact symbol table | identifiers, paths and signatures are injected verbatim — never summarized |
+| **Mnemosyne** | lossy gist memory | bodies are retrieved on demand, so "where is X handled" is answerable |
 | **Themis** | always-on shared expert | the constitution enters *every* call, planning included, not a review step at the end |
 | **Ariadne** | PonderNet halting | explicit escalating stopping pressure plus a hard ceiling |
 | **Oracle** | — | deterministic tiers before any model judgement |
@@ -56,6 +57,18 @@ agent pathology of burning twelve iterations on a one-line fix.
 So this is not PonderNet. It is the three things that lesson says you need: a
 hard ceiling, escalating pressure past a target (stated in prompt text, since
 there is no gradient here), and a strong deterministic stop signal.
+
+**Mnemosyne — BM25, not embeddings, and that is a decision not a shortcut.** The
+tensor-level version compresses with learned cross-attention, so the obvious
+translation is a vector index. I deliberately did not build one. Code queries
+are overwhelmingly *lexical* — a name, a call, an error string — and lexical
+scoring is very hard to beat on those while being exact, explainable,
+dependency-free and instant to rebuild. Embeddings earn their cost on
+natural-language paraphrase, a small fraction of what an agent asks a codebase.
+What carries over is the **role** — fuzzy recall over context too large to hold,
+paired with Scribe's exactness — not the mechanism. A local vector index can
+slot in behind `Mnemosyne::search` if lexical retrieval proves measurably
+insufficient.
 
 **Oracle — two rules.** Fail fast: the first failing tier returns immediately,
 because there is no point running clippy on code that does not compile. And
@@ -219,6 +232,10 @@ What the tests defend:
 | A passing dry run cannot be mistaken for verification | `a_passing_dry_run_still_blocks_tier_four_and_says_why` |
 | Staged edits are visible to later reads, so chains preview correctly | `staged_content_is_visible_to_later_reads_and_edits` |
 | Resume keeps the conversation instead of restarting | `resume_continues_the_same_conversation` |
+| Accepting one hunk takes that change and leaves the other | `diff::accepting_one_hunk_takes_only_that_change` |
+| Accepting no hunks reproduces the original byte for byte | `diff::accepting_no_hunk_reproduces_the_original_exactly` |
+| Retrieval answers a question Scribe structurally cannot | `mnemosyne::answers_a_question_about_where_something_lives` |
+| An unrelated query returns nothing rather than noise | `mnemosyne::an_unrelated_query_returns_nothing_rather_than_noise` |
 
 ## Honest scope
 
@@ -230,9 +247,11 @@ evidence or on a budget. That is a working agent, not a frontier one.
 
 - **Apollo** (routing to specialist sub-agents) — the core loop should be proven
   before adding a routing layer on top of it.
-- **Mnemosyne** (context compaction) — only load-bearing on long tasks, and the
-  step budget currently keeps tasks short.
-- **Naiads** (per-task memory namespaces) — follows compaction.
+- **Naiads** (per-task memory namespaces) — follows conversation compaction,
+  which is itself still unbuilt.
+- **Conversation compaction** — Mnemosyne indexes the *codebase*; the running
+  transcript is still uncompressed, so very long sessions will eventually run
+  into the context window.
 - **Echo** (trajectory distillation) — traces are *captured*, not consumed.
 - **Proteus** (self-modifying weights → self-editing prompts) — **excluded
   permanently, not deferred.** It has the same runaway failure mode as the
@@ -240,14 +259,13 @@ evidence or on a budget. That is a working agent, not a frontier one.
   the diagnostic that made it studiable. The research repo isolates Proteus so
   it cannot destabilize the main line, and that argument only gets stronger when
   the blast radius is a tool-using agent on a filesystem.
-- **A chat panel in the editor.** The interactive session lives in the terminal,
-  where slash commands are already the natural interface. A webview duplicating
-  it would add surface without adding capability.
-- **Repo-wide retrieval.** Scribe is exact but holds declarations only, so it
-  cannot answer "where is auth handled". This is the one remaining place
-  Mnemosyne would genuinely earn its keep.
-- **Streaming output.** Responses arrive whole. Cosmetic, but it is most of what
-  makes an agent feel alive rather than hung.
+- **Tab completion.** Calling an API per keystroke is 300ms–2s where Cursor Tab
+  is under 100ms, and it costs tokens continuously. The version worth having is
+  a small FIM-trained model, which is a separate project.
+- **Token-level streaming.** Progress streams (steps, tool calls, verdicts) but
+  assistant prose arrives whole.
+- **Inline gutter accept/reject.** Hunk-level review happens in the panel, not
+  as decorations over your editor buffer.
 - **A second language.** The `LanguageAdapter` trait exists and Rust is its only
   implementation. The trait will need revision when a second one lands —
   interfaces designed against one example usually do. It is there to keep

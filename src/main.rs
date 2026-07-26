@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use daedalus_harness::ariadne::Ariadne;
 use daedalus_harness::config::{Config, EngineKind};
 use daedalus_harness::engine::{self, Message, Request};
+use daedalus_harness::mnemosyne::Mnemosyne;
 use daedalus_harness::oracle::Oracle;
 use daedalus_harness::scribe::SymbolIndex;
 use daedalus_harness::session::{Session, TraceEvent};
@@ -97,6 +98,15 @@ enum Command {
         #[command(flatten)]
         opts: LoopArgs,
     },
+
+    /// Long-lived NDJSON server for editor front ends.
+    ///
+    /// Commands in on stdin, events out on stdout, one JSON object per line.
+    /// Not meant to be driven by hand — see the VS Code extension.
+    Serve {
+        #[command(flatten)]
+        opts: LoopArgs,
+    },
 }
 
 #[tokio::main]
@@ -118,6 +128,7 @@ async fn main() -> Result<()> {
         Command::Plan { ref task } => plan_only(&cfg, task).await,
         Command::Task { ref task, ref opts } => run_task(&cfg, task, opts).await,
         Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
+        Command::Serve { ref opts } => run_serve(&cfg, opts).await,
     }
 }
 
@@ -209,24 +220,34 @@ async fn plan_only(cfg: &Config, task: &str) -> Result<()> {
 }
 
 /// Assemble a Talos and announce the configuration.
-fn build_talos(cfg: &Config, opts: &LoopArgs) -> Result<(Talos, PathBuf)> {
+///
+/// `stream` makes the session mirror every trace event to stdout, which is how
+/// `serve` gives a front end live progress. Announcements stay on stderr in
+/// every mode, so enabling it cannot corrupt the protocol channel.
+fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, PathBuf)> {
     let root = cfg.workspace_root()?;
     let eng = cfg.build_engine()?;
     let engine_name = eng.name().to_string();
 
     let idx = SymbolIndex::build(&root)?;
     let themis = Themis::load(&root);
+    // Built before `idx` is moved into Talos; both read the same adapter.
+    let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
 
     let trace_path = opts.trace.clone().unwrap_or_else(|| {
         root.join(".daedalus")
             .join(format!("trace-{}.jsonl", std::process::id()))
     });
-    let session = Session::new(&root, &engine_name).with_trace(&trace_path)?;
+    let mut session = Session::new(&root, &engine_name).with_trace(&trace_path)?;
+    if stream {
+        session = session.streaming();
+    }
 
     eprintln!("engine       {engine_name}");
     eprintln!("workspace    {}", root.display());
     eprintln!("constitution {}", themis.source());
     eprintln!("symbols      {} across {} files", idx.symbol_count(), idx.file_count());
+    eprintln!("retrieval    {} chunks indexed", retrieval.chunk_count());
     eprintln!("budget       {} target / {} max", opts.target_steps, opts.max_steps);
     if opts.dry_run {
         eprintln!("mode         DRY RUN — nothing is written to disk");
@@ -240,7 +261,7 @@ fn build_talos(cfg: &Config, opts: &LoopArgs) -> Result<(Talos, PathBuf)> {
 
     let talos = Talos::new(
         eng,
-        ToolRegistry::standard(),
+        ToolRegistry::with_retrieval(retrieval),
         ctx,
         Oracle::new(&root),
         idx,
@@ -255,7 +276,7 @@ fn build_talos(cfg: &Config, opts: &LoopArgs) -> Result<(Talos, PathBuf)> {
 }
 
 async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
-    let (mut talos, trace_path) = build_talos(cfg, opts)?;
+    let (mut talos, trace_path) = build_talos(cfg, opts, false)?;
 
     talos.session.log(&TraceEvent::TaskStarted {
         task: task.to_string(),
@@ -303,8 +324,13 @@ async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
     Ok(())
 }
 
+async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
+    let (talos, _) = build_talos(cfg, opts, true)?;
+    daedalus_harness::serve::run(talos, cfg.max_tokens).await
+}
+
 async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result<()> {
-    let (talos, _) = build_talos(cfg, opts)?;
+    let (talos, _) = build_talos(cfg, opts, false)?;
 
     talos.session.log(&TraceEvent::TaskStarted {
         task: task.clone().unwrap_or_else(|| "(interactive)".to_string()),

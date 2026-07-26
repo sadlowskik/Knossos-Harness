@@ -133,6 +133,7 @@ fn symbol_for(node: Node, src: &str, path: &Path) -> Option<Symbol> {
         signature: signature(node, src),
         file: path.to_path_buf(),
         line: node.start_position().row + 1,
+        end_line: node.end_position().row + 1,
         visibility: visibility(node, src),
     })
 }

@@ -66,6 +66,12 @@ pub struct Session {
     /// The running conversation handed to the engine each turn.
     pub messages: Vec<Message>,
     trace_path: Option<PathBuf>,
+    /// Also write each event to stdout, for `daedalus serve`.
+    ///
+    /// The trace format already *is* an event stream, so a front end that
+    /// wants live progress needs no second mechanism — it reads the same
+    /// lines the log file gets.
+    stream_stdout: bool,
 }
 
 impl Session {
@@ -75,7 +81,18 @@ impl Session {
             engine_name: engine_name.into(),
             messages: Vec::new(),
             trace_path: None,
+            stream_stdout: false,
         }
+    }
+
+    /// Stream events to stdout as well as to any trace file.
+    ///
+    /// Callers that enable this must keep every other byte of output on
+    /// stderr: stdout becomes a protocol channel, and one stray `println!`
+    /// corrupts it.
+    pub fn streaming(mut self) -> Self {
+        self.stream_stdout = true;
+        self
     }
 
     /// Write the trajectory to `path`, creating parent directories.
@@ -99,9 +116,9 @@ impl Session {
     /// Append one event. Trace failures are reported but never abort a run —
     /// losing the record is bad, losing the work is worse.
     pub fn log(&self, event: &TraceEvent) {
-        let Some(path) = &self.trace_path else {
+        if self.trace_path.is_none() && !self.stream_stdout {
             return;
-        };
+        }
         let line = match serde_json::to_string(&Envelope {
             at: chrono::Utc::now().to_rfc3339(),
             event,
@@ -111,6 +128,16 @@ impl Session {
                 tracing::warn!("could not serialize trace event: {e}");
                 return;
             }
+        };
+
+        if self.stream_stdout {
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+        }
+
+        let Some(path) = &self.trace_path else {
+            return;
         };
 
         let result = std::fs::OpenOptions::new()

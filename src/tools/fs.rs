@@ -346,6 +346,62 @@ mod tests {
         assert!(c.diffs().is_empty(), "staging area clears after apply");
     }
 
+    /// Per-hunk review: take one change from a file and leave another.
+    #[tokio::test]
+    async fn applying_selected_hunks_writes_only_those() {
+        let (_d, c) = ctx();
+        let original = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n\
+                        eleven\ntwelve\nthirteen\nfourteen\nfifteen\n";
+        std::fs::write(c.root().join("a.rs"), original).unwrap();
+        let c = c.dry_run();
+
+        WriteFile
+            .run(
+                &json!({
+                    "path": "a.rs",
+                    "content": "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n\
+                                eleven\ntwelve\nthirteen\nfourteen\nFIFTEEN\n"
+                }),
+                &c,
+            )
+            .await
+            .unwrap();
+
+        let diffs = c.diffs();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].hunks.len(), 2, "two distant edits, two hunks");
+
+        // Accept only the first.
+        let written = c.apply_hunks(&[("a.rs".to_string(), vec![0])]).unwrap();
+        assert_eq!(written.len(), 1);
+
+        let after = std::fs::read_to_string(c.root().join("a.rs")).unwrap();
+        assert!(after.starts_with("ONE\n"), "accepted hunk applied");
+        assert!(after.contains("fifteen"), "rejected hunk not applied");
+        assert!(!after.contains("FIFTEEN"));
+
+        // The file stays staged, since part of it is still unreviewed.
+        assert!(!c.diffs().is_empty(), "remaining hunk should still be pending");
+    }
+
+    #[tokio::test]
+    async fn accepting_every_hunk_clears_the_file_from_staging() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "alpha\n").unwrap();
+        let c = c.dry_run();
+
+        WriteFile
+            .run(&json!({"path": "a.rs", "content": "beta\n"}), &c)
+            .await
+            .unwrap();
+
+        let ids: Vec<usize> = c.diffs()[0].hunks.iter().map(|h| h.id).collect();
+        c.apply_hunks(&[("a.rs".to_string(), ids)]).unwrap();
+
+        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "beta\n");
+        assert!(c.diffs().is_empty(), "fully accepted files leave staging");
+    }
+
     #[tokio::test]
     async fn discarding_staged_changes_leaves_nothing_behind() {
         let (_d, c) = dry_ctx();

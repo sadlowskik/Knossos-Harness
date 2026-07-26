@@ -144,6 +144,15 @@ impl Talos {
         Ok(written)
     }
 
+    /// Write only the selected hunks, leaving the rest staged for review.
+    pub fn apply_hunks(&mut self, selection: &[(String, Vec<usize>)]) -> Result<Vec<PathBuf>> {
+        let written = self.ctx.apply_hunks(selection)?;
+        for path in &written {
+            let _ = self.scribe.refresh(path);
+        }
+        Ok(written)
+    }
+
     pub fn discard(&mut self) {
         self.ctx.discard_staged();
         self.changed.clear();

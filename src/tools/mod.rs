@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use crate::diff::{diff_file, FileDiff};
 use crate::engine::ToolDef;
 
+
 /// What a tool is allowed to touch.
 ///
 /// In dry-run mode no write reaches disk. Edits are staged in memory instead,
@@ -114,6 +115,46 @@ impl ToolCtx {
             })
             .filter(|d| !d.is_empty())
             .collect()
+    }
+
+    /// Write only the selected hunks of the selected files.
+    ///
+    /// `selection` maps a workspace-relative path to the hunk ids being
+    /// accepted. Files absent from the selection are left staged, so a partial
+    /// review can be continued rather than lost. Accepting every hunk of a file
+    /// is equivalent to applying it whole.
+    pub fn apply_hunks(&self, selection: &[(String, Vec<usize>)]) -> Result<Vec<PathBuf>> {
+        let mut staged = self.staged.lock().unwrap();
+        let mut written = Vec::new();
+
+        for (relative, accepted) in selection {
+            let path = self.root.join(relative);
+            // Cloned so the map is not borrowed while it is mutated below.
+            let Some(proposed) = staged.get(&path).cloned() else {
+                continue;
+            };
+
+            let original = std::fs::read_to_string(&path).unwrap_or_default();
+            let d = diff_file(Path::new(relative), Some(&original), &proposed);
+            let merged = crate::diff::apply_hunks(&original, &d.hunks, accepted);
+
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, &merged)?;
+            written.push(path.clone());
+
+            // Fully accepted means nothing is left to review for this file.
+            if accepted.len() == d.hunks.len() {
+                staged.remove(&path);
+            } else {
+                // Keep the rest staged; `diffs()` re-measures against the file
+                // as it now stands, so the remaining hunks stay accurate.
+                staged.insert(path, proposed);
+            }
+        }
+
+        Ok(written)
     }
 
     /// Write every staged change to disk and clear the staging area.
@@ -248,7 +289,7 @@ impl ToolRegistry {
         ToolRegistry { tools }
     }
 
-    /// The v1 tool set: read, write, edit, list, search, run.
+    /// The base tool set: read, write, edit, list, search, run.
     pub fn standard() -> Self {
         ToolRegistry::new(vec![
             Box::new(fs::ReadFile),
@@ -258,6 +299,17 @@ impl ToolRegistry {
             Box::new(search::Search),
             Box::new(shell::Run::default()),
         ])
+    }
+
+    /// The standard set plus `search_code`, backed by the Mnemosyne index.
+    ///
+    /// Retrieval is additive rather than a replacement: `search` stays for when
+    /// the agent knows the exact string, and `search_code` covers when it does
+    /// not yet know what to grep for.
+    pub fn with_retrieval(index: std::sync::Arc<crate::mnemosyne::Mnemosyne>) -> Self {
+        let mut registry = ToolRegistry::standard();
+        registry.tools.push(Box::new(search::SearchCode::new(index)));
+        registry
     }
 
     pub fn defs(&self) -> Vec<ToolDef> {

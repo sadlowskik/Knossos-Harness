@@ -61,7 +61,23 @@ pub struct Symbol {
     pub signature: String,
     pub file: PathBuf,
     pub line: usize,
+    /// Last line of the declaration including its body, 1-indexed inclusive.
+    /// Gives every symbol a span, which is what lets Mnemosyne chunk on
+    /// declaration boundaries instead of arbitrary line windows.
+    pub end_line: usize,
     pub visibility: Visibility,
+}
+
+impl Symbol {
+    /// Number of source lines this declaration spans.
+    pub fn line_count(&self) -> usize {
+        self.end_line.saturating_sub(self.line) + 1
+    }
+
+    /// Whether this symbol's span fully contains another's.
+    pub fn contains(&self, other: &Symbol) -> bool {
+        self.file == other.file && self.line <= other.line && self.end_line >= other.end_line
+    }
 }
 
 /// One rung of Oracle's deterministic ladder.

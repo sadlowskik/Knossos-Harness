@@ -1,5 +1,7 @@
 //! Content search across the workspace, honouring .gitignore.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use ignore::overrides::OverrideBuilder;
@@ -7,8 +9,11 @@ use ignore::WalkBuilder;
 use serde_json::json;
 
 use super::{req_str, Tool, ToolCtx, ToolOutput};
+use crate::mnemosyne::Mnemosyne;
 
 const MAX_RESULTS: usize = 200;
+/// Cap on how much retrieved source one call may return.
+const MAX_RETRIEVAL_BYTES: usize = 16_000;
 
 pub struct Search;
 
@@ -101,9 +106,118 @@ fn search_tree(
     Ok(hits)
 }
 
+/// Retrieval over the Mnemosyne index — the fuzzy counterpart to Scribe.
+///
+/// `search` answers "which lines match this regex". This answers "which parts
+/// of the codebase are about this", which is the question an agent actually
+/// needs when it does not yet know what to grep for.
+pub struct SearchCode {
+    index: Arc<Mnemosyne>,
+}
+
+impl SearchCode {
+    pub fn new(index: Arc<Mnemosyne>) -> Self {
+        SearchCode { index }
+    }
+}
+
+#[async_trait]
+impl Tool for SearchCode {
+    fn name(&self) -> &str {
+        "search_code"
+    }
+
+    fn description(&self) -> &str {
+        "Find the parts of the codebase relevant to a description, ranked. Use this when you do \
+         not know which file to look in — it matches meaning-by-wording rather than an exact \
+         pattern. Use `search` instead when you know the exact string or regex."
+    }
+
+    fn schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What you are looking for, e.g. 'where tokens are verified'"
+                },
+                "limit": {"type": "integer", "description": "Maximum chunks to return (default 5)"}
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn run(&self, input: &serde_json::Value, _ctx: &ToolCtx) -> Result<ToolOutput> {
+        let query = req_str(input, "query")?;
+        let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+
+        if self.index.is_empty() {
+            return Ok(ToolOutput::ok("the code index is empty"));
+        }
+
+        let hits = self.index.search(query, limit.clamp(1, 20));
+        if hits.is_empty() {
+            return Ok(ToolOutput::ok(format!(
+                "nothing relevant to `{query}` ({} chunks indexed)",
+                self.index.chunk_count()
+            )));
+        }
+
+        let mut body = String::new();
+        for hit in hits {
+            let block = format!("\n## {}\n```\n{}\n```\n", hit.chunk.location(), hit.chunk.text);
+            if body.len() + block.len() > MAX_RETRIEVAL_BYTES {
+                body.push_str("\n[further results omitted for length]\n");
+                break;
+            }
+            body.push_str(&block);
+        }
+        Ok(ToolOutput::ok(body))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn code_search_finds_the_relevant_region() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(
+            root.join("auth.rs"),
+            "pub fn verify_token(t: &str) -> bool { !t.is_empty() }\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("math.rs"), "pub fn add(a: u32) -> u32 { a }\n").unwrap();
+
+        let index = Arc::new(
+            Mnemosyne::build(&root, &crate::scribe::RustAdapter).unwrap(),
+        );
+        let tool = SearchCode::new(index);
+        let ctx = ToolCtx::new(root);
+
+        let out = tool
+            .run(&json!({"query": "verifying a token"}), &ctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert!(out.content.contains("verify_token"), "got: {}", out.content);
+    }
+
+    #[tokio::test]
+    async fn code_search_says_so_when_nothing_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("a.rs"), "pub fn add(a: u32) -> u32 { a }\n").unwrap();
+
+        let index = Arc::new(Mnemosyne::build(&root, &crate::scribe::RustAdapter).unwrap());
+        let out = SearchCode::new(index)
+            .run(&json!({"query": "kubernetes ingress"}), &ToolCtx::new(root))
+            .await
+            .unwrap();
+        assert!(out.content.contains("nothing relevant"));
+    }
 
     #[tokio::test]
     async fn finds_matches_and_reports_line_numbers() {
