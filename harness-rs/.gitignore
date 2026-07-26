@@ -1,0 +1,7 @@
+/target
+**/target
+Cargo.lock.orig
+
+# Trajectory logs written by `daedalus task`
+.daedalus/
+*.jsonl

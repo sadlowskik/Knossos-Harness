@@ -1,0 +1,7 @@
+# Standalone: `[workspace]` stops the parent crate from adopting this fixture.
+[workspace]
+
+[package]
+name = "fixture-broken"
+version = "0.1.0"
+edition = "2021"
