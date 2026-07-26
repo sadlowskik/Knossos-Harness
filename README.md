@@ -12,11 +12,17 @@ policy — is engine-agnostic by construction and survives an engine swap.
 
 | Path | What it is |
 |---|---|
-| `model/` | The architecture (`daedalus/`) and the Python harness (`harness/`) |
-| `knossos-rs/` | The Rust harness — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
-| `fixtures/scratch-crate/` | A minimal cargo library, used as a target for exercising the harness against real Rust |
+| `model/` | The architecture (`daedalus/`) and Knossos in Python (`knossos/`) |
+| `knossos-rs/` | Knossos in Rust — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
+| `fixtures/scratch-crate/` | A minimal cargo library, used as a target for exercising Knossos against real Rust |
+| `editor/` | Your Lapce fork, as a submodule |
 
-Two harness implementations exist deliberately. They are kept side by side while
+**Daedalus** is the model. **Knossos** is the system around it — the palace
+contains the Labyrinth, which is the same relationship the harness has to the
+engine slot. The CLI stays `daedalus`, because you address the craftsman rather
+than the workshop.
+
+Two Knossos implementations exist deliberately. They are kept side by side while
 the question of which line continues is still open:
 
 - **Python** (`model/knossos/`) speaks the [Agent Client Protocol](https://agentclientprotocol.com),
