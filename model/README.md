@@ -125,7 +125,7 @@ this section used to warn it would:
 | `targets.view()` on a non-contiguous tensor | 6 call sites | `RuntimeError` whenever targets were a strided slice |
 | `echo_loss` KL scaled by `T` | `echo.py` | `batchmean` divides by `shape[0]`; on `(B,T,V)` the term was **64× too large** and collapsed training |
 | `echo_step` moved the CE depth | `echo.py` | `--echo-weight` changed *two* things, so the sweep was not an ablation |
-| `Argus.save()` dropped two Counters | `harness/argus.py` | `TypeError` on tuple keys; ACP `session/new` failed |
+| `Argus.save()` dropped two Counters | `knossos/argus.py` | `TypeError` on tuple keys; ACP `session/new` failed |
 
 The KL scale bug is the one worth remembering: **both `echo_loss` unit tests pass
 with it in place**, because "zero when they agree" and "positive when they

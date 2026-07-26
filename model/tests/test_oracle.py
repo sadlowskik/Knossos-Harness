@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from harness.oracle import Oracle, Tier, TierResult
-from harness.workspace import Workspace
+from knossos.oracle import Oracle, Tier, TierResult
+from knossos.workspace import Workspace
 
 #: The running interpreter, not the bare name. `python` is frequently not on
 #: PATH -- on this machine it is not -- and a tier whose program cannot be found
@@ -217,7 +217,7 @@ def test_a_passing_dry_run_still_blocks_judgement(tmp_path):
 
 def test_oracle_satisfies_the_verifier_protocol(ws):
     """It is passed straight to Talos, so the shape has to match."""
-    from harness.talos import Talos
+    from knossos.talos import Talos
 
     oracle = Oracle(ws.root, tiers=[])
 

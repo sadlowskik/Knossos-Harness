@@ -313,7 +313,7 @@ class OpenAICompatEngine:
     #: providers reject outright -- Groq answers such requests with HTTP 403 and a
     #: bare `error code: 1010`, which looks exactly like a bad API key and is not
     #: one. Any ordinary UA gets through.
-    USER_AGENT = "daedalus-harness/0.1.0"
+    USER_AGENT = "knossos/0.1.0"
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json",
@@ -527,7 +527,7 @@ class OpenAICompatEngine:
             hint = f"the key in ${self.key_env} was rejected"
         elif exc.code == 404:
             hint = (f"model {self.model!r} was not found -- model ids change often; "
-                    f"run `python -m harness --list-models --provider {self.provider}`")
+                    f"run `python -m knossos --list-models --provider {self.provider}`")
         elif exc.code == 429:
             hint = "rate limit or free-tier daily cap reached"
         else:

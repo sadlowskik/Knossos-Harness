@@ -1,4 +1,4 @@
-# Daedalus Harness
+# Knossos
 
 An agentic coding harness whose components are the **system-level form of the
 mechanisms in the [Daedalus](https://github.com/korbinsadlowski/daedalus) model

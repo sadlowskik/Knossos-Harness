@@ -1,5 +1,5 @@
 [package]
-name = "daedalus-harness"
+name = "knossos"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -12,7 +12,7 @@ name = "daedalus"
 path = "src/main.rs"
 
 [lib]
-name = "daedalus_harness"
+name = "knossos"
 path = "src/lib.rs"
 
 [dependencies]

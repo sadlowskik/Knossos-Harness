@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from harness import OpenAICompatEngine, PROVIDERS, Thought, ThinkSplitter
-from harness.engine import LOCAL_HOSTS
+from knossos import OpenAICompatEngine, PROVIDERS, Thought, ThinkSplitter
+from knossos.engine import LOCAL_HOSTS
 
 NEVER = lambda: False          # noqa: E731 -- "not cancelled", for readability
 
@@ -182,7 +182,7 @@ def test_user_agent_is_not_the_urllib_default(server):
     list(engine_for(server).generate("q", "", NEVER))
     ua = Handler.captured["ua"]
     assert ua and "urllib" not in ua.lower()
-    assert ua.startswith("daedalus-harness/")
+    assert ua.startswith("knossos/")
 
 
 def test_api_key_comes_from_the_environment(server, monkeypatch):

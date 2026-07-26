@@ -20,9 +20,9 @@ from typing import List, Sequence
 
 import pytest
 
-from harness.ariadne import Ariadne, Halt
-from harness.talos import Event, Talos, Verdict
-from harness.workspace import Workspace
+from knossos.ariadne import Ariadne, Halt
+from knossos.talos import Event, Talos, Verdict
+from knossos.workspace import Workspace
 
 
 class ScriptedEngine:
@@ -240,7 +240,7 @@ def test_events_describe_the_whole_run(ws):
 
 def test_the_default_verifier_is_named_to_be_uncomfortable():
     """A run with no verifier has no check on correctness; that should show."""
-    from harness.talos import accept_everything
+    from knossos.talos import accept_everything
     verdict = accept_everything(None, [])
     assert verdict.passed
     assert "no verifier configured" in verdict.summary

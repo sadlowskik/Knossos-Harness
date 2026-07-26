@@ -15,8 +15,8 @@ import textwrap
 
 import pytest
 
-from harness import Argus
-from harness.gate import RetrievalGate
+from knossos import Argus
+from knossos.gate import RetrievalGate
 
 
 @pytest.fixture()

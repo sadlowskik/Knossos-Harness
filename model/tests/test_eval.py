@@ -14,8 +14,8 @@ make decisions against. The claims pinned here:
 """
 import pytest
 
-from harness.eval import AnswerGrade, grade_answer, grade_retrieval, report_answers
-from harness.evalset import Case, CASES
+from knossos.eval import AnswerGrade, grade_answer, grade_retrieval, report_answers
+from knossos.evalset import Case, CASES
 
 
 def case(**kw):

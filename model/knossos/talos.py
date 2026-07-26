@@ -45,7 +45,7 @@ __all__ = ["Verdict", "Verifier", "accept_everything", "Event", "Outcome", "Talo
 
 
 EXECUTOR_ROLE = (
-    "You are Talos, the executing half of the Daedalus harness. You carry out a "
+    "You are Talos, the executing half of Knossos. You carry out a "
     "task by reading and editing files in the workspace and running commands. "
     "Work one step at a time and prefer the smallest change that works. When the "
     "task is complete, reply in prose with no tool call -- verification runs "

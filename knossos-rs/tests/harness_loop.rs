@@ -6,15 +6,15 @@
 
 use std::path::{Path, PathBuf};
 
-use daedalus_harness::ariadne::{Ariadne, Halt};
-use daedalus_harness::engine::mock::{text_response, tool_call, MockEngine};
-use daedalus_harness::metis::Plan;
-use daedalus_harness::oracle::Oracle;
-use daedalus_harness::scribe::SymbolIndex;
-use daedalus_harness::session::Session;
-use daedalus_harness::talos::{Outcome, Talos};
-use daedalus_harness::themis::Themis;
-use daedalus_harness::tools::{ToolCtx, ToolRegistry};
+use knossos::ariadne::{Ariadne, Halt};
+use knossos::engine::mock::{text_response, tool_call, MockEngine};
+use knossos::metis::Plan;
+use knossos::oracle::Oracle;
+use knossos::scribe::SymbolIndex;
+use knossos::session::Session;
+use knossos::talos::{Outcome, Talos};
+use knossos::themis::Themis;
+use knossos::tools::{ToolCtx, ToolRegistry};
 
 /// Copy a fixture crate into a temp dir so tests can edit it freely.
 fn fixture(name: &str) -> tempfile::TempDir {
@@ -56,7 +56,7 @@ impl Harness {
         Harness { _dir: dir, root, trace }
     }
 
-    fn talos(&self, scripted: Vec<daedalus_harness::engine::Response>, max_steps: usize, dry: bool) -> Talos {
+    fn talos(&self, scripted: Vec<knossos::engine::Response>, max_steps: usize, dry: bool) -> Talos {
         let mut ctx = ToolCtx::new(&self.root);
         if dry {
             ctx = ctx.dry_run();
@@ -77,7 +77,7 @@ impl Harness {
         )
     }
 
-    async fn run(&self, scripted: Vec<daedalus_harness::engine::Response>, max_steps: usize) -> Outcome {
+    async fn run(&self, scripted: Vec<knossos::engine::Response>, max_steps: usize) -> Outcome {
         let mut talos = self.talos(scripted, max_steps, false);
         let plan = Plan { steps: vec!["do the thing".into()] };
         talos.run("test task", &plan).await.unwrap()

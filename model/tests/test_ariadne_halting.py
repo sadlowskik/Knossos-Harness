@@ -18,7 +18,7 @@ No torch, no network.
 """
 import pytest
 
-from harness.ariadne import Ariadne, Halt, StepOutcome
+from knossos.ariadne import Ariadne, Halt, StepOutcome
 
 
 def passed():

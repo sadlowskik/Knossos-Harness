@@ -17,9 +17,9 @@ import json
 
 import pytest
 
-from harness.tools import (EditFile, ListDir, ReadFile, RunCommand, ToolCall,
+from knossos.tools import (EditFile, ListDir, ReadFile, RunCommand, ToolCall,
                            ToolRegistry, WriteFile, parse_calls, tokenize)
-from harness.workspace import Workspace
+from knossos.workspace import Workspace
 
 
 @pytest.fixture()

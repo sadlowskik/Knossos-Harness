@@ -20,7 +20,7 @@ from collections import Counter
 
 import pytest
 
-from harness import Argus
+from knossos import Argus
 
 
 @pytest.fixture()
@@ -203,7 +203,7 @@ def test_a_rare_term_beats_a_repeated_common_one(tmp_path):
 
     Under plain tf-idf a long file repeating "file" and "defines" hundreds of
     times outranked the short file that actually defines the thing asked about
-    -- a real retrieval on this repo returned `harness/argus.py` for a question
+    -- a real retrieval on this repo returned `knossos/argus.py` for a question
     about the MoE router. Term frequency has to stop paying after a few hits.
     """
     (tmp_path / "chatty.py").write_text(

@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from harness.workspace import PathEscape, Workspace
+from knossos.workspace import PathEscape, Workspace
 
 
 @pytest.fixture()

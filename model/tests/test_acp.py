@@ -28,7 +28,7 @@ import threading
 
 import pytest
 
-from harness import DaedalusAgent, StaticEngine, Thought, PROTOCOL_VERSION
+from knossos import DaedalusAgent, StaticEngine, Thought, PROTOCOL_VERSION
 
 TIMEOUT = 10.0
 

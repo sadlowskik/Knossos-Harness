@@ -17,10 +17,10 @@ from typing import Any, Dict, List, Sequence
 
 import pytest
 
-from harness.acp import DaedalusAgent
-from harness.ariadne import Ariadne
-from harness.talos import Talos, Verdict
-from harness.workspace import Workspace
+from knossos.acp import DaedalusAgent
+from knossos.ariadne import Ariadne
+from knossos.talos import Talos, Verdict
+from knossos.workspace import Workspace
 
 
 class ScriptedEngine:

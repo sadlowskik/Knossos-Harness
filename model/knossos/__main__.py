@@ -1,4 +1,4 @@
-"""`python -m harness` -- start the ACP server on stdio."""
+"""`python -m knossos` -- start the ACP server on stdio."""
 import sys
 
 from .acp import main

@@ -25,9 +25,9 @@ mixture-of-experts layer, what is expert collapse?" matches `moe.py` on every
 content word and is still a general question. That is what `generality` is for,
 and why it outweighs a bare symbol match.
 
-Thresholds here are tuned against `harness.evalset` and re-measurable at any time:
+Thresholds here are tuned against `knossos.evalset` and re-measurable at any time:
 
-    python -m harness.eval --mode gate
+    python -m knossos.eval --mode gate
 """
 from __future__ import annotations
 

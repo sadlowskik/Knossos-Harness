@@ -18,8 +18,8 @@ higher. `repo_specific` cases should show a large gap and `general` cases should
 show none, because a retrieval system cannot help a model recall what RoPE is. If
 the general gap is large too, suspect the grader before believing the harness.
 
-    python -m harness.eval --mode retrieval
-    python -m harness.eval --mode answer --repeat 3
+    python -m knossos.eval --mode retrieval
+    python -m knossos.eval --mode answer --repeat 3
 
 Rate limits are a real hazard here: a free tier will start refusing partway
 through and, ungraded, those refusals look exactly like wrong answers. Provider
@@ -363,7 +363,7 @@ def report_answers(grades: Sequence[AnswerGrade], conditions: Sequence[str]) -> 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m harness.eval",
+        prog="python -m knossos.eval",
         description="Score Argus retrieval, and the same model with and without it.")
     parser.add_argument("--mode", choices=("retrieval", "answer", "gate", "both"),
                         default="retrieval")

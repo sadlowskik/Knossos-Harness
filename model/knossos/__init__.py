@@ -1,4 +1,4 @@
-"""The Daedalus harness -- everything around the engine slot.
+"""Knossos -- the harness: everything around the engine slot.
 
 The `daedalus` package is the architecture: torch-only, no other dependencies,
 meant to be trained from. This package is the system that *uses* a model, and it
@@ -11,7 +11,7 @@ change.
 
 and the plumbing that puts them in an editor:
 
-    acp        the Agent Client Protocol server -- run `python -m harness`
+    acp        the Agent Client Protocol server -- run `python -m knossos`
     jsonrpc    bidirectional JSON-RPC 2.0 over newline-delimited stdio
     engine     the swappable engine slot
 

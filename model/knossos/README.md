@@ -1,4 +1,4 @@
-# The Daedalus harness
+# Knossos
 
 Everything around the engine slot. The `daedalus/` package is the architecture —
 torch-only, meant to be trained from. This package is the system that *uses* a
@@ -26,8 +26,8 @@ By default the agent answers questions. `--execute` lets it carry out tasks —
 reading, editing and running commands.
 
 ```bash
-python -m harness --engine api --provider openwebui --execute
-python -m harness --engine api --provider openwebui --execute --write
+python -m knossos --engine api --provider openwebui --execute
+python -m knossos --engine api --provider openwebui --execute --write
 ```
 
 **Both safety defaults are opt-out, not opt-in.** Execute mode is off unless
@@ -120,7 +120,7 @@ passing as the deterministic stop signal.
 ## Run it
 
 ```bash
-python -m harness --engine retrieval
+python -m knossos --engine retrieval
 ```
 
 It speaks JSON-RPC on stdin/stdout and logs to stderr, so it looks like it hangs
@@ -178,7 +178,7 @@ dependencies and this was not a good enough reason to start.
 
 ```bash
 export GROQ_API_KEY=...            # never passed as an argument, never logged
-python -m harness --engine api --provider groq
+python -m knossos --engine api --provider groq
 ```
 
 | Preset | Endpoint | Key variable |
@@ -196,7 +196,7 @@ python -m harness --engine api --provider groq
 Base URLs are stable; **model ids drift constantly**. When one 404s:
 
 ```bash
-python -m harness --list-models --provider groq
+python -m knossos --list-models --provider groq
 ```
 
 Reasoning models (Qwen3, DeepSeek-R1, gpt-oss) spend part of the token budget
@@ -292,7 +292,7 @@ Eight of ten cases now rank first. `moe-router`, the case that produced wrong
 answers on *both* evaluated models, went from rank 5 to rank 1.
 
 Weights are tuned in-sample against these ten cases. Re-measure with
-`python -m harness.eval --mode retrieval` after changing them.
+`python -m knossos.eval --mode retrieval` after changing them.
 
 ## Results
 
@@ -364,8 +364,8 @@ measured penalty at both scales. It is not the "irrelevant context wrecks small
 models" story the first draft of this file told.
 
 ```bash
-python -m harness.eval --mode gate       # measure it; no model, no network
-python -m harness --no-gate              # disable, always inject
+python -m knossos.eval --mode gate       # measure it; no model, no network
+python -m knossos --no-gate              # disable, always inject
 ```
 
 Currently **18/19 (95%)** on the labelled eval set, against 68% for injecting
@@ -393,8 +393,8 @@ in the set precisely because it fails — no marker, no framing, no symbol.
 ## Evaluation
 
 ```bash
-python -m harness.eval --mode retrieval              # no model, no network
-python -m harness.eval --mode answer --repeat 3      # raw vs harness
+python -m knossos.eval --mode retrieval              # no model, no network
+python -m knossos.eval --mode answer --repeat 3      # raw vs harness
 ```
 
 Two evaluations, separate because they fail for different reasons.

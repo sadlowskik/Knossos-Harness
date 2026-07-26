@@ -13,16 +13,16 @@ policy — is engine-agnostic by construction and survives an engine swap.
 | Path | What it is |
 |---|---|
 | `model/` | The architecture (`daedalus/`) and the Python harness (`harness/`) |
-| `harness-rs/` | The Rust harness — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
+| `knossos-rs/` | The Rust harness — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
 | `fixtures/scratch-crate/` | A minimal cargo library, used as a target for exercising the harness against real Rust |
 
 Two harness implementations exist deliberately. They are kept side by side while
 the question of which line continues is still open:
 
-- **Python** (`model/harness/`) speaks the [Agent Client Protocol](https://agentclientprotocol.com),
+- **Python** (`model/knossos/`) speaks the [Agent Client Protocol](https://agentclientprotocol.com),
   so it runs in Zed and JetBrains today without forking anything. It is the one
   with measured results — retrieval ranking, a gate, and a 19-case evaluation set.
-- **Rust** (`harness-rs/`) is architecturally further along and could be linked
+- **Rust** (`knossos-rs/`) is architecturally further along and could be linked
   directly into an editor fork rather than spawned as a subprocess.
 
 ## Adding the editor fork

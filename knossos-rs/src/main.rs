@@ -3,17 +3,17 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use daedalus_harness::ariadne::Ariadne;
-use daedalus_harness::config::{Config, EngineKind};
-use daedalus_harness::engine::{self, Message, Request};
-use daedalus_harness::mnemosyne::Mnemosyne;
-use daedalus_harness::oracle::Oracle;
-use daedalus_harness::scribe::SymbolIndex;
-use daedalus_harness::session::{Session, TraceEvent};
-use daedalus_harness::talos::Talos;
-use daedalus_harness::themis::Themis;
-use daedalus_harness::tools::{ToolCtx, ToolRegistry};
-use daedalus_harness::{diff, metis, repl};
+use knossos::ariadne::Ariadne;
+use knossos::config::{Config, EngineKind};
+use knossos::engine::{self, Message, Request};
+use knossos::mnemosyne::Mnemosyne;
+use knossos::oracle::Oracle;
+use knossos::scribe::SymbolIndex;
+use knossos::session::{Session, TraceEvent};
+use knossos::talos::Talos;
+use knossos::themis::Themis;
+use knossos::tools::{ToolCtx, ToolRegistry};
+use knossos::{diff, metis, repl};
 
 #[derive(Parser)]
 #[command(
@@ -326,7 +326,7 @@ async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
 
 async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
     let (talos, _) = build_talos(cfg, opts, true)?;
-    daedalus_harness::serve::run(talos, cfg.max_tokens).await
+    knossos::serve::run(talos, cfg.max_tokens).await
 }
 
 async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result<()> {
@@ -344,7 +344,7 @@ async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result
 }
 
 fn init_tracing(verbose: bool) {
-    let filter = if verbose { "daedalus_harness=debug" } else { "daedalus_harness=info" };
+    let filter = if verbose { "knossos=debug" } else { "knossos=info" };
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

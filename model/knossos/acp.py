@@ -24,7 +24,7 @@ answers from the wrong file you can see that it did, and why.
 
 Run it directly to check it starts:
 
-    python -m harness --engine retrieval
+    python -m knossos --engine retrieval
 
 Then register it with Zed in `settings.json` under `agent_servers`.
 """
@@ -465,7 +465,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     from .jsonrpc import _configure_stdio
 
     parser = argparse.ArgumentParser(
-        prog="python -m harness",
+        prog="python -m knossos",
         description="Daedalus as an ACP agent. Speaks JSON-RPC over stdio; "
                     "spawn it from Zed, JetBrains, or any ACP client.")
     parser.add_argument("--engine", choices=("retrieval", "api", "transformers"),
