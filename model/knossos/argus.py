@@ -29,12 +29,12 @@ the same idea as Cursor's Merkle sync, minus the tree.
 Language support:
 
     Python    exact, via the stdlib `ast` module.
-    Rust      approximate, via a declaration scanner (see `_scan_rust`). Rust
-              declarations are regular enough that this finds them reliably, but
-              it does not resolve types, generics, or cross-file references.
-              `exact=False` says so. The upgrade path is a tree-sitter backend
-              behind the same `_parse` seam; inside a Lapce fork the better
-              upgrade is rust-analyzer, which already has a real index.
+    Rust      exact when `tree-sitter` and `tree-sitter-rust` are installed,
+              approximate otherwise. Both are optional: the core of this package
+              is stdlib-only, and a missing parser degrades to the declaration
+              scanner rather than failing. `FileRecord.exact` records which one
+              ran, so nothing approximate is ever reported as ground truth.
+              Install with `pip install tree-sitter tree-sitter-rust`.
     other     lexical only -- indexed for identifier search, no symbols.
 """
 from __future__ import annotations
@@ -59,6 +59,45 @@ DEFAULT_EXCLUDE = (
 MAX_FILE_BYTES = 1_000_000
 
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+#: tree-sitter-rust node types worth indexing, mapped onto Argus kinds.
+_RUST_KINDS = {
+    "function_item": "fn",
+    "function_signature_item": "fn",
+    "struct_item": "struct",
+    "enum_item": "enum",
+    "union_item": "struct",
+    "trait_item": "trait",
+    "impl_item": "impl",
+    "mod_item": "mod",
+    "type_item": "type",
+    "const_item": "const",
+    "static_item": "static",
+    "macro_definition": "macro",
+}
+
+_PARSERS: Dict[str, object] = {}
+
+
+def _rust_parser():
+    """Build a tree-sitter Rust parser once, or return None if unavailable.
+
+    Both `tree-sitter` and `tree-sitter-rust` are optional. The rest of this
+    package is stdlib-only and stays usable without them -- Rust simply falls
+    back to the declaration scanner, and `FileRecord.exact` says so.
+    """
+    if "rust" in _PARSERS:
+        return _PARSERS["rust"]
+    parser = None
+    try:
+        import tree_sitter
+        import tree_sitter_rust
+
+        parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
+    except Exception:
+        parser = None
+    _PARSERS["rust"] = parser
+    return parser
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 # Identifiers this common carry no signal about *which* file you want.
@@ -363,6 +402,67 @@ class Argus:
                 else:
                     record.imports.append(node.module)
 
+    def _scan_rust(self, record: FileRecord, text: str) -> None:
+        """Exact via tree-sitter when available, approximate otherwise."""
+        if _rust_parser() is not None and self._scan_rust_exact(record, text):
+            record.exact = True
+            return
+        self._scan_rust_lexical(record, text)
+
+    def _scan_rust_exact(self, record: FileRecord, text: str) -> bool:
+        """Parse Rust with tree-sitter. Returns False if it could not run.
+
+        A real parse, so unlike the line scanner it does not mistake a
+        declaration inside a string or a comment for a definition, and it gets
+        the true extent of every item rather than guessing by brace counting.
+        """
+        parser = _rust_parser()
+        if parser is None:
+            return False
+        try:
+            tree = parser.parse(text.encode("utf-8"))
+        except Exception as exc:                # a grammar/ABI mismatch
+            log_note = f"tree-sitter failed: {exc}"
+            record.parse_error = log_note
+            return False
+
+        def name_of(node) -> Optional[str]:
+            field = node.child_by_field_name("name")
+            if field is None and node.type == "impl_item":
+                # `impl Trait for Type` -- the type is what a reader means.
+                field = node.child_by_field_name("type")
+            return field.text.decode("utf-8", "replace") if field is not None else None
+
+        def first_line(node) -> str:
+            raw = node.text.decode("utf-8", "replace")
+            return raw.split("{", 1)[0].split("\n", 1)[0].strip().rstrip(";")
+
+        def walk(node, parent: Optional[str]) -> None:
+            kind = _RUST_KINDS.get(node.type)
+            child_parent = parent
+            if kind:
+                name = name_of(node)
+                if name:
+                    record.symbols.append(Symbol(
+                        name=name, kind=kind, file=record.path,
+                        start_line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                        signature=first_line(node), parent=parent,
+                        language="rust"))
+                    # Methods belong to their impl/trait, matching how Python
+                    # methods carry their class.
+                    if node.type in ("impl_item", "trait_item", "mod_item"):
+                        child_parent = name
+            elif node.type == "use_declaration":
+                body = node.text.decode("utf-8", "replace")
+                record.imports.append(
+                    body.removeprefix("use").strip().rstrip(";").strip())
+            for child in node.children:
+                walk(child, child_parent)
+
+        walk(tree.root_node, None)
+        return True
+
     _RUST_DECL = re.compile(
         r"""^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:default[ \t]+)?(?:const[ \t]+)?
             (?:async[ \t]+)?(?:unsafe[ \t]+)?(?:extern[ \t]+"[^"]*"[ \t]+)?
@@ -372,8 +472,8 @@ class Argus:
     )
     _RUST_USE = re.compile(r"^[ \t]*(?:pub[ \t]+)?use[ \t]+([^;]+);", re.MULTILINE)
 
-    def _scan_rust(self, record: FileRecord, text: str) -> None:
-        """Approximate. `record.exact` is False and stays False.
+    def _scan_rust_lexical(self, record: FileRecord, text: str) -> None:
+        """Fallback when tree-sitter is absent. `record.exact` stays False.
 
         A declaration scanner, not a parser: it finds `fn`/`struct`/`impl`/... at
         the start of a line and takes the name that follows. It does not resolve
@@ -687,7 +787,7 @@ class Argus:
             # Bump whenever a scored field is added. v2 introduced `defs` and
             # `path_terms`; a v1 file loads cleanly and leaves both empty, which
             # turns off two thirds of the ranking without any visible error.
-            "version": 2,
+            "version": 3,
             "root": str(self.root),
             # Every Counter field needs an explicit dict(): asdict() rebuilds a
             # dict subclass by handing its constructor (key, value) tuples, and
@@ -720,7 +820,7 @@ class Argus:
         # An index written before a field existed loads without complaint and
         # leaves that Counter empty -- ranking then runs with a scoring signal
         # silently switched off. Refusing the file forces a rebuild instead.
-        if blob.get("version") != 2:
+        if blob.get("version") != 3:
             return False
 
         self.files = {}

@@ -1,0 +1,6 @@
+# Optional extras for Knossos. The package is stdlib-only without them.
+#
+# tree-sitter gives exact Rust symbols; without it Argus falls back to a
+# line scanner and reports FileRecord.exact = False.
+tree-sitter>=0.23
+tree-sitter-rust>=0.23

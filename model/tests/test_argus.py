@@ -21,6 +21,7 @@ from collections import Counter
 import pytest
 
 from knossos import Argus
+from knossos.argus import _rust_parser
 
 
 @pytest.fixture()
@@ -99,9 +100,15 @@ def test_python_symbols_are_exact(repo):
     assert by_name["Router"].end_line > by_name["balance"].start_line
 
 
-def test_rust_is_found_but_never_claimed_exact(repo):
+def test_rust_exactness_reflects_the_parser_that_ran(repo):
+    """`exact` is a claim about provenance, not a constant.
+
+    It was False unconditionally when the line scanner was the only Rust
+    backend. With tree-sitter installed a real parse runs, and reporting that
+    as approximate would understate what Oracle can rely on.
+    """
     rec = repo.files["lib.rs"]
-    assert rec.exact is False
+    assert rec.exact is (_rust_parser() is not None)
     kinds = {(s.name, s.kind) for s in rec.symbols}
     assert ("Router", "struct") in kinds
     assert ("balance", "fn") in kinds
@@ -243,3 +250,114 @@ def test_save_load_round_trip(repo, tmp_path):
 
     report = fresh.scan()                            # nothing changed on disk
     assert report.parsed == 0
+
+
+# --------------------------------------------------------------- rust parsing
+
+RUST_DECOY = """
+//! A doc comment mentioning `fn ghost_in_the_comment()`.
+
+use std::collections::HashMap;
+
+pub struct Router {
+    weights: Vec<f32>,
+}
+
+impl Router {
+    pub fn forward(&self, x: f32) -> f32 {
+        let sql = "fn ghost_in_a_string(&self) -> ()";
+        let _ = sql;
+        x
+    }
+}
+
+// fn ghost_in_a_line_comment() {}
+
+pub fn balance(scores: &[f32]) -> f32 {
+    scores.iter().sum()
+}
+"""
+
+
+@pytest.fixture()
+def rust_repo(tmp_path):
+    (tmp_path / "lib.rs").write_text(RUST_DECOY, encoding="utf-8")
+    argus = Argus(tmp_path)
+    argus.scan()
+    return argus
+
+
+@pytest.mark.skipif(_rust_parser() is None, reason="tree-sitter not installed")
+def test_rust_is_exact_when_tree_sitter_is_available(rust_repo):
+    rec = rust_repo.files["lib.rs"]
+    assert rec.exact is True, "a real parse must not be labelled approximate"
+
+
+@pytest.mark.skipif(_rust_parser() is None, reason="tree-sitter not installed")
+def test_declarations_inside_strings_and_comments_are_not_symbols(rust_repo):
+    """The case the line scanner cannot get right.
+
+    A regex sees `fn ghost_in_a_string` in a string literal and reports a
+    function that does not exist. Retrieval then cites a definition that is not
+    there, which is worse than missing it.
+    """
+    names = {s.name for s in rust_repo.files["lib.rs"].symbols}
+    for ghost in (
+        "ghost_in_a_string",
+        "ghost_in_a_line_comment",
+        "ghost_in_the_comment",
+    ):
+        assert ghost not in names, f"{ghost} is not a real definition"
+
+
+@pytest.mark.skipif(_rust_parser() is None, reason="tree-sitter not installed")
+def test_rust_methods_carry_their_impl_as_parent(rust_repo):
+    """Same guarantee Python methods get: `Router.forward`, not a bare `forward`."""
+    forward = [s for s in rust_repo.files["lib.rs"].symbols if s.name == "forward"]
+    assert forward, "expected the method to be found"
+    assert forward[0].parent == "Router"
+    assert forward[0].qualname == "Router.forward"
+
+
+@pytest.mark.skipif(_rust_parser() is None, reason="tree-sitter not installed")
+def test_rust_kinds_and_extents_are_real(rust_repo):
+    # `struct Router` and `impl Router` share a name -- key by kind as well, or
+    # one silently shadows the other.
+    by_key = {(s.name, s.kind): s for s in rust_repo.files["lib.rs"].symbols}
+    assert ("Router", "struct") in by_key
+    assert ("Router", "impl") in by_key
+    assert ("balance", "fn") in by_key
+    by_name = {s.name: s for s in rust_repo.files["lib.rs"].symbols}
+    # A real parse knows where the impl block ends; brace-counting guesses.
+    impl = [s for s in rust_repo.files["lib.rs"].symbols if s.kind == "impl"][0]
+    assert impl.end_line > by_name["forward"].start_line
+
+
+@pytest.mark.skipif(_rust_parser() is None, reason="tree-sitter not installed")
+def test_rust_imports_are_extracted(rust_repo):
+    assert "std::collections::HashMap" in rust_repo.files["lib.rs"].imports
+
+
+def test_the_lexical_fallback_still_finds_declarations(tmp_path):
+    """Without tree-sitter, Rust must degrade rather than disappear.
+
+    The scanner is allowed to be wrong about ghosts; it is not allowed to find
+    nothing, and it must never claim to be exact.
+    """
+    argus = Argus(tmp_path)
+    rec = argus._parse("lib.rs", RUST_DECOY, "sha")
+    rec.symbols.clear()
+    rec.imports.clear()
+    rec.exact = False
+    argus._scan_rust_lexical(rec, RUST_DECOY)
+
+    names = {s.name for s in rec.symbols}
+    assert {"Router", "balance", "forward"} <= names
+    assert rec.exact is False, "the fallback must never be reported as exact"
+
+
+def test_definitions_field_is_populated_for_rust(rust_repo):
+    """Ranking leans hardest on `defs`; Rust must contribute to it too."""
+    defs = rust_repo.files["lib.rs"].defs
+    assert defs.get("router", 0) > 0
+    assert defs.get("balance", 0) > 0

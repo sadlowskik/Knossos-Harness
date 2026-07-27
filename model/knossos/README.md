@@ -243,10 +243,10 @@ that want to report on the retrieval rather than reason over it.
 
 ## Known limits
 
-- **Rust symbols are approximate.** Python goes through `ast` and is exact. Rust
-  goes through a declaration scanner that resolves no types, no generics, and no
-  cross-file references. `FileRecord.exact` is `False` for Rust and says so.
-  Upgrade path: tree-sitter standalone, or rust-analyzer inside an editor.
+- **Rust needs an optional dependency to be exact.** With `tree-sitter` and
+  `tree-sitter-rust` installed, Rust is parsed properly and `FileRecord.exact`
+  is `True`. Without them it falls back to a declaration scanner and `exact`
+  stays `False`. Nothing approximate is ever reported as ground truth.
 - **One turn at a time.** `session/prompt` occupies the worker thread, so two
   sessions cannot prompt concurrently. `session/cancel` is exempt — it runs on
   the reader thread, or it could never interrupt the turn it targets.
@@ -427,6 +427,33 @@ Limits worth knowing before trusting a number:
   you test it.
 - Use `--repeat 3` or more. A single sample per condition reports noise as
   signal.
+
+## Rust
+
+Rust is parsed with tree-sitter when it is available:
+
+```bash
+pip install tree-sitter tree-sitter-rust
+```
+
+Both are **optional**. The rest of this package is stdlib-only and stays usable
+without them -- Rust degrades to a line-based declaration scanner and
+`FileRecord.exact` records which parser ran, so a caller can tell ground truth
+from a guess.
+
+The difference is not cosmetic. A regex sees `fn` inside a string literal or a
+comment and reports a function that does not exist; retrieval then cites a
+definition that is not there, which is worse than missing it. There are tests
+for exactly that case.
+
+Measured against Lapce's own source (183 files, 147 of them Rust):
+
+| | |
+|---|---|
+| Parsed exactly | 147/147 |
+| Symbols | 3,183 |
+| Cold scan | 2.5s |
+| Warm rescan | 1.6s |
 
 ## Tests
 
