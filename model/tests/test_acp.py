@@ -132,7 +132,10 @@ def test_initialize_reports_capabilities(client):
     })["result"]
     assert result["protocolVersion"] == PROTOCOL_VERSION
     assert result["agentInfo"]["name"] == "daedalus"
-    assert result["agentCapabilities"]["loadSession"] is False
+    # True since session/load was implemented. A capability is a promise:
+    # advertising it without the handler makes clients call a method that
+    # errors, and hiding a working one means nobody ever calls it.
+    assert result["agentCapabilities"]["loadSession"] is True
     assert result["authMethods"] == []
 
 

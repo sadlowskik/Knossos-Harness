@@ -42,6 +42,7 @@ from .ariadne import Ariadne
 from .engine import (PROVIDERS, Engine, OpenAICompatEngine, RetrievalOnlyEngine,
                      Thought)
 from .gate import RetrievalGate
+from .mcp import McpClient, connect_all
 from .jsonrpc import INVALID_PARAMS, METHOD_NOT_FOUND, Peer, RpcError, log
 from .oracle import Oracle
 from .talos import Event, Talos
@@ -89,6 +90,13 @@ class Session:
     #: Built on first use in execute mode, then kept so the conversation and
     #: any staged edits survive between prompts.
     talos: Optional[Talos] = None
+    #: Every `session/update` sent, in order, so `session/load` can replay the
+    #: conversation. Stored as the update payloads themselves rather than as
+    #: prose: replay must reproduce what the client originally rendered,
+    #: including tool calls and their file locations, not a summary of it.
+    history: List[Dict[str, Any]] = field(default_factory=list)
+    #: Connected MCP servers, kept so they can be shut down with the session.
+    mcp: List[McpClient] = field(default_factory=list)
 
 
 class DaedalusAgent:
@@ -123,6 +131,7 @@ class DaedalusAgent:
             "initialize": self.initialize,
             "authenticate": self.authenticate,
             "session/new": self.session_new,
+            "session/load": self.session_load,
             "session/prompt": self.session_prompt,
             "session/cancel": self.session_cancel,
         }
@@ -145,7 +154,7 @@ class DaedalusAgent:
         return {
             "protocolVersion": version,
             "agentCapabilities": {
-                "loadSession": False,
+                "loadSession": True,
                 "promptCapabilities": {
                     "image": False,
                     "audio": False,
@@ -184,9 +193,45 @@ class DaedalusAgent:
         except OSError as exc:                     # a read-only workspace is not fatal
             log(f"[acp] could not persist index: {exc}")
 
+        # MCP servers the client declared. Previously accepted and discarded,
+        # which meant a configured tool silently never appeared.
+        mcp_clients, mcp_errors = connect_all(params.get("mcpServers") or [])
+        for message in mcp_errors:
+            log(f"[acp] mcp: {message}")
+        if mcp_clients:
+            total = sum(len(c.tools) for c in mcp_clients)
+            log(f"[acp] {len(mcp_clients)} mcp server(s), {total} tool(s)")
+
         self.sessions[session_id] = Session(id=session_id, cwd=cwd, argus=argus,
-                                            gate=gate)
+                                            gate=gate, mcp=mcp_clients)
         return {"sessionId": session_id}
+
+    def mcp_tools(self, session: Session) -> List[Any]:
+        """Every remote tool this session can reach, flattened."""
+        return [tool for client in session.mcp for tool in client.tools]
+
+    def session_load(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Resume a session, replaying its conversation to the client.
+
+        The spec is specific about the order: the agent replays the history as
+        `session/update` notifications *before* answering this request, so a
+        client that renders updates as they arrive rebuilds the transcript and
+        only then sees the call succeed.
+
+        Replay is not re-execution. The updates are the ones already sent, so
+        nothing runs again -- reopening a panel must not re-edit files.
+        """
+        session_id = params.get("sessionId") or ""
+        session = self.sessions.get(session_id)
+        if session is None:
+            raise RpcError(INVALID_PARAMS, f"unknown session: {session_id!r}")
+
+        log(f"[acp] replaying {len(session.history)} update(s) for {session_id}")
+        for update in session.history:
+            # record=False: replaying must not append the history to itself,
+            # which would double it on every load.
+            self._update(session, update, record=False)
+        return {}
 
     def session_cancel(self, params: Dict[str, Any]) -> None:
         session = self.sessions.get(params.get("sessionId", ""))
@@ -256,7 +301,12 @@ class DaedalusAgent:
 
     # ----------------------------------------------------------------- helpers
 
-    def _update(self, session: Session, update: Dict[str, Any]) -> None:
+    def _update(self, session: Session, update: Dict[str, Any],
+                record: bool = True) -> None:
+        # Recorded before sending, so a replay contains what a live client saw
+        # even if the connection drops mid-turn.
+        if record:
+            session.history.append(update)
         if self.peer is not None:
             self.peer.notify("session/update",
                              {"sessionId": session.id, "update": update})
