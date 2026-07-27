@@ -28,6 +28,7 @@ Planned, not yet built:
     Metis      read-only planner
     Lethe      bounded context with summarise-and-reset
 """
+from .lsp import LspClient, Location, path_to_uri, uri_to_path
 from .mcp import McpClient, McpServer, McpTool, connect_all
 from .lethe import Lethe, CompactionResult, extractive_summary
 from .argus import Argus, Symbol, FileRecord, Retrieved, ScanReport
@@ -43,7 +44,7 @@ from .talos import Talos, Verdict, Verifier, Outcome, Event
 from .oracle import Oracle, OracleVerdict, Tier, TierResult
 
 __all__ = [
-    "Argus", "Lethe", "McpClient", "McpServer", "McpTool", "connect_all", "CompactionResult", "extractive_summary", "Symbol", "FileRecord", "Retrieved", "ScanReport",
+    "Argus", "Lethe", "LspClient", "Location", "path_to_uri", "uri_to_path", "McpClient", "McpServer", "McpTool", "connect_all", "CompactionResult", "extractive_summary", "Symbol", "FileRecord", "Retrieved", "ScanReport",
     "Engine", "RetrievalOnlyEngine", "StaticEngine", "OpenAICompatEngine",
     "Provider", "PROVIDERS", "Thought", "ThinkSplitter",
     "DaedalusAgent", "Session", "PROTOCOL_VERSION",

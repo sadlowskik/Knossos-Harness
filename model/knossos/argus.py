@@ -49,7 +49,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-__all__ = ["Argus", "Symbol", "FileRecord", "Retrieved", "ScanReport", "Context", "render"]
+__all__ = ["Argus", "Symbol", "FileRecord", "Retrieved", "ScanReport", "Context",
+           "render"]
 
 DEFAULT_INCLUDE = ("*.py", "*.rs", "*.toml", "*.md")
 DEFAULT_EXCLUDE = (
@@ -248,11 +249,16 @@ class Argus:
 
     def __init__(self, root: str | Path,
                  include: Sequence[str] = DEFAULT_INCLUDE,
-                 exclude: Sequence[str] = DEFAULT_EXCLUDE) -> None:
+                 exclude: Sequence[str] = DEFAULT_EXCLUDE,
+                 lsp: Optional[object] = None) -> None:
         self.root = Path(root).resolve()
         self.include = tuple(include)
         self.exclude = set(exclude)
         self.files: Dict[str, FileRecord] = {}
+        #: An optional `lsp.LspClient`. When present, `users_of` answers with
+        #: real cross-file references instead of matching module names. Kept as
+        #: a plain attribute so this module has no import-time dependency on it.
+        self.lsp = lsp
 
     # ---------------------------------------------------------------- scanning
 
@@ -534,11 +540,44 @@ class Argus:
         rec = self.files.get(path)
         return list(rec.symbols) if rec else []
 
+    def users_of(self, symbol: Symbol) -> List[str]:
+        """Files that actually reference `symbol`, via the language server.
+
+        This is the question `importers_of` can only approximate. Name matching
+        says "some file imports something called `config`"; a language server
+        says which `config`, having resolved it.
+
+        Returns an empty list when no server is attached, so callers must treat
+        "no answer" and "no users" as the same -- which is why `importers_of`
+        remains the fallback rather than being replaced.
+        """
+        if self.lsp is None or not getattr(self.lsp, "available", lambda: False)():
+            return []
+        try:
+            locations = self.lsp.references(
+                self.root / symbol.file,
+                symbol.start_line - 1,          # LSP counts lines from zero
+                0,
+            )
+        except Exception:                        # a server that dies mid-query
+            return []
+
+        out: List[str] = []
+        for location in locations:
+            try:
+                rel = location.path.resolve().relative_to(self.root).as_posix()
+            except ValueError:                   # outside the workspace
+                continue
+            if rel != symbol.file and rel not in out:
+                out.append(rel)
+        return out
+
     def importers_of(self, path: str) -> List[str]:
         """Files whose imports plausibly resolve to `path`.
 
         Module-path matching, not real resolution: `daedalus/moe.py` matches an
-        import of `daedalus.moe` or `moe`. Good enough to walk one hop out.
+        import of `daedalus.moe` or `moe`. Good enough to walk one hop out, and
+        the fallback when no language server is attached -- see `users_of`.
         """
         stem = Path(path).with_suffix("").as_posix()
         dotted = stem.replace("/", ".")
