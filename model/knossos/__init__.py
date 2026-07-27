@@ -28,6 +28,7 @@ Planned, not yet built:
     Metis      read-only planner
     Lethe      bounded context with summarise-and-reset
 """
+from .lethe import Lethe, CompactionResult, extractive_summary
 from .argus import Argus, Symbol, FileRecord, Retrieved, ScanReport
 from .engine import (Engine, RetrievalOnlyEngine, StaticEngine,
                      OpenAICompatEngine, Provider, PROVIDERS, Thought,
@@ -41,7 +42,7 @@ from .talos import Talos, Verdict, Verifier, Outcome, Event
 from .oracle import Oracle, OracleVerdict, Tier, TierResult
 
 __all__ = [
-    "Argus", "Symbol", "FileRecord", "Retrieved", "ScanReport",
+    "Argus", "Lethe", "CompactionResult", "extractive_summary", "Symbol", "FileRecord", "Retrieved", "ScanReport",
     "Engine", "RetrievalOnlyEngine", "StaticEngine", "OpenAICompatEngine",
     "Provider", "PROVIDERS", "Thought", "ThinkSplitter",
     "DaedalusAgent", "Session", "PROTOCOL_VERSION",

@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Protocol, Sequence
 
 from .ariadne import Ariadne, Halt, StepOutcome
+from .lethe import Lethe
 from .tools import ToolCall, ToolRegistry, ToolResult, parse_calls
 from .workspace import Workspace
 
@@ -122,13 +123,18 @@ class Talos:
                  tools: Optional[ToolRegistry] = None,
                  ariadne: Optional[Ariadne] = None,
                  verifier: Optional[Verifier] = None,
-                 constitution: str = "") -> None:
+                 constitution: str = "",
+                 lethe: Optional[Lethe] = None) -> None:
         self.engine = engine
         self.ws = workspace
         self.tools = tools or ToolRegistry.default()
         self.ariadne = ariadne or Ariadne()
         self.verify = verifier or accept_everything
         self.constitution = constitution
+        #: Bounds the transcript. The repair loop makes this necessary rather
+        #: than merely nice: every failed attempt appends a verification report,
+        #: and resending all of them each step is quadratic.
+        self.lethe = lethe or Lethe()
 
         #: The rendered conversation so far. Persisted across `run` and
         #: `resume` so a user can redirect without losing context.
@@ -175,7 +181,17 @@ class Talos:
             header.append(f"\n# Constitution\n\nThese apply to everything you do.\n\n"
                           f"{self.constitution}")
         header.append(f"\n{self.tools.render()}")
+        # Compaction happens here rather than after each append, so the
+        # transcript is bounded exactly where it is about to be spent.
+        self.compact()
         return "\n".join(header) + "\n\n" + "\n".join(self.transcript)
+
+    def compact(self) -> bool:
+        """Bring the transcript within Lethe's budget. Returns True if it acted."""
+        result = self.lethe.compact(self.transcript)
+        if result.compacted:
+            self.transcript = result.transcript
+        return result.compacted
 
     # ----------------------------------------------------------------- loop
 

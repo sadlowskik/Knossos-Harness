@@ -19,13 +19,28 @@ Stdlib only, like the rest of the harness.
 """
 from __future__ import annotations
 
+import time
 import os
+from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import Dict, List, Optional, Tuple
 
 
 class PathEscape(PermissionError):
     """A tool asked for a path outside the workspace."""
+
+
+@dataclass(frozen=True)
+class JournalEntry:
+    """What a path looked like immediately before Knossos changed it.
+
+    `before is None` means the file did not exist, so undoing that entry means
+    deleting it rather than restoring empty content -- a distinction that
+    matters the first time an agent creates a file you did not want.
+    """
+
+    path: Path
+    before: Optional[str]
 
 
 class Workspace:
@@ -40,6 +55,78 @@ class Workspace:
         self._staged: Dict[Path, str] = {}
 
     # ------------------------------------------------------------------ jail
+
+        #: Every disk write, oldest first, with the content it replaced. This
+        #: is what makes a bad turn undoable: staging protects a dry run, but
+        #: once `apply` has written, only a journal can put it back.
+        self._journal: List[JournalEntry] = []
+        #: label -> journal length when the mark was taken.
+        self._marks: Dict[str, int] = {}
+
+    # ------------------------------------------------------------ checkpoints
+
+    def checkpoint(self, label: str) -> str:
+        """Mark a point the workspace can be rewound to.
+
+        Cheap: it records a position in the journal rather than copying files,
+        so marking before every turn costs nothing.
+        """
+        self._marks[label] = len(self._journal)
+        return label
+
+    def rewind(self, label: str) -> List[Path]:
+        """Restore every file to its state at `label`. Returns what changed.
+
+        Replayed newest-first so a path written several times lands on the
+        content it had at the mark, not on an intermediate version.
+        """
+        if label not in self._marks:
+            raise KeyError(f"no checkpoint named {label!r}")
+        mark = self._marks[label]
+        restored: List[Path] = []
+
+        for entry in reversed(self._journal[mark:]):
+            if entry.before is None:
+                # It did not exist before; undoing means removing it.
+                try:
+                    entry.path.unlink()
+                    restored.append(entry.path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            else:
+                try:
+                    entry.path.parent.mkdir(parents=True, exist_ok=True)
+                    entry.path.write_text(entry.before, encoding="utf-8")
+                    restored.append(entry.path)
+                except OSError:
+                    pass
+
+        del self._journal[mark:]
+        # Marks taken after this one no longer refer to anything real.
+        self._marks = {k: v for k, v in self._marks.items() if v <= mark}
+        # Deduplicate while preserving order.
+        seen, out = set(), []
+        for path in restored:
+            if path not in seen:
+                seen.add(path)
+                out.append(path)
+        return out
+
+    @property
+    def journal(self) -> List[JournalEntry]:
+        return list(self._journal)
+
+    def _record(self, path: Path) -> None:
+        """Capture a path's current content before it is overwritten."""
+        try:
+            before: Optional[str] = path.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, NotADirectoryError):
+            before = None
+        except OSError:
+            before = None
+        self._journal.append(JournalEntry(path=path, before=before))
 
     def resolve(self, requested: str | os.PathLike) -> Path:
         """Resolve `requested` against the root, refusing anything that escapes.
@@ -99,6 +186,7 @@ class Workspace:
         if self.dry_run:
             self._staged[path] = content
             return path
+        self._record(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return path
@@ -149,6 +237,7 @@ class Workspace:
         written: List[Path] = []
         for path in targets:
             content = self._staged.pop(path)
+            self._record(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             written.append(path)
