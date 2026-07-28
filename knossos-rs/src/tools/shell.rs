@@ -11,6 +11,7 @@
 //! restricted to read-only subcommands.
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -19,6 +20,11 @@ use serde_json::json;
 use super::{req_str, Tool, ToolCtx, ToolOutput};
 
 const MAX_OUTPUT: usize = 30_000;
+
+/// How long a single command may run. Matches `oracle::COMMAND_TIMEOUT`: both
+/// bound workspace-controlled work, and a build that is too slow for one is too
+/// slow for the other.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Programs the agent may invoke.
 const ALLOWED: &[&str] = &["cargo", "rustc", "rustfmt", "git"];
@@ -64,6 +70,13 @@ impl Tool for Run {
         })
     }
 
+    /// The allowlist keeps commands to builds and inspections, but a build
+    /// writes `target/` and a command is the only way to answer "run the tests
+    /// and tell me what breaks" — so this is work, not reconnaissance.
+    fn consequential(&self) -> bool {
+        true
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let raw = req_str(input, "command")?;
         let argv = tokenize(raw);
@@ -75,16 +88,29 @@ impl Tool for Run {
             return Ok(ToolOutput::error(reason));
         }
 
-        let output = tokio::process::Command::new(program)
+        let child = tokio::process::Command::new(program)
             .args(args)
             .current_dir(ctx.root())
             .stdin(Stdio::null())
-            .output()
-            .await;
+            .kill_on_drop(true)
+            .output();
 
-        let output = match output {
-            Ok(o) => o,
-            Err(e) => return Ok(ToolOutput::error(format!("failed to run `{program}`: {e}"))),
+        // `cargo run` and `cargo test` are both on the allowlist, so this
+        // executes workspace code — which is entitled to loop forever. Every
+        // other subprocess in either harness is bounded; this one was not, and
+        // `serve` awaits dispatch inline on the stdin-reading thread, so a
+        // single hang wedged the server permanently against every later
+        // command, `shutdown` included.
+        let output = match tokio::time::timeout(COMMAND_TIMEOUT, child).await {
+            Err(_) => {
+                return Ok(ToolOutput::error(format!(
+                    "`{program}` timed out after {COMMAND_TIMEOUT:?} and was killed"
+                )))
+            }
+            Ok(Err(e)) => {
+                return Ok(ToolOutput::error(format!("failed to run `{program}`: {e}")))
+            }
+            Ok(Ok(o)) => o,
         };
 
         let mut body = String::new();

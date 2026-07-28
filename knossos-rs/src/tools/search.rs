@@ -39,6 +39,10 @@ impl Tool for Search {
         })
     }
 
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let pattern = req_str(input, "pattern")?;
         let re = match regex::Regex::new(pattern) {
@@ -145,6 +149,10 @@ impl Tool for SearchCode {
             },
             "required": ["query"]
         })
+    }
+
+    fn consequential(&self) -> bool {
+        false
     }
 
     async fn run(&self, input: &serde_json::Value, _ctx: &ToolCtx) -> Result<ToolOutput> {

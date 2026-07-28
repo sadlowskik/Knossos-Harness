@@ -49,6 +49,15 @@ pub enum TraceEvent {
         passed: bool,
         summary: String,
     },
+    /// The conversation was shrunk to fit its budget.
+    ///
+    /// Traced because it is otherwise invisible: the run continues normally and
+    /// the only evidence that context was given up is that the model stops
+    /// referring to something it was told earlier.
+    ContextCompacted {
+        step: usize,
+        tokens: usize,
+    },
     Halt {
         step: usize,
         reason: String,

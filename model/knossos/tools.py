@@ -34,7 +34,9 @@ a non-event instead of something to pattern-match for.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -42,11 +44,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .jsonrpc import log
 from .workspace import PathEscape, Workspace
 
 __all__ = [
     "ToolSpec", "ToolResult", "ToolCall", "Tool", "ToolRegistry",
-    "ReadFile", "WriteFile", "EditFile", "ListDir", "RunCommand",
+    "ReadFile", "WriteFile", "EditFile", "ListDir", "Search", "RunCommand",
     "parse_calls", "tokenize",
 ]
 
@@ -81,6 +84,25 @@ class ToolCall:
     args: Dict[str, Any]
     #: Where in the reply it was found, for reporting.
     raw: str = ""
+    #: The provider's own identifier for this call, when it made one.
+    #:
+    #: Native tool calling pairs a call with its result by id, and a provider
+    #: given results it cannot match to calls will either error or quietly lose
+    #: the association. Knossos normalises native calls into its fenced-block
+    #: convention, which used to discard the id -- so a multi-call turn could not
+    #: be sent back in the shape it arrived in.
+    #:
+    #: Empty when the model wrote the fenced block itself, since there was no id
+    #: to keep -- and that emptiness is load-bearing rather than a gap. It is
+    #: exactly the signal "this provider does not do native tool calling", so
+    #: Talos uses it to decide which conversation shape to send back: an id means
+    #: native `tool_calls`, no id means the text rendering that has always been
+    #: used. Nothing has to negotiate a capability, and the prompted path cannot
+    #: regress into a shape its model never produced.
+    #:
+    #: Deliberately excluded from `_signature`: two attempts at the same call get
+    #: different ids and are still the same call.
+    id: str = ""
 
 
 class Tool:
@@ -88,15 +110,53 @@ class Tool:
 
     spec: ToolSpec
 
+    #: Whether several calls to this tool, or to it and its peers, may run at
+    #: the same time.
+    #:
+    #: **Default `False`, and the default is the point.** A frontier model
+    #: answers with several independent reads in one turn and expects them to
+    #: overlap; running them one after another both wastes wall-clock and
+    #: teaches the model to emit one call per step, which spends the step budget
+    #: instead. But the tempting shortcut -- "parallelise anything not in
+    #: `CONSEQUENTIAL`" -- is wrong, and `ask_user` is the counterexample: it
+    #: changes nothing in the workspace and so is not consequential, yet two of
+    #: them at once puts two questions to one person through one channel.
+    #: Side-effect-freedom and concurrency-safety are different properties and
+    #: only look alike until something asks a question.
+    #:
+    #: So this is opt-in per tool. A tool nobody has thought about -- including
+    #: every tool arriving from an MCP server, whose behaviour is defined
+    #: somewhere else entirely -- runs on its own, which is what the harness did
+    #: for all of them before this existed.
+    parallel_safe: bool = False
+
     def run(self, args: Dict[str, Any], ws: Workspace) -> ToolResult:
         raise NotImplementedError
 
 
-def _cap(text: str, note: str = "") -> str:
+def _cap(text: str, note: str = "", keep: str = "head") -> str:
+    """Bound a tool's output. `keep` decides which end survives.
+
+    `head` suits output the caller is reading positionally -- numbered file
+    lines, a directory listing, search hits -- where the start is the answer and
+    the rest is more of the same.
+
+    `both` is for command output, and the difference is not cosmetic. A test
+    runner puts its verdict at the *end*: `pytest` prints the failure summary
+    and the exit line last, `mypy` its error count, a compiler its final error.
+    Head-only truncation on a long run therefore drops precisely the lines the
+    model needs and keeps the collection preamble it does not, which reads as a
+    command that produced nothing useful.
+    """
     if len(text) <= MAX_OUTPUT:
         return text
-    tail = f"\n\n[truncated at {MAX_OUTPUT} characters{'; ' + note if note else ''}]"
-    return text[:MAX_OUTPUT] + tail
+    suffix = f"; {note}" if note else ""
+    if keep == "both":
+        half = MAX_OUTPUT // 2
+        dropped = len(text) - 2 * half
+        return (f"{text[:half]}\n\n[… {dropped} characters elided from the middle"
+                f"{suffix} …]\n\n{text[-half:]}")
+    return text[:MAX_OUTPUT] + f"\n\n[truncated at {MAX_OUTPUT} characters{suffix}]"
 
 
 def _need(args: Dict[str, Any], key: str) -> str:
@@ -109,6 +169,9 @@ def _need(args: Dict[str, Any], key: str) -> str:
 # --------------------------------------------------------------------- files
 
 class ReadFile(Tool):
+    # Reads consult the staging dict and then the filesystem, neither of which
+    # this mutates.
+    parallel_safe = True
     spec = ToolSpec(
         name="read_file",
         description="Read a file from the workspace. Returns 1-indexed numbered lines.",
@@ -180,6 +243,7 @@ class EditFile(Tool):
 
 
 class ListDir(Tool):
+    parallel_safe = True
     spec = ToolSpec(
         name="list_dir",
         description="List a directory. Directories are suffixed with /.",
@@ -199,6 +263,127 @@ class ListDir(Tool):
             return ToolResult(f"{requested} is empty")
         names = [f"{e.name}/" if e.is_dir() else e.name for e in entries]
         return ToolResult(_cap("\n".join(names), "narrow the path"))
+
+
+# -------------------------------------------------------------------- search
+
+#: Directories never worth walking. Without pruning, one `search` on a repo with
+#: a `.git` or `node_modules` in it spends most of its time reading blobs.
+SEARCH_EXCLUDE = frozenset({
+    ".git", ".argus", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv",
+    "venv", "node_modules", "target", "build", "dist", ".ipynb_checkpoints",
+})
+
+#: Files above this are treated as data, not source, and skipped.
+SEARCH_MAX_BYTES = 1_000_000
+
+#: Cap on matches returned. A pattern like `.` matches every line in the repo;
+#: the useful answer and the useless one are distinguished by stopping early.
+SEARCH_MAX_MATCHES = 100
+
+
+class Search(Tool):
+    """Regex search across the workspace.
+
+    The gap this fills: retrieval ran once, in the ACP layer, before the agent
+    had read anything, and its result was passed unchanged on every step. The
+    agent could not ask a second question. Everything it learned mid-run --
+    the real name of a helper, the module something actually lives in -- had no
+    way of turning into a new query. Reading files one at a time to find a
+    symbol is the alternative, and it is how a step budget gets spent.
+
+    Reads through the workspace rather than off disk, so a staged edit is
+    searchable in the same turn it was made. In a dry run that is the difference
+    between searching the proposal and searching the code it replaces.
+    """
+
+    parallel_safe = True
+    spec = ToolSpec(
+        name="search",
+        description=("Search file contents with a regular expression. Returns "
+                     "`path:line: text` for each match. Use this to find where "
+                     "something is defined or used before reading whole files."),
+        schema={"type": "object",
+                "properties": {
+                    "pattern": {"type": "string",
+                                "description": "Python regular expression"},
+                    "path": {"type": "string",
+                             "description": "Subtree to search; defaults to the root"},
+                    "glob": {"type": "string",
+                             "description": "Filename filter, e.g. `*.py`"},
+                    "ignore_case": {"type": "boolean"},
+                    "max_results": {"type": "integer",
+                                    "description": f"Default {SEARCH_MAX_MATCHES}"}},
+                "required": ["pattern"]},
+    )
+
+    def run(self, args, ws):
+        pattern = _need(args, "pattern")
+        flags = re.IGNORECASE if args.get("ignore_case") else 0
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error as exc:
+            return ToolResult(f"invalid regular expression {pattern!r}: {exc}",
+                              is_error=True)
+
+        requested = args.get("path") or "."
+        try:
+            root = ws.resolve(requested)
+        except PathEscape as exc:
+            return ToolResult(f"refused: {exc}", is_error=True)
+        if not root.is_dir():
+            return ToolResult(f"cannot search {requested}: not a directory",
+                              is_error=True)
+
+        glob = args.get("glob") or "*"
+        limit = max(1, int(args.get("max_results") or SEARCH_MAX_MATCHES))
+
+        hits: List[str] = []
+        truncated = False
+        for path in self._walk(root, glob):
+            if len(hits) >= limit:
+                truncated = True
+                break
+            try:
+                text = ws.read(path)
+            except (OSError, PathEscape):
+                # Unreadable, vanished mid-walk, or somehow outside the jail.
+                # One bad file must not fail the whole search.
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
+                if len(hits) >= limit:
+                    truncated = True
+                    break
+                if regex.search(line):
+                    hits.append(f"{ws.display(path)}:{number}: {line.strip()}")
+
+        if not hits:
+            return ToolResult(f"no match for {pattern!r} under {requested}")
+        note = (f"\n\n[stopped at {limit} matches; narrow the pattern, the glob "
+                f"or the path]") if truncated else ""
+        return ToolResult(_cap("\n".join(hits) + note))
+
+    @staticmethod
+    def _walk(root: Path, glob: str) -> Iterable[Path]:
+        """Filenames under `root` matching `glob`, pruning excluded directories.
+
+        `os.walk` with in-place pruning rather than `rglob`, so an excluded
+        directory is never descended into. Filtering `rglob`'s output instead
+        walks `.git` in full and then throws the results away.
+        """
+        for current, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if d not in SEARCH_EXCLUDE)
+            here = Path(current)
+            for name in sorted(filenames):
+                if not fnmatch.fnmatch(name, glob):
+                    continue
+                path = here / name
+                try:
+                    if path.stat().st_size > SEARCH_MAX_BYTES:
+                        continue
+                except OSError:
+                    continue
+                yield path
 
 
 # ------------------------------------------------------------------ commands
@@ -259,6 +444,16 @@ class RunCommand(Tool):
         if Path(argv[0]).name.lower().rstrip(".exe") == "python":
             argv = [sys.executable, *argv[1:]]
 
+        # After the allowlist, never before it: which commands may run is this
+        # harness's decision, and handing an unchecked argv to the editor would
+        # move that decision somewhere it is not being made.
+        delegated = self._via_terminal(argv, ws)
+        if delegated is not None:
+            code, body = delegated
+            text = (f"exit {code if code is not None else 'signal'}\n\n"
+                    f"{_cap(body or '(no output)', keep='both')}")
+            return ToolResult(text, is_error=code != 0)
+
         try:
             proc = subprocess.run(
                 argv, cwd=ws.root, capture_output=True, text=True,
@@ -270,10 +465,249 @@ class RunCommand(Tool):
 
         body = "\n".join(part for part in (proc.stdout, proc.stderr) if part.strip())
         body = body or "(no output)"
-        text = f"exit {proc.returncode}\n\n{_cap(body)}"
+        text = f"exit {proc.returncode}\n\n{_cap(body, keep='both')}"
         # A failing command is information, not a harness fault: the engine
         # should see the compiler or test output and react to it.
         return ToolResult(text, is_error=proc.returncode != 0)
+
+
+    def _via_terminal(self, argv, ws):
+        """Run in the editor's terminal, if there is one and it works."""
+        terminal = getattr(ws, "terminal", None)
+        if terminal is None:
+            return None
+        try:
+            return terminal.run(argv, self.timeout)
+        except Exception:                            # a broken client is not a
+            return None                              # reason to skip the command
+
+
+@dataclass(frozen=True)
+class _Position:
+    """A seed position, shaped like `lsp.Location` without importing it."""
+
+    path: Path
+    line: int
+    character: int
+
+
+class RenameSymbol(Tool):
+    """Rename a symbol everywhere it is used, using the language server.
+
+    The reason this is a tool rather than a suggestion to use `edit_file`: an
+    agent asked to rename something will otherwise search for the name and
+    replace what it finds. That edits comments, string literals, substrings of
+    longer identifiers, and unrelated locals that happen to share the spelling
+    -- and it misses uses the search pattern did not anticipate. The failures
+    are silent and they are spread across files.
+
+    A language server knows which occurrences *are* the symbol. Every edit still
+    goes through the workspace, so the jail applies per file and each write is
+    put to the permission gate exactly as a hand-written edit would be.
+
+    Refuses when no server is running rather than degrading to text
+    substitution: a rename that quietly becomes find-and-replace is worse than
+    one that did not happen.
+    """
+
+    spec = ToolSpec(
+        name="rename_symbol",
+        description=("Rename a symbol across every file that uses it, resolved by "
+                     "the language server rather than by text search. Use this for "
+                     "renames instead of editing files one at a time. Requires a "
+                     "running language server; returns an error if there is none."),
+        schema={"type": "object",
+                "properties": {
+                    "symbol": {"type": "string",
+                               "description": "The current name, exactly."},
+                    "new_name": {"type": "string",
+                                 "description": "What to call it instead."}},
+                "required": ["symbol", "new_name"]},
+    )
+
+    #: Files worth scanning for a starting position, when the server cannot
+    #: answer `workspace/symbol`.
+    SOURCE_SUFFIXES = (".py", ".rs", ".ts", ".tsx", ".js", ".go")
+    #: Cap on that scan. It only needs to find *one* position.
+    SCAN_LIMIT = 4000
+
+    def _locate(self, name, symbols, ws):
+        """Find any one position of `name`, to ask the server about.
+
+        Two strategies, because one server in common use answers neither.
+        `workspace/symbol` is the direct question but pylsp does not implement
+        it -- it replies `Method Not Found`, which is how this tool was found to
+        be built on a capability it cannot rely on.
+
+        The fallback scans for the identifier as a whole word. That is a text
+        search, and it would be an unsafe way to *choose edits* -- but it is not
+        choosing edits. It only supplies a seed position, and the server's
+        reference list still decides what gets renamed. `definition` then
+        normalises the seed to the declaration so references are asked for from
+        the right place.
+        """
+        try:
+            for found in symbols.workspace_symbols(name):
+                if found.path.suffix:
+                    return found
+        except Exception:
+            pass                                     # unimplemented: use the scan
+
+        word = re.compile(rf"\b{re.escape(name)}\b")
+        scanned = 0
+        for path in sorted(ws.root.rglob("*")):
+            if path.suffix not in self.SOURCE_SUFFIXES or not path.is_file():
+                continue
+            scanned += 1
+            if scanned > self.SCAN_LIMIT:
+                break
+            try:
+                lines = ws.read(path).splitlines()
+            except (OSError, PathEscape):
+                continue
+            for number, line in enumerate(lines):
+                match = word.search(line)
+                if not match:
+                    continue
+                seed = _Position(path, number, match.start())
+                try:
+                    for defined in symbols.definition(path, number, match.start()):
+                        if defined.path.suffix:
+                            return defined
+                except Exception:
+                    pass
+                return seed
+        return None
+
+    def run(self, args, ws):
+        old = _need(args, "symbol")
+        new = _need(args, "new_name")
+        if old == new:
+            return ToolResult("the new name is the old name; nothing to do",
+                              is_error=True)
+        if not new.isidentifier():
+            return ToolResult(f"`{new}` is not a valid identifier", is_error=True)
+
+        symbols = getattr(ws, "symbols", None)
+        if symbols is None:
+            return ToolResult(
+                "no language server is running, so the uses of this symbol cannot "
+                "be resolved. Do not fall back to searching for the name -- that "
+                "edits comments and unrelated identifiers. Edit the specific "
+                "files you can identify instead.", is_error=True)
+
+        try:
+            target = self._locate(old, symbols, ws)
+        except Exception as exc:
+            return ToolResult(f"the language server failed: {exc}", is_error=True)
+        if target is None:
+            return ToolResult(f"no declaration of `{old}` was found", is_error=True)
+
+        try:
+            # `include_declaration=True`: the definition is a use like any
+            # other, and renaming every call while leaving `def total` behind
+            # produces a file that does not import.
+            uses = symbols.references(target.path, target.line, target.character,
+                                      include_declaration=True)
+        except Exception as exc:
+            return ToolResult(f"the language server failed: {exc}", is_error=True)
+        if not uses:
+            uses = [target]
+        elif not any(u.path == target.path and u.line == target.line for u in uses):
+            uses = list(uses) + [target]             # server omitted the declaration
+
+        # Group by file and apply bottom-up: editing a later line first keeps
+        # every earlier line number valid, so no offset bookkeeping is needed.
+        by_file: Dict[Path, List[Any]] = {}
+        for use in uses:
+            by_file.setdefault(use.path, []).append(use)
+
+        changed: List[Path] = []
+        skipped: List[str] = []
+        for path, locations in sorted(by_file.items()):
+            try:
+                resolved = ws.resolve(path)
+                lines = ws.read(resolved).splitlines(keepends=True)
+            except (OSError, PathEscape) as exc:
+                skipped.append(f"{path}: {exc}")
+                continue
+
+            edited = False
+            for loc in sorted(locations, key=lambda l: (-l.line, -l.character)):
+                if loc.line >= len(lines):
+                    continue
+                line = lines[loc.line]
+                start = loc.character
+                if line[start:start + len(old)] != old:
+                    # The server's position and the file disagree: a stale index,
+                    # or content changed underneath. Skipping is right -- writing
+                    # at a position we cannot confirm is how a rename corrupts.
+                    skipped.append(f"{ws.display(path)}:{loc.line + 1}: "
+                                   f"`{old}` is not at the reported position")
+                    continue
+                lines[loc.line] = line[:start] + new + line[start + len(old):]
+                edited = True
+
+            if edited:
+                ws.write(resolved, "".join(lines))
+                changed.append(resolved)
+
+        if not changed:
+            detail = "; ".join(skipped) or "no usable positions were reported"
+            return ToolResult(f"nothing was renamed: {detail}", is_error=True)
+
+        body = (f"renamed `{old}` to `{new}` in {len(changed)} file(s), "
+                f"{len(uses)} occurrence(s):\n"
+                + "\n".join(f"  {ws.display(p)}" for p in changed))
+        if skipped:
+            body += "\n\nskipped:\n" + "\n".join(f"  {s}" for s in skipped)
+        return ToolResult(body, changed=changed)
+
+
+class AskUser(Tool):
+    """Put a question to the user instead of guessing.
+
+    Deliberately *not* consequential: asking changes nothing, and routing it
+    through the permission gate would mean approving a dialog in order to see a
+    dialog.
+    """
+
+    spec = ToolSpec(
+        name="ask_user",
+        description=("Ask the user a question when the task is genuinely ambiguous "
+                     "and guessing would waste the turn. Returns their answer. If "
+                     "no interface is available this returns an error -- proceed "
+                     "with your best judgement rather than asking again."),
+        schema={"type": "object",
+                "properties": {
+                    "question": {"type": "string",
+                                 "description": "What you need to know, in one sentence."},
+                    "choices": {"type": "array", "items": {"type": "string"},
+                                "description": "Optional fixed options to choose between."}},
+                "required": ["question"]},
+    )
+
+    def run(self, args, ws):
+        question = _need(args, "question")
+        choices = args.get("choices")
+        if not isinstance(choices, list) or not all(isinstance(c, str) for c in choices):
+            choices = None
+
+        elicit = getattr(ws, "elicit", None)
+        if elicit is None:
+            return ToolResult(
+                "there is no interface to ask the user through; proceed with "
+                "your best judgement and say what you assumed", is_error=True)
+        try:
+            answer = elicit.ask(question, choices)
+        except Exception as exc:                     # a broken client is not a
+            return ToolResult(f"could not ask the user: {exc}",  # reason to raise
+                              is_error=True)
+        if answer is None:
+            return ToolResult(
+                "the user did not answer; proceed with your best judgement and "
+                "say what you assumed", is_error=True)
+        return ToolResult(f"The user answered: {answer}")
 
 
 def tokenize(command: str) -> List[str]:
@@ -329,7 +763,39 @@ class ToolRegistry:
 
     @classmethod
     def default(cls) -> "ToolRegistry":
-        return cls([ReadFile(), WriteFile(), EditFile(), ListDir(), RunCommand()])
+        return cls([ReadFile(), WriteFile(), EditFile(), ListDir(), Search(),
+                    RunCommand(), RenameSymbol(), AskUser()])
+
+    @classmethod
+    def combined(cls, extra: Sequence[Tool],
+                 base: Optional["ToolRegistry"] = None) -> "ToolRegistry":
+        """`base` plus `extra`, with **base winning any name collision**.
+
+        The precedence is the point. `extra` is where MCP tools arrive, and an
+        MCP server is a remote process the workspace jail cannot constrain --
+        `McpTool.run` says so itself. If a server could register a tool named
+        `write_file`, it would shadow the jailed local one and every subsequent
+        write would leave the sandbox without anything appearing to change.
+        Local tools are therefore applied last and overwrite.
+        """
+        base = base or cls.default()
+        merged: Dict[str, Tool] = {t.spec.name: t for t in extra}
+        shadowed = sorted(set(merged) & set(base._tools))
+        merged.update(base._tools)
+        if shadowed:
+            log(f"[tools] ignoring remote tool(s) shadowing local names: "
+                f"{', '.join(shadowed)}")
+        return cls(list(merged.values()))
+
+    def without(self, *names: str) -> "ToolRegistry":
+        """This registry minus `names`. Absent names are not an error.
+
+        Used to hand a child agent everything the parent has except the ability
+        to spawn further children -- a capability that has to be removed by
+        construction rather than by asking the model not to use it.
+        """
+        return ToolRegistry([tool for name, tool in self._tools.items()
+                             if name not in names])
 
     @property
     def names(self) -> List[str]:
@@ -337,6 +803,15 @@ class ToolRegistry:
 
     def specs(self) -> List[ToolSpec]:
         return [self._tools[n].spec for n in self.names]
+
+    def parallel_safe(self, name: str) -> bool:
+        """Whether this call may overlap with its neighbours.
+
+        An unknown name is not safe: it will fail in `dispatch`, and doing that
+        on its own keeps the error attributable to the call that caused it.
+        """
+        tool = self._tools.get(name)
+        return bool(tool is not None and tool.parallel_safe)
 
     def dispatch(self, call: ToolCall, ws: Workspace) -> ToolResult:
         """Run a call. Failures become error results, never exceptions.
@@ -356,6 +831,20 @@ class ToolRegistry:
         except Exception as exc:                     # noqa: BLE001 - see docstring
             return ToolResult(f"{call.name} failed: {exc}", is_error=True)
 
+    def openai_schema(self) -> List[Dict[str, Any]]:
+        """The same tools in OpenAI's `tools` format.
+
+        Sent alongside the prose protocol rather than instead of it. A model
+        given the schema in the request stops inventing argument names -- the
+        first live model to reach execute mode emitted `"file"` where the schema
+        says `"path"`, having only ever seen the schema described in prose.
+        """
+        return [{"type": "function",
+                 "function": {"name": spec.name,
+                              "description": spec.description,
+                              "parameters": spec.schema}}
+                for spec in self.specs()]
+
     def render(self) -> str:
         """The prompt block describing every tool and the call protocol."""
         parts = ["# Available tools"]
@@ -373,6 +862,11 @@ def parse_calls(reply: str) -> Tuple[str, List[ToolCall]]:
     Fails closed: a fenced block that is not valid JSON, or lacks a `tool` key,
     is left in the prose rather than guessed at. A malformed reply then costs a
     turn instead of triggering the wrong action.
+
+    An optional `id` is read alongside `tool` and `args`. The engine puts the
+    provider's own call id there when it normalises a native tool call into this
+    convention, so the pairing survives a round trip through text. A model that
+    writes the block itself supplies no id, and Talos assigns one.
     """
     calls: List[ToolCall] = []
     prose_parts: List[str] = []
@@ -390,9 +884,11 @@ def parse_calls(reply: str) -> Tuple[str, List[ToolCall]]:
         if not isinstance(args, dict):
             args = {}
 
+        call_id = payload.get("id")
         prose_parts.append(reply[cursor:match.start()])
         cursor = match.end()
-        calls.append(ToolCall(name=payload["tool"], args=args, raw=body.strip()))
+        calls.append(ToolCall(name=payload["tool"], args=args, raw=body.strip(),
+                              id=call_id if isinstance(call_id, str) else ""))
 
     prose_parts.append(reply[cursor:])
     return "".join(prose_parts).strip(), calls

@@ -120,8 +120,11 @@ def main():
     ap.add_argument("--beta", type=float, default=0.1, help="adaptive-halting ponder weight")
     ap.add_argument("--lambda-prior", type=float, default=0.2)
     ap.add_argument("--variable-loops", action="store_true")
-    ap.add_argument("--mixer", default="softmax", choices=["softmax", "moirai"],
-                    help="how the Labyrinth core mixes tokens (Moirai = gated fast weights)")
+    ap.add_argument("--mixer", default="softmax",
+                    choices=["softmax", "moirai", "moirai-untied"],
+                    help="how the Labyrinth core mixes tokens (moirai = gated fast "
+                         "weights, one gate for erase and write; -untied decouples "
+                         "them, which measured no better and costs more parameters)")
     ap.add_argument("--n-mem-banks", type=int, default=1,
                     help="Naiads memory banks in full/adaptive (1 = single Mnemosyne bank)")
     ap.add_argument("--echo-weight", type=float, default=0.0,

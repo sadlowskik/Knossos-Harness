@@ -81,22 +81,36 @@ class Block(nn.Module):
     Maps (B, T, n_embd) -> (B, T, n_embd), which is what makes it stackable AND
     loopable (see Labyrinth).
 
-    `mixer` selects how tokens talk to each other: "softmax" (default, standard
-    causal self-attention) or "moirai" (gated fast-weight linear attention, see
-    moirai.MoiraiMixer). Both are (B, T, C) -> (B, T, C), so they are
-    interchangeable; only "softmax" keeps a growing KV cache.
+    `mixer` selects how tokens talk to each other:
+
+        softmax         standard causal self-attention (default, unchanged)
+        moirai          gated fast weights, one gate for erase and write
+        moirai-untied   the same with the gates decoupled
+
+    All three are (B, T, C) -> (B, T, C) and interchangeable; only "softmax"
+    keeps a growing KV cache.
+
+    `moirai` is the tied form -- plain Gated DeltaNet. The decoupled variant is
+    reachable but is no longer what the plain name selects: at n=5 it measured
+    nominally worse in both regimes and cost 5% more parameters
+    (scripts/moirai_sweep.py). It stays available so the ablation can be re-run,
+    not because it is recommended.
     """
+
+    MIXERS = ("softmax", "moirai", "moirai-untied")
 
     def __init__(self, n_embd: int, n_head: int, block_size: int, mixer: str = "softmax"):
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
         if mixer == "softmax":
             self.attn = MultiHeadAttention(n_embd, n_head, block_size)
-        elif mixer == "moirai":
+        elif mixer in ("moirai", "moirai-untied"):
             from .moirai import MoiraiMixer          # local: avoids an import cycle
-            self.attn = MoiraiMixer(n_embd, n_head, block_size)
+            self.attn = MoiraiMixer(n_embd, n_head, block_size,
+                                    tied=mixer == "moirai")
         else:
-            raise ValueError(f"unknown mixer: {mixer!r} (expected 'softmax' or 'moirai')")
+            raise ValueError(
+                f"unknown mixer: {mixer!r} (expected one of {', '.join(self.MIXERS)})")
         self.ln2 = nn.LayerNorm(n_embd)
         self.ff = FeedForward(n_embd)
 

@@ -1,0 +1,121 @@
+[
+  {
+    "id": "the-second-call-remembers-the-first",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "collect_errors() returns entries from a previous call when it is called more than once. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/validate.py": "\ndef collect_errors(fields, into=[]):\n    \"\"\"Append a message for each empty field and return the accumulator.\n\n    Callers may pass their own list to gather errors across several calls.\n    \"\"\"\n    for name, value in fields.items():\n        if not value:\n            into.append(f\"{name} is required\")\n    return into\n",
+      "tests/__init__.py": "",
+      "tests/test_validate.py": "\nfrom pkg.validate import collect_errors\n\n\ndef test_a_second_call_does_not_see_the_first():\n    collect_errors({\"a\": \"\"})\n    assert collect_errors({\"b\": \"\"}) == [\"b is required\"]\n\n\ndef test_one_call_still_works():\n    assert collect_errors({\"a\": \"\"}) == [\"a is required\"]\n",
+      "tests/test_accumulating.py": "\nfrom pkg.validate import collect_errors\n\n\ndef test_an_explicit_accumulator_is_still_appended_to():\n    \"\"\"The documented use: gather errors across several calls.\"\"\"\n    bucket = [\"existing\"]\n    collect_errors({\"a\": \"\"}, bucket)\n    collect_errors({\"b\": \"\"}, bucket)\n    assert bucket == [\"existing\", \"a is required\", \"b is required\"]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_validate.py::test_a_second_call_does_not_see_the_first"
+    ],
+    "pass_to_pass": [
+      "tests/test_validate.py::test_one_call_still_works",
+      "tests/test_accumulating.py::test_an_explicit_accumulator_is_still_appended_to"
+    ],
+    "note": "Clearing `into` at the top also passes the named test and breaks the caller."
+  },
+  {
+    "id": "dedupe-must-not-reorder",
+    "kind": "regression_trap",
+    "tier": "hard",
+    "prompt": "unique() keeps duplicates. Make it return each item once.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/seq.py": "\ndef unique(items):\n    \"\"\"Return the items with duplicates removed, in first-seen order.\"\"\"\n    return [item for item in items]\n",
+      "tests/__init__.py": "",
+      "tests/test_seq.py": "\nfrom pkg.seq import unique\n\n\ndef test_duplicates_are_removed():\n    assert len(unique([3, 1, 3, 2, 1])) == 3\n",
+      "tests/test_ordering.py": "\nfrom pkg.seq import unique\n\n\ndef test_order_is_preserved_when_there_are_no_duplicates():\n    \"\"\"Downstream rendering depends on this; see the docstring.\"\"\"\n    assert unique([3, 1, 2]) == [3, 1, 2]\n\n\ndef test_a_longer_run_keeps_its_order():\n    assert unique([5, 3, 9, 1]) == [5, 3, 9, 1]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_seq.py::test_duplicates_are_removed"
+    ],
+    "pass_to_pass": [
+      "tests/test_ordering.py::test_order_is_preserved_when_there_are_no_duplicates",
+      "tests/test_ordering.py::test_a_longer_run_keeps_its_order"
+    ],
+    "note": "`list(set(items))` passes the named test and breaks two already-passing ones."
+  },
+  {
+    "id": "one-fix-is-not-enough",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "parse_row() returns the wrong fields for a quoted CSV row. Make it handle the sample correctly.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/csvparse.py": "\ndef parse_row(line):\n    \"\"\"Split one CSV row on commas, honouring double quotes.\n\n    A quoted field may contain commas. Quotes are stripped from the result.\n    \"\"\"\n    out, field, quoted = [], \"\", False\n    for char in line:\n        if char == \"'\":                 # defect 1: wrong quote character\n            quoted = not quoted\n        elif char == \",\" and quoted:    # defect 2: inverted condition\n            out.append(field)\n            field = \"\"\n        else:\n            field += char\n    out.append(field)\n    return out\n",
+      "tests/__init__.py": "",
+      "tests/test_csvparse.py": "\nfrom pkg.csvparse import parse_row\n\n\ndef test_a_quoted_field_may_contain_a_comma():\n    assert parse_row('a,\"b,c\",d') == [\"a\", \"b,c\", \"d\"]\n\n\ndef test_a_plain_row_still_splits():\n    assert parse_row(\"a,b,c\") == [\"a\", \"b\", \"c\"]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_csvparse.py::test_a_quoted_field_may_contain_a_comma",
+      "tests/test_csvparse.py::test_a_plain_row_still_splits"
+    ],
+    "pass_to_pass": [],
+    "note": "Two independent defects; fixing one leaves both tests red."
+  },
+  {
+    "id": "the-contract-is-in-the-docstring",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "normalise_tags() lowercases but leaves duplicates. Remove them.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/tags.py": "\ndef normalise_tags(tags):\n    \"\"\"Return a new lowercased, de-duplicated list, in first-seen order.\n\n    Never mutates the argument: callers reuse the list they passed in.\n    \"\"\"\n    return [t.lower() for t in tags]\n",
+      "pkg/report.py": "\nfrom pkg.tags import normalise_tags\n\n\ndef summarise(tags):\n    \"\"\"Report on the caller's tags without disturbing them.\"\"\"\n    return {\"normalised\": normalise_tags(tags), \"original_count\": len(tags)}\n",
+      "tests/__init__.py": "",
+      "tests/test_tags.py": "\nfrom pkg.tags import normalise_tags\n\n\ndef test_duplicates_are_removed():\n    assert normalise_tags([\"A\", \"b\", \"a\"]) == [\"a\", \"b\"]\n",
+      "tests/test_report.py": "\nfrom pkg.report import summarise\n\n\ndef test_the_callers_list_is_left_alone():\n    tags = [\"A\", \"b\", \"a\"]\n    result = summarise(tags)\n    assert result[\"original_count\"] == 3\n    assert tags == [\"A\", \"b\", \"a\"], \"summarise must not mutate its argument\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_tags.py::test_duplicates_are_removed"
+    ],
+    "pass_to_pass": [
+      "tests/test_report.py::test_the_callers_list_is_left_alone"
+    ],
+    "note": "An in-place fix passes the named test and violates the documented contract."
+  },
+  {
+    "id": "wrong-answers-without-an-error",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "running_total() disagrees with the expected totals on the sample invoice. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/money.py": "\ndef running_total(amounts):\n    \"\"\"Cumulative totals in cents, rounded to whole cents at each step.\n\n    Amounts arrive as floating point dollars.\n    \"\"\"\n    total, out = 0, []\n    for amount in amounts:\n        total += int(amount * 100)          # truncates instead of rounding\n        out.append(total)\n    return out\n",
+      "tests/__init__.py": "",
+      "tests/test_money.py": "\nfrom pkg.money import running_total\n\n\ndef test_fractional_cents_round_rather_than_truncate():\n    assert running_total([0.29, 0.29, 0.29]) == [29, 58, 87]\n\n\ndef test_whole_amounts_are_unaffected():\n    assert running_total([1.00, 2.00]) == [100, 300]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_money.py::test_fractional_cents_round_rather_than_truncate"
+    ],
+    "pass_to_pass": [
+      "tests/test_money.py::test_whole_amounts_are_unaffected"
+    ],
+    "note": "No exception; 0.29*100 is 28.999... and int() truncates to 28."
+  },
+  {
+    "id": "right-the-first-time-only",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "price_for() returns the wrong currency after the first lookup. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/pricing.py": "\n_RATES = {\"USD\": 1.0, \"EUR\": 0.9, \"GBP\": 0.8}\n_cache = {}\n\n\ndef price_for(sku, currency):\n    \"\"\"Price of `sku` in `currency`, memoised.\"\"\"\n    if sku in _cache:                       # key ignores currency\n        return _cache[sku]\n    price = round(100 * _RATES[currency], 2)\n    _cache[sku] = price\n    return price\n",
+      "tests/__init__.py": "",
+      "tests/test_pricing.py": "\nfrom pkg.pricing import price_for\n\n\ndef test_a_second_currency_is_not_served_from_the_first():\n    assert price_for(\"widget\", \"USD\") == 100.0\n    assert price_for(\"widget\", \"EUR\") == 90.0\n\n\ndef test_the_first_lookup_is_still_right():\n    assert price_for(\"gadget\", \"GBP\") == 80.0\n"
+    },
+    "fail_to_pass": [
+      "tests/test_pricing.py::test_a_second_currency_is_not_served_from_the_first"
+    ],
+    "pass_to_pass": [
+      "tests/test_pricing.py::test_the_first_lookup_is_still_right"
+    ],
+    "note": "Module-level cache; the agent must notice the key, not add a clear()."
+  }
+]

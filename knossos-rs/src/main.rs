@@ -47,7 +47,11 @@ struct Cli {
 #[derive(clap::Args, Clone)]
 struct LoopArgs {
     /// Hard ceiling on engine turns.
-    #[arg(long, default_value = "12")]
+    ///
+    /// This is the value the binary actually ships with — it shadows
+    /// `Config::default()`, so raising the ceiling in one place and not the
+    /// other changes nothing for anyone running `knossos`.
+    #[arg(long, default_value = "20")]
     max_steps: usize,
     /// Where budget pressure begins.
     #[arg(long, default_value = "6")]
@@ -326,7 +330,52 @@ async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
 
 async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
     let (talos, _) = build_talos(cfg, opts, true)?;
-    knossos::serve::run(talos, cfg.max_tokens).await
+
+    // The real streams live out here, and only here. `serve::run` takes
+    // channels so the protocol can be driven from a test — which is what makes
+    // the permission handshake provably non-deadlocking rather than hoped
+    // about; see `tests/serve_loop.rs`.
+    let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // A dedicated OS thread, not `spawn_blocking`: this read blocks for the
+    // whole life of the process, and a blocking-pool slot held that long is a
+    // slot the rest of the runtime never gets back.
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) | Err(_) => break, // front end closed the pipe
+                Ok(_) => {
+                    if line_tx.send(std::mem::take(&mut line)).is_err() {
+                        break; // server has stopped
+                    }
+                }
+            }
+        }
+    });
+
+    let writer = tokio::spawn(knossos::serve::write_events(
+        event_rx,
+        std::io::stdout(),
+    ));
+
+    let result = knossos::serve::run(
+        talos,
+        cfg.max_tokens,
+        line_rx,
+        knossos::serve::Emitter::new(event_tx),
+    )
+    .await;
+
+    // Dropping the emitter closes the channel, so this drains what is left and
+    // returns rather than hanging — the last events of a session still reach
+    // the front end.
+    let _ = writer.await;
+    result
 }
 
 async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result<()> {

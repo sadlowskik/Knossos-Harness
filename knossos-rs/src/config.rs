@@ -40,7 +40,10 @@ impl Default for Config {
             ollama_base_url: env_or("OLLAMA_HOST", ollama::DEFAULT_BASE_URL),
             ollama_native_tools: true,
             workspace: PathBuf::from("."),
-            max_steps: 12,
+            // Matches `Ariadne::default()` and Python's `acp.py` default. Raised
+            // from 12 on measurement; `target_steps` stays where it was so
+            // pressure starts in the same place with further to escalate.
+            max_steps: 20,
             target_steps: 6,
             max_tokens: 8192,
         }

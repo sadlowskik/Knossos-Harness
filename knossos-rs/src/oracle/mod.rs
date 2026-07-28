@@ -34,6 +34,20 @@ pub struct TierResult {
     pub label: String,
     pub passed: bool,
     pub detail: String,
+    /// The tier could not run at all — the program is not installed.
+    ///
+    /// Distinct from passing, and the distinction is the whole point. A tier
+    /// that never ran is not evidence the code is correct, but it is not
+    /// evidence the code is broken either, and reporting `FAILED at cargo` on a
+    /// machine without cargo tells the engine to repair code that was never
+    /// checked. Python has always skipped these (`oracle.py`); this side failed
+    /// them, so the two harnesses reached opposite verdicts on the same tree.
+    ///
+    /// Skipped tiers do not block, and `summary` names them rather than
+    /// counting them among the passes — an absent ladder must not read as a
+    /// clean bill of health.
+    #[serde(default)]
+    pub skipped: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -49,9 +63,9 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    /// The failing tier, if any.
+    /// The failing tier, if any. A skipped tier never ran and cannot be one.
     pub fn failure(&self) -> Option<&TierResult> {
-        self.tiers.iter().find(|t| !t.passed)
+        self.tiers.iter().find(|t| !t.passed && !t.skipped)
     }
 
     pub fn summary(&self) -> String {
@@ -60,15 +74,26 @@ impl Verdict {
             None if self.dry_run => {
                 "syntax only — cargo cannot see unwritten changes".to_string()
             }
-            None => format!(
-                "passed {} tier(s): {}",
-                self.tiers.len(),
-                self.tiers
-                    .iter()
-                    .map(|t| t.label.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            None => {
+                let (ran, skipped): (Vec<_>, Vec<_>) =
+                    self.tiers.iter().partition(|t| !t.skipped);
+                let mut text = format!(
+                    "passed {} tier(s): {}",
+                    ran.len(),
+                    ran.iter().map(|t| t.label.as_str()).collect::<Vec<_>>().join(", ")
+                );
+                // Named, not silently folded in. "Passed 4 tiers" over a
+                // machine where three of them are not installed is the kind of
+                // confident wrong number this harness exists to refuse.
+                if !skipped.is_empty() {
+                    text.push_str(&format!(
+                        " ({} skipped, not installed: {})",
+                        skipped.len(),
+                        skipped.iter().map(|t| t.label.as_str()).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+                text
+            }
         }
     }
 
@@ -91,8 +116,18 @@ impl Verdict {
     /// Whether model judgement (tier 4) is permitted. Only when every
     /// deterministic tier passed — which a dry run can never satisfy, because
     /// most of them never ran.
+    ///
+    /// **At least one tier above 0 must actually have run.** Skipping a missing
+    /// program instead of failing it (see [`TierResult::skipped`]) is right, and
+    /// it opened this: on a machine without cargo every tier above syntax is now
+    /// skipped, the verdict passes, and without this clause tier 4 would be
+    /// asked to bless code that nothing compiled. A judge is the last tier
+    /// precisely because it is the least trustworthy one; reaching it by having
+    /// no toolchain is the opposite of the ladder's argument.
     pub fn deterministic_tiers_passed(&self) -> bool {
-        self.passed && !self.dry_run
+        self.passed
+            && !self.dry_run
+            && self.tiers.iter().any(|t| t.tier > 0 && !t.skipped)
     }
 }
 
@@ -173,6 +208,7 @@ impl Oracle {
                 tier: 0,
                 label: "syntax".to_string(),
                 passed,
+                skipped: false,
                 detail: if passed {
                     format!("{checked} staged file(s) parse cleanly")
                 } else {
@@ -205,6 +241,7 @@ impl Oracle {
             tier: 0,
             label: "syntax".to_string(),
             passed: broken.is_empty(),
+            skipped: false,
             detail: if broken.is_empty() {
                 format!("{checked} file(s) parse cleanly")
             } else {
@@ -218,6 +255,13 @@ impl Oracle {
             .args(&cmd.args)
             .current_dir(&self.root)
             .stdin(Stdio::null())
+            // Without this the timeout below bounds the *wait*, not the
+            // process: dropping the future leaves the child running, and a
+            // hanging `cargo test` is reported as timed out while it keeps its
+            // `target/` lock and its CPU. Ariadne then grants another step, so
+            // one wedged tree accumulates one orphan per step, all of which
+            // outlive the harness.
+            .kill_on_drop(true)
             .output();
 
         let output = match tokio::time::timeout(COMMAND_TIMEOUT, child).await {
@@ -226,15 +270,23 @@ impl Oracle {
                     tier: cmd.tier,
                     label: cmd.label.to_string(),
                     passed: false,
+                    // Not skipped: it ran, and not finishing is a real signal
+                    // about the tree rather than about the toolchain.
+                    skipped: false,
                     detail: format!("`{}` timed out after {COMMAND_TIMEOUT:?}", cmd.label),
                 })
             }
             Ok(Err(e)) => {
+                // The program is not there. Absent cargo is not evidence of
+                // broken code, and failing here reported `FAILED at cargo` on
+                // every run on such a machine -- sending the engine to repair
+                // something that was never checked.
                 return Ok(TierResult {
                     tier: cmd.tier,
                     label: cmd.label.to_string(),
-                    passed: false,
-                    detail: format!("could not run `{}`: {e}", cmd.program),
+                    passed: true,
+                    skipped: true,
+                    detail: format!("skipped: could not run `{}`: {e}", cmd.program),
                 })
             }
             Ok(Ok(o)) => o,
@@ -272,6 +324,7 @@ impl Oracle {
             tier: cmd.tier,
             label: cmd.label.to_string(),
             passed,
+            skipped: false,
             detail,
         })
     }
@@ -365,7 +418,13 @@ pub async fn judge(
             .and_then(|v| v.as_str())
             .unwrap_or("no reason given")
             .to_string();
-        return Ok(TierResult { tier: 4, label: "constitution".into(), passed, detail: reason });
+        return Ok(TierResult {
+            tier: 4,
+            label: "constitution".into(),
+            passed,
+            skipped: false,
+            detail: reason,
+        });
     }
 
     // No verdict submitted. Treating that as a failure would block on the
@@ -374,6 +433,7 @@ pub async fn judge(
         tier: 4,
         label: "constitution".into(),
         passed: true,
+        skipped: false,
         detail: format!("no structured verdict returned; engine said: {}", resp.text()),
     })
 }
@@ -382,6 +442,121 @@ pub async fn judge(
 mod tests {
     use super::*;
     use crate::scribe::RustAdapter;
+
+    fn tier(number: u8, label: &str, passed: bool, skipped: bool) -> TierResult {
+        TierResult {
+            tier: number,
+            label: label.into(),
+            passed,
+            skipped,
+            detail: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_program_is_skipped_not_failed() {
+        let dir = workspace("pub fn f() {}\n");
+        let oracle = Oracle::new(dir.path());
+        let cmd = crate::scribe::VerifyCommand {
+            tier: 1,
+            label: "absent",
+            program: "definitely-not-a-real-program-xyz",
+            args: vec![],
+            structured: false,
+        };
+
+        let result = oracle.run_tier(&cmd).await.unwrap();
+
+        // Absent cargo is not evidence of broken code. Failing here reported
+        // `FAILED at cargo` on every run on such a machine, and sent the engine
+        // to repair something that was never checked.
+        assert!(result.skipped, "a program that will not spawn must be skipped");
+        assert!(result.passed, "a skipped tier must not block");
+    }
+
+    #[test]
+    fn a_skipped_tier_is_never_the_failure() {
+        let verdict = Verdict {
+            passed: true,
+            reached_tier: 1,
+            tiers: vec![tier(0, "syntax", true, false), tier(1, "cargo check", true, true)],
+            dry_run: false,
+        };
+
+        assert!(verdict.failure().is_none());
+    }
+
+    #[test]
+    fn skipped_tiers_are_named_rather_than_counted_as_passes() {
+        // "passed 3 tier(s)" on a machine where two are not installed is the
+        // kind of confident wrong number this harness exists to refuse.
+        let verdict = Verdict {
+            passed: true,
+            reached_tier: 1,
+            tiers: vec![
+                tier(0, "syntax", true, false),
+                tier(1, "cargo check", true, true),
+                tier(2, "clippy", true, true),
+            ],
+            dry_run: false,
+        };
+
+        let summary = verdict.summary();
+        assert!(summary.contains("passed 1 tier(s): syntax"), "{summary}");
+        assert!(summary.contains("2 skipped"), "{summary}");
+        assert!(summary.contains("cargo check"), "{summary}");
+    }
+
+    #[test]
+    fn an_entirely_skipped_ladder_does_not_reach_the_judge() {
+        // Skipping a missing program rather than failing it is right, and it
+        // opened this: on a machine without cargo every tier above syntax is
+        // skipped, the verdict passes, and tier 4 would be asked to bless code
+        // that nothing compiled. The judge is last because it is the least
+        // trustworthy tier; reaching it by having no toolchain inverts the
+        // ladder's entire argument.
+        let verdict = Verdict {
+            passed: true,
+            reached_tier: 0,
+            tiers: vec![
+                tier(0, "syntax", true, false),
+                tier(1, "cargo check", true, true),
+                tier(2, "clippy", true, true),
+            ],
+            dry_run: false,
+        };
+
+        assert!(verdict.failure().is_none(), "skips must not block");
+        assert!(!verdict.deterministic_tiers_passed(), "but must not license tier 4");
+    }
+
+    #[test]
+    fn a_ladder_that_really_ran_still_reaches_the_judge() {
+        let verdict = Verdict {
+            passed: true,
+            reached_tier: 1,
+            tiers: vec![
+                tier(0, "syntax", true, false),
+                tier(1, "cargo check", true, false),
+                tier(2, "clippy", true, true),
+            ],
+            dry_run: false,
+        };
+
+        assert!(verdict.deterministic_tiers_passed());
+    }
+
+    #[test]
+    fn a_real_failure_still_outranks_a_skip() {
+        let verdict = Verdict {
+            passed: false,
+            reached_tier: 1,
+            tiers: vec![tier(1, "cargo check", true, true), tier(2, "clippy", false, false)],
+            dry_run: false,
+        };
+
+        assert_eq!(verdict.failure().map(|t| t.label.as_str()), Some("clippy"));
+    }
 
     fn workspace(lib: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -452,6 +627,7 @@ mod tests {
                 tier: 1,
                 label: "cargo check".into(),
                 passed: false,
+                skipped: false,
                 detail: "error[E0308]".into(),
             }],
             dry_run: false,

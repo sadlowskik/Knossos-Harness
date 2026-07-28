@@ -1,0 +1,115 @@
+# Everything that can run without a model, plus the cross-harness suites.
+#
+# The point of the last two jobs is that they are *configured*. Both existed
+# before this file and both reported success without ever contacting the agent,
+# because an unset environment variable made them skip silently. STRICT turns
+# that into a failure here, so the same thing cannot happen again unnoticed.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    name: Knossos (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install optional extras
+        working-directory: model
+        run: pip install -r requirements-knossos.txt pytest
+      - name: Fast suite
+        working-directory: model
+        run: pytest -q
+
+  rust:
+    name: Knossos (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - working-directory: knossos-rs
+        # `live_engine` skips here -- there is no model server on a runner --
+        # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
+        # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
+        run: cargo test
+
+  conformance:
+    name: ACP conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: conformance
+        run: npm install
+      # No live model in CI, so the live checks stay skipped -- but the
+      # deterministic ones must all run, and the summary says plainly which
+      # did not.
+      - working-directory: conformance
+        env:
+          KNOSSOS_PYTHON: python
+        run: npm test
+
+  # Everything above runs on GitHub's runners and never touches a model. The
+  # live checks cannot: the model server is on the LAN, so no hosted runner can
+  # reach it. That is what a self-hosted runner is for here -- not speed.
+  #
+  # Skipped entirely unless a runner labelled `knossos-live` is online, so the
+  # rest of CI is unaffected when it is not. When it *is* online the STRICT
+  # variables make an unconfigured skip a failure, which is the whole point:
+  # §2.5 was about tests that silently do not run.
+  live:
+    name: Live model (self-hosted)
+    runs-on: [self-hosted, knossos-live]
+    # Pull requests from forks must not reach a self-hosted runner: a workflow
+    # is code, and this one would execute it on a personal machine.
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Knossos against a live provider
+        working-directory: conformance
+        env:
+          KNOSSOS_LIVE: "1"
+          KNOSSOS_STRICT: "1"
+          OLLAMA_HOST: ${{ vars.OLLAMA_HOST }}
+          KNOSSOS_LIVE_MODEL: ${{ vars.KNOSSOS_LIVE_MODEL }}
+        run: |
+          npm install
+          npm test
+      - name: knossos-rs against a live engine
+        working-directory: knossos-rs
+        env:
+          KNOSSOS_LIVE_OLLAMA: http://${{ vars.OLLAMA_HOST }}:11434
+          KNOSSOS_LIVE_MODEL: ${{ vars.KNOSSOS_LIVE_MODEL }}
+          KNOSSOS_LIVE_STRICT: "1"
+        run: cargo test --test live_engine
+
+  cross_language:
+    name: Lapce ACP client vs the real agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Drive the Python agent from the Rust client
+        working-directory: editor
+        env:
+          # Without these the suite skips and reports ok. STRICT makes that a
+          # failure, which is the whole reason this job exists.
+          LAPCE_ACP_TEST_PYTHON: python
+          LAPCE_ACP_TEST_AGENT_CWD: ${{ github.workspace }}/model
+          LAPCE_ACP_TEST_STRICT: "1"
+        run: cargo test -p lapce-acp --tests

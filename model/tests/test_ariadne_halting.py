@@ -98,6 +98,41 @@ def test_pressure_names_the_actual_step_numbers():
     assert "5 of 8" in text
 
 
+def test_pressure_does_not_plateau_at_the_shipped_ceiling():
+    """The bands must scale with `max_steps`, not sit at absolute counts.
+
+    Banded on absolute counts, raising the ceiling 12 -> 20 put steps 7 through
+    17 in one band and handed the engine the same sentence eleven times. That is
+    a constant penalty, which the module docstring identifies as equivalent to no
+    penalty at all -- and the suite did not notice, because every other pressure
+    test pins `max_steps=12`.
+    """
+    a = Ariadne()                                  # the shipped 20 / 6 / 2
+    assert a.max_steps == 20
+
+    seen = [a.pressure(step) for step in range(7, 21)]
+    assert all(text is not None for text in seen)
+    # Four distinct messages across the run, not one repeated.
+    assert len(set(seen)) >= 4
+
+
+def test_early_pressure_does_not_forbid_changing_approach():
+    """With most of the budget left, trying another angle is the right move.
+
+    The closing instruction ("say so rather than trying another angle") is sound
+    with three steps remaining and wrong with thirteen. It escaped notice because
+    at `max_steps=12` step 7 really is halfway; at 20 it is barely a third.
+    """
+    a = Ariadne(max_steps=20, target_steps=6)
+    early = a.pressure(7)
+
+    assert "rather than trying another angle" not in early
+    assert "Changing approach is still worth it" in early
+    # ...and the closing bands still say it, at the point where it is true.
+    assert "Do not begin anything new" in a.pressure(17)
+    assert "final step" in a.pressure(20)
+
+
 # -------------------------------------------------------------------- config
 
 def test_a_target_above_the_ceiling_is_clamped():

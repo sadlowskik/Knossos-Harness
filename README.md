@@ -14,6 +14,7 @@ policy — is engine-agnostic by construction and survives an engine swap.
 |---|---|
 | `model/` | The architecture (`daedalus/`) and Knossos in Python (`knossos/`) |
 | `knossos-rs/` | Knossos in Rust — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
+| `conformance/` | Knossos driven by the ACP authors' own client and schema |
 | `fixtures/scratch-crate/` | A minimal cargo library, used as a target for exercising Knossos against real Rust |
 | `editor/` | Your Lapce fork, as a submodule |
 
@@ -27,7 +28,9 @@ the question of which line continues is still open:
 
 - **Python** (`model/knossos/`) speaks the [Agent Client Protocol](https://agentclientprotocol.com),
   so it runs in Zed and JetBrains today without forking anything. It is the one
-  with measured results — retrieval ranking, a gate, and a 19-case evaluation set.
+  with measured results — retrieval ranking, a gate, and a 19-case evaluation set
+  — and the one verified against the protocol's own client and published schema
+  (`conformance/`, 12 of 12).
 - **Rust** (`knossos-rs/`) is architecturally further along and could be linked
   directly into an editor fork rather than spawned as a subprocess.
 
@@ -64,6 +67,13 @@ the model:
 | Themis / Oracle | the always-on constitution, and verification against it |
 | Metis → Talos | plan, then execute and run the tests |
 | Lethe | bounded context with summarize-and-reset |
+
+## Where it stands
+
+[`model/PLAN.md`](model/PLAN.md) is the retrospective the project runs on.
+[`REPORT.md`](REPORT.md) continues it with what three outside harnesses found —
+including a chain of defects that let an execute-mode turn do nothing and report
+success, and what is still open.
 
 ## History
 

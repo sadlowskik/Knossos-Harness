@@ -62,20 +62,67 @@ class StepOutcome:
     files_changed: int = 0
     #: Only `True` when the deterministic verification tiers passed.
     verdict_passed: Optional[bool] = None
+    #: This step made exactly the same calls, with the same arguments, as the
+    #: step before it. Set by the caller, which is the only party that can see
+    #: more than one step.
+    repeated: bool = False
 
     @property
     def is_noop(self) -> bool:
         """A step that called no tools and changed no files produced nothing."""
         return self.tool_calls == 0 and self.files_changed == 0
 
+    @property
+    def is_futile(self) -> bool:
+        """A step that called tools, repeated itself exactly, and changed nothing.
+
+        `is_noop` alone cannot see this. It requires `tool_calls == 0`, so an
+        engine stuck re-issuing one failing `edit_file` looks productive on
+        every step -- it *is* calling a tool -- and the loop runs to the ceiling
+        instead of stopping. Twelve identical failures cost the same as twelve
+        useful steps and teach nobody anything.
+
+        The conjunction is what keeps this safe. Repetition alone is not
+        failure: reading the same file twice while working toward different
+        edits is ordinary. Repetition that also changed nothing is the loop.
+        """
+        return self.repeated and self.files_changed == 0
+
+    @property
+    def made_progress(self) -> bool:
+        """Whether this step is worth granting another one after."""
+        return not (self.is_noop or self.is_futile)
+
 
 @dataclass
 class Ariadne:
     #: Hard ceiling. Termination is guaranteed by this and nothing else.
-    max_steps: int = 12
+    #:
+    #: Raised from 12 on measurement, not on taste. On the hard eval tier the
+    #: ceiling was binding rather than the model: doubling it to 24 took the
+    #: score from 11/15 to 13/15, and the cases that flipped needed 15, 18, 19
+    #: and 23 steps. Twelve was cutting off work that was going to succeed.
+    #:
+    #: The PonderNet lesson in the module docstring is about *pressure*, not
+    #: about the wall -- it says a system with no escalating cost will spend its
+    #: whole budget on every input. `target_steps` is what applies that cost and
+    #: is deliberately left where it was, so the pressure begins at the same
+    #: place and simply has further to escalate. Raising the wall without
+    #: raising the target buys persistence on hard tasks without licensing
+    #: sprawl on easy ones, which the core tier confirms: it still finishes in
+    #: 3-7 steps.
+    #:
+    #: That "further to escalate" was the intent and was not what the code did:
+    #: `pressure` banded on absolute counts, so the extra steps all fell into one
+    #: band and got one repeated sentence. The bands are fractions of this
+    #: ceiling now, which is what makes leaving the target here actually correct
+    #: rather than merely intended.
+    max_steps: int = 20
     #: Where pressure begins -- the analogue of the geometric prior's mean.
     target_steps: int = 6
-    #: Consecutive no-op steps tolerated before declaring `STUCK`.
+    #: Consecutive unproductive steps tolerated before declaring `STUCK`. A step
+    #: is unproductive when it achieved nothing (`is_noop`) or merely repeated
+    #: the one before it (`is_futile`).
     stuck_after: int = 2
 
     def __post_init__(self) -> None:
@@ -104,19 +151,53 @@ class Ariadne:
 
         There is no gradient to attach a KL term to, so the penalty is stated
         and escalates as the ceiling approaches.
+
+        **The bands are fractions of the ceiling, not step counts.** They used to
+        be absolute -- `remaining <= 3` and everything else -- which was correct
+        while the ceiling was 12 and silently wrong once it became 20. Two things
+        went wrong at the larger size, both invisible to the tests, which pin
+        `max_steps=12`:
+
+        * The widest band returned one constant string, so from step 7 to step 17
+          the engine was told the same thing eleven times running. That is a
+          plateau, not escalation -- the β=0.01 failure this module exists to
+          avoid, reintroduced at a different scale.
+        * That constant string said *"prefer finishing over exploring"* and
+          *"say so rather than trying another angle"*, which is sound advice with
+          three steps left and actively harmful with thirteen. Trying another
+          angle is the correct move most of the way through a long budget, and
+          the harness was telling a capable model not to.
+
+        Expressed as fractions the same four sentences land in the same places at
+        `max_steps=12` and spread out properly at 20, so raising the ceiling
+        again needs no further retuning here.
         """
         if next_step <= self.target_steps:
             return None
 
         remaining = max(0, self.max_steps - next_step + 1)
+        # How much of the whole allowance is still ahead. The ceiling is at least
+        # 1 by `__post_init__`, so this cannot divide by zero.
+        share = remaining / self.max_steps
 
         if remaining <= 1:
             return (f"BUDGET: this is your final step ({next_step} of {self.max_steps}). "
                     f"Stop making changes. Summarise what you completed and state plainly "
                     f"what remains unfinished.")
-        if remaining <= 3:
+        if share <= 0.25:
             return (f"BUDGET: step {next_step} of {self.max_steps}, {remaining} remaining. "
                     f"Finish the current change and verify it. Do not begin anything new.")
+        if share <= 0.5:
+            return (f"BUDGET: step {next_step} of {self.max_steps} (target was "
+                    f"{self.target_steps}). Prefer finishing over exploring. If you are "
+                    f"blocked, say so rather than trying another angle.")
+        # Past the target but still holding most of the budget. This band exists
+        # so the escalation has somewhere to start that is not already the
+        # closing instruction: it reports the cost and asks for convergence
+        # without withdrawing permission to change approach, which at this point
+        # is usually the right move rather than a symptom.
         return (f"BUDGET: step {next_step} of {self.max_steps} (target was "
-                f"{self.target_steps}). Prefer finishing over exploring. If you are "
-                f"blocked, say so rather than trying another angle.")
+                f"{self.target_steps}), {remaining} remaining. You are past the "
+                f"target, so favour converging on a working change. Changing "
+                f"approach is still worth it if the current one is not working; "
+                f"repeating it unchanged is not.")

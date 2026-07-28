@@ -46,6 +46,10 @@ class FakeClient:
 
         self.raw_lines: list[str] = []
         self.notifications: list[dict] = []
+        #: Requests the agent sent us, for assertions.
+        self.requests: list[dict] = []
+        #: Which option to pick for permission requests. None means cancel.
+        self.permission_answer: str | None = "allow_once"
         self._inbox: "queue.Queue[dict]" = queue.Queue()
         self._id = 0
 
@@ -58,7 +62,29 @@ class FakeClient:
             if not line.strip():
                 continue
             self.raw_lines.append(line)
-            self._inbox.put(json.loads(line))
+            msg = json.loads(line)
+            # An inbound request (method *and* id) must be answered. Treating it
+            # as a notification leaves the agent waiting forever, which in a
+            # test looks like a hang rather than a failure.
+            if "method" in msg and "id" in msg:
+                self.requests.append(msg)
+                self._answer_request(msg)
+                continue
+            self._inbox.put(msg)
+
+    def _answer_request(self, msg):
+        """Reply the way an editor would."""
+        if msg.get("method") == "session/request_permission":
+            outcome = (
+                {"outcome": "selected", "optionId": self.permission_answer}
+                if self.permission_answer
+                else {"outcome": "cancelled"}
+            )
+            self._write({"jsonrpc": "2.0", "id": msg["id"],
+                         "result": {"outcome": outcome}})
+        else:
+            self._write({"jsonrpc": "2.0", "id": msg["id"],
+                         "error": {"code": -32601, "message": "unsupported"}})
 
     def _write(self, payload: dict):
         self._tx.write(json.dumps(payload) + "\n")
@@ -340,6 +366,9 @@ def test_thoughts_go_to_their_own_channel(workspace):
     ("stop", "end_turn"),
     ("length", "max_tokens"),
     ("content_filter", "refusal"),
+    # The model answered with native OpenAI tool calls, which Knossos does not
+    # read -- so the reply is empty and the turn certainly did not finish.
+    ("tool_calls", "refusal"),
     (None, "end_turn"),
     ("something_new", "end_turn"),
 ])

@@ -28,7 +28,68 @@ Commands:
 
 Anything else is sent to the agent as an instruction.";
 
+/// Asks on the terminal before a consequential call.
+///
+/// Safe here for a reason that does not generalise: the REPL reads a command,
+/// *then* runs it, so stdin is idle for the whole turn and there is nobody else
+/// to race for it. `serve` cannot do this — its loop would be inside the very
+/// command waiting for the answer — which is why that side routes replies
+/// through a reader task instead.
+///
+/// Two deliberate choices, both failing closed:
+///
+/// * **EOF denies.** Piped or redirected input that runs out must not read as
+///   approval. It also means a scripted REPL session that never anticipated the
+///   prompt refuses the write rather than performing it unattended.
+/// * **Anything that is not an explicit yes denies.** No default-accept on a
+///   bare newline, because a user pressing enter to get their prompt back is not
+///   consenting to a write.
+struct PromptApprover;
+
+#[async_trait::async_trait]
+impl crate::talos::Approver for PromptApprover {
+    async fn approve(&self, tool: &str, input: &serde_json::Value) -> bool {
+        let summary = describe(tool, input);
+        // Off the async worker: this blocks for as long as the user takes.
+        tokio::task::spawn_blocking(move || {
+            use std::io::BufRead;
+            println!("\n  {summary}");
+            print!("  allow? [y/N] ");
+            if std::io::stdout().flush().is_err() {
+                return false;
+            }
+            let mut answer = String::new();
+            match std::io::stdin().lock().read_line(&mut answer) {
+                Ok(0) | Err(_) => false, // EOF or a broken terminal
+                Ok(_) => matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"),
+            }
+        })
+        .await
+        .unwrap_or(false) // the blocking task panicked; nobody approved anything
+    }
+}
+
+/// One line describing what is about to happen, for the prompt.
+///
+/// The path matters more than the arguments blob: "allow?" over a raw JSON dump
+/// is a question nobody reads carefully, and a prompt people stop reading is
+/// worse than no prompt at all.
+fn describe(tool: &str, input: &serde_json::Value) -> String {
+    match tool {
+        "write_file" | "edit_file" => format!(
+            "{tool} {}",
+            input.get("path").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
+        "run" => format!(
+            "run {}",
+            input.get("command").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
+        _ => format!("{tool} {input}"),
+    }
+}
+
 pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> Result<()> {
+    talos.approver = Some(std::sync::Arc::new(PromptApprover));
     println!("Daedalus interactive session. /help for commands, /quit to leave.");
     if talos.ctx.is_dry_run() {
         println!("DRY RUN — nothing will be written until you /apply.");

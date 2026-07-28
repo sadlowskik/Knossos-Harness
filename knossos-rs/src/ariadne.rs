@@ -82,7 +82,12 @@ pub struct Ariadne {
 
 impl Default for Ariadne {
     fn default() -> Self {
-        Ariadne { max_steps: 12, target_steps: 6, stuck_after: 2 }
+        // 20, not 12, matching Python. The ceiling was raised on measurement:
+        // hard tasks were hitting the wall mid-fix. `target_steps` deliberately
+        // stays at 6, so pressure begins in the same place and simply has
+        // further to escalate — raising the wall without raising the target
+        // buys persistence on hard tasks without licensing sprawl on easy ones.
+        Ariadne { max_steps: 20, target_steps: 6, stuck_after: 2 }
     }
 }
 
@@ -113,11 +118,37 @@ impl Ariadne {
     ///
     /// There is no gradient to add a KL term to, so the penalty is stated in
     /// words and escalates as the ceiling approaches.
+    ///
+    /// **The bands are fractions of the ceiling, not step counts.** They used to
+    /// be absolute — `remaining <= 3` and everything else — which was correct
+    /// while the ceiling was 12 and silently wrong once it became 20. Two things
+    /// go wrong at the larger size, both invisible to tests that pin
+    /// `max_steps = 12`:
+    ///
+    /// * The widest band returns one constant string, so from step 7 to step 17
+    ///   the engine hears the same thing eleven times running. That is a plateau,
+    ///   not escalation — the β=0.01 failure this module exists to avoid,
+    ///   reintroduced at a different scale.
+    /// * That constant string says *"prefer finishing over exploring"* and *"say
+    ///   so rather than trying another angle"*, which is sound advice with three
+    ///   steps left and actively harmful with thirteen. Trying another angle is
+    ///   the correct move most of the way through a long budget.
+    ///
+    /// Expressed as fractions the same four sentences land in the same places at
+    /// `max_steps = 12` and spread out properly at 20.
     pub fn pressure(&self, next_step: usize) -> Option<String> {
         if next_step <= self.target_steps {
             return None;
         }
         let remaining = self.max_steps.saturating_sub(next_step - 1);
+        // How much of the whole allowance is still ahead. `max_steps` is at
+        // least 1 wherever an `Ariadne` is usable, so this cannot divide by zero
+        // in practice; guard anyway rather than rely on it.
+        let share = if self.max_steps == 0 {
+            0.0
+        } else {
+            remaining as f64 / self.max_steps as f64
+        };
 
         Some(if remaining <= 1 {
             format!(
@@ -125,17 +156,30 @@ impl Ariadne {
                  what you completed and state plainly what remains unfinished.",
                 next_step, self.max_steps
             )
-        } else if remaining <= 3 {
+        } else if share <= 0.25 {
             format!(
                 "BUDGET: step {} of {}, {} remaining. Finish the current change and verify it. \
                  Do not begin anything new.",
                 next_step, self.max_steps, remaining
             )
-        } else {
+        } else if share <= 0.5 {
             format!(
                 "BUDGET: step {} of {} (target was {}). Prefer finishing over exploring. If you \
                  are blocked, say so rather than trying another angle.",
                 next_step, self.max_steps, self.target_steps
+            )
+        } else {
+            // Past the target but still holding most of the budget. This band
+            // exists so the escalation has somewhere to start that is not
+            // already the closing instruction: it reports the cost and asks for
+            // convergence without withdrawing permission to change approach,
+            // which at this point is usually the right move rather than a
+            // symptom.
+            format!(
+                "BUDGET: step {} of {} (target was {}), {} remaining. You are past the target, \
+                 so favour converging on a working change. Changing approach is still worth it \
+                 if the current one is not working; repeating it unchanged is not.",
+                next_step, self.max_steps, self.target_steps, remaining
             )
         })
     }
@@ -214,6 +258,52 @@ mod tests {
         assert!(mid.contains("Prefer finishing"));
         assert!(late.contains("Do not begin anything new"));
         assert!(last.contains("final step"));
+    }
+
+    /// The bands must scale with `max_steps`, not sit at absolute counts.
+    ///
+    /// Banded on absolute counts, raising the ceiling 12 -> 20 put steps 7
+    /// through 17 in one band and handed the engine the same sentence eleven
+    /// times. That is a constant penalty, which the module docs identify as
+    /// equivalent to no penalty at all — and the suite did not notice, because
+    /// every other pressure test pins `max_steps` at 12.
+    #[test]
+    fn pressure_does_not_plateau_at_the_shipped_ceiling() {
+        let a = Ariadne::default(); // the shipped 20 / 6 / 2
+        assert_eq!(a.max_steps, 20);
+
+        let seen: Vec<String> = (7..=20).map(|s| a.pressure(s).unwrap()).collect();
+        let distinct: std::collections::HashSet<&String> = seen.iter().collect();
+        // Four distinct messages across the run, not one repeated.
+        assert!(distinct.len() >= 4, "only {} distinct messages", distinct.len());
+    }
+
+    /// With most of the budget left, trying another angle is the right move.
+    ///
+    /// The closing instruction ("say so rather than trying another angle") is
+    /// sound with three steps remaining and wrong with thirteen. It escaped
+    /// notice because at `max_steps = 12` step 7 really is halfway; at 20 it is
+    /// barely a third.
+    #[test]
+    fn early_pressure_does_not_forbid_changing_approach() {
+        let a = Ariadne::new(20, 6);
+        let early = a.pressure(7).unwrap();
+
+        assert!(!early.contains("rather than trying another angle"));
+        assert!(early.contains("Changing approach is still worth it"));
+        // ...and the closing bands still say it, at the point where it is true.
+        assert!(a.pressure(17).unwrap().contains("Do not begin anything new"));
+        assert!(a.pressure(20).unwrap().contains("final step"));
+    }
+
+    /// The whole point of fractions: the same four sentences land in the same
+    /// places at the old ceiling, so this is a generalisation and not a retune.
+    #[test]
+    fn the_old_ceiling_still_bands_where_it_used_to() {
+        let a = Ariadne::new(12, 6);
+        assert!(a.pressure(7).unwrap().contains("Prefer finishing"));
+        assert!(a.pressure(10).unwrap().contains("Do not begin anything new"));
+        assert!(a.pressure(12).unwrap().contains("final step"));
     }
 
     #[test]

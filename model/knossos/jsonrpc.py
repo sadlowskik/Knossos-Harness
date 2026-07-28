@@ -33,6 +33,7 @@ import json
 import queue
 import sys
 import threading
+import time
 import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, IO, Optional
@@ -130,8 +131,18 @@ class Peer:
             msg["params"] = params
         self._send(msg)
 
-    def request(self, method: str, params: Any = None, timeout: Optional[float] = None) -> Any:
-        """Call the peer and block for its reply. Raises `RpcError` on failure."""
+    #: How often a waiting `request` looks up to check `abort` and the pipe.
+    WAIT_SLICE = 0.1
+
+    def request(self, method: str, params: Any = None, timeout: Optional[float] = None,
+                abort: Optional[threading.Event] = None) -> Any:
+        """Call the peer and block for its reply. Raises `RpcError` on failure.
+
+        `abort` makes an untimed wait interruptible. Some requests legitimately
+        have no deadline -- a permission prompt waits as long as the user takes
+        to read it -- but "no deadline" must not mean "unkillable": if the turn
+        is cancelled, or the peer goes away, the caller has to get control back.
+        """
         with self._pending_lock:
             self._next_id += 1
             req_id = f"h{self._next_id}"
@@ -143,13 +154,39 @@ class Peer:
             msg["params"] = params
         self._send(msg)
 
-        if not pending.event.wait(timeout):
+        if not self._await(pending, timeout, abort):
             with self._pending_lock:
                 self._pending.pop(req_id, None)
+            if abort is not None and abort.is_set():
+                raise RpcError(INTERNAL_ERROR, f"{method} was cancelled")
+            if self._closed.is_set():
+                raise RpcError(INTERNAL_ERROR, f"peer closed before replying to {method}")
             raise RpcError(INTERNAL_ERROR, f"timed out waiting for reply to {method}")
         if pending.error is not None:
             raise pending.error
         return pending.result
+
+    def _await(self, pending: _Pending, timeout: Optional[float],
+               abort: Optional[threading.Event]) -> bool:
+        """Wait for `pending`, giving up on timeout, abort, or a closed pipe."""
+        if timeout is None and abort is None:
+            # Still bounded by the pipe: a dead peer sets `_closed`, and waking
+            # to notice that is the difference between a stalled turn and a hung
+            # process.
+            while not pending.event.wait(self.WAIT_SLICE):
+                if self._closed.is_set():
+                    return False
+            return True
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while not pending.event.wait(self.WAIT_SLICE):
+            if abort is not None and abort.is_set():
+                return False
+            if self._closed.is_set():
+                return False
+            if deadline is not None and time.monotonic() >= deadline:
+                return False
+        return True
 
     # ------------------------------------------------------------------- input
 
@@ -162,20 +199,21 @@ class Peer:
                 if not line:
                     continue
                 try:
-                    msg = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    log(f"[jsonrpc] dropping unparseable line: {exc}")
+                    self._accept(line)
+                except Exception as exc:
+                    # One bad message must not take the connection with it.
+                    #
+                    # This used to catch only `(OSError, ValueError)` around the
+                    # whole loop, which is narrower than the ways a *syntactically
+                    # valid* JSON object can be malformed. `{"method": []}` is the
+                    # cheapest example: `_fast_path` does `method in FAST_PATH`,
+                    # and an unhashable key raises `TypeError`, which escaped the
+                    # handler and ended the loop -- permanently, because `finally`
+                    # then closes the peer and strands every pending request. A
+                    # single line from the editor could kill the connection and
+                    # take a session's in-memory staged edits with it.
+                    log(f"[jsonrpc] dropping malformed message: {exc!r}")
                     continue
-                if not isinstance(msg, dict):
-                    continue
-
-                if "method" in msg:
-                    if self._fast_path(msg["method"]) and "id" not in msg:
-                        self._dispatch(msg)
-                    else:
-                        self._inbox.put(msg)
-                elif "id" in msg:
-                    self._resolve(msg)
         except (OSError, ValueError):
             pass
         finally:
@@ -189,18 +227,63 @@ class Peer:
                 p.error = RpcError(INTERNAL_ERROR, "connection closed")
                 p.event.set()
 
+    def _accept(self, line: str) -> None:
+        """Route one line. Raises on anything malformed; the caller drops it.
+
+        The shape checks are not decoration. JSON-RPC says `method` is a string
+        and `id` is a string, number or null, but nothing stops a peer sending
+        `[]` for either, and both then fail deep inside code that assumes
+        otherwise -- `method` at the `in` test, `id` at the dict lookup in
+        `_resolve`. Rejecting them here keeps the failure at the edge, where it
+        is one dropped message rather than a dead connection.
+        """
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError as exc:
+            log(f"[jsonrpc] dropping unparseable line: {exc}")
+            return
+        if not isinstance(msg, dict):
+            return
+
+        if "method" in msg:
+            if not isinstance(msg["method"], str):
+                log(f"[jsonrpc] dropping message whose method is "
+                    f"{type(msg['method']).__name__}, not a string")
+                return
+            if self._fast_path(msg["method"]) and "id" not in msg:
+                self._dispatch(msg)
+            else:
+                self._inbox.put(msg)
+        elif "id" in msg:
+            if not isinstance(msg["id"], (str, int, float, type(None))):
+                log(f"[jsonrpc] dropping response whose id is "
+                    f"{type(msg['id']).__name__}, which cannot identify a request")
+                return
+            self._resolve(msg)
+
     def _resolve(self, msg: dict) -> None:
         with self._pending_lock:
             pending = self._pending.pop(msg["id"], None)
         if pending is None:
             return
-        if "error" in msg and msg["error"] is not None:
-            err = msg["error"]
-            pending.error = RpcError(err.get("code", INTERNAL_ERROR),
-                                     err.get("message", "unknown error"), err.get("data"))
-        else:
-            pending.result = msg.get("result")
-        pending.event.set()
+        # Everything from here must reach `event.set()`. The request has already
+        # been taken off `_pending`, so an exception in between does not merely
+        # drop a message -- it leaves the caller blocked until its timeout with
+        # nothing left to answer it. A non-dict `error` is enough to do that.
+        try:
+            err = msg.get("error")
+            if err is not None:
+                if isinstance(err, dict):
+                    pending.error = RpcError(err.get("code", INTERNAL_ERROR),
+                                             err.get("message", "unknown error"),
+                                             err.get("data"))
+                else:
+                    pending.error = RpcError(INTERNAL_ERROR,
+                                             f"malformed error field: {err!r}")
+            else:
+                pending.result = msg.get("result")
+        finally:
+            pending.event.set()
 
     def _work_loop(self) -> None:
         while True:

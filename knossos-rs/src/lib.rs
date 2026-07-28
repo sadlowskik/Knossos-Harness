@@ -21,6 +21,7 @@ pub mod ariadne;
 pub mod config;
 pub mod diff;
 pub mod engine;
+pub mod lethe;
 pub mod metis;
 pub mod mnemosyne;
 pub mod oracle;

@@ -45,6 +45,11 @@ impl Tool for ReadFile {
         })
     }
 
+    /// Reading is how the agent finds out what to do; it is not doing it.
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let text = match ctx.read(&path) {
@@ -93,6 +98,10 @@ impl Tool for WriteFile {
         })
     }
 
+    fn consequential(&self) -> bool {
+        true
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let content = req_str(input, "content")?;
@@ -127,6 +136,10 @@ impl Tool for EditFile {
             },
             "required": ["path", "old_string", "new_string"]
         })
+    }
+
+    fn consequential(&self) -> bool {
+        true
     }
 
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
@@ -176,6 +189,10 @@ impl Tool for ListDir {
             "type": "object",
             "properties": {"path": {"type": "string", "description": "Defaults to the workspace root"}}
         })
+    }
+
+    fn consequential(&self) -> bool {
+        false
     }
 
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {

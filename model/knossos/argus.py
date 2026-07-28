@@ -40,9 +40,11 @@ Language support:
 from __future__ import annotations
 
 import ast
+import fnmatch
 import hashlib
 import json
 import math
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field, asdict
@@ -263,13 +265,39 @@ class Argus:
     # ---------------------------------------------------------------- scanning
 
     def _walk(self) -> Iterable[Path]:
+        """Every included file, skipping excluded directories entirely.
+
+        One `os.walk` with in-place pruning, rather than an `rglob` per include
+        pattern with the exclusions applied to the *results*. The old shape
+        descended `.git`, `node_modules`, `target` and the vendored editor in
+        full -- and did it once per pattern, so four complete traversals per
+        scan, every turn, to throw almost all of it away. Measured at ~2.0s of
+        walking to do ~0.026s of useful work on this repository; pruned, the
+        same walk is ~0.006s.
+
+        Assigning to `dirnames[:]` is what does the pruning: `os.walk` reads
+        that list back to decide where to recurse, so removing a name in place
+        means it is never entered. Rebinding the name would silently do nothing.
+
+        Results are grouped by include pattern and sorted, which reproduces the
+        old traversal's *order* as well as its contents. That is not cosmetic:
+        `include` is a priority list (`*.py` before `*.rs`), `lookup` returns
+        hits in index order, and a symbol defined in both languages resolves to
+        whichever was indexed first. Walking once and yielding in encounter
+        order silently reversed that for `Router.forward`, which is what
+        `test_qualname_disambiguates` caught.
+        """
+        buckets: Dict[str, List[Path]] = {pattern: [] for pattern in self.include}
+        for current, dirnames, filenames in os.walk(self.root):
+            dirnames[:] = [d for d in dirnames if d not in self.exclude]
+            here = Path(current)
+            for name in filenames:
+                for pattern in self.include:
+                    if fnmatch.fnmatch(name, pattern):
+                        buckets[pattern].append(here / name)
+                        break
         for pattern in self.include:
-            for path in self.root.rglob(pattern):
-                if not path.is_file():
-                    continue
-                if any(part in self.exclude for part in path.relative_to(self.root).parts):
-                    continue
-                yield path
+            yield from sorted(buckets[pattern])
 
     def scan(self) -> ScanReport:
         """Index the repo, re-parsing only what changed since the last scan."""

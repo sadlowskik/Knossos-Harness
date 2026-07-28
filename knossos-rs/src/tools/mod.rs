@@ -15,6 +15,13 @@
 //! Tools also report which files they changed. That is not bookkeeping: it is
 //! what lets Ariadne distinguish a step that did work from one that spun, and
 //! so decide whether the loop is `Stuck`.
+//!
+//! Every tool also declares whether it is [consequential][Tool::consequential]
+//! — whether it can change anything outside the conversation. Talos counts only
+//! those toward having done the task, so that reading a file cannot be mistaken
+//! for carrying one out. The trait method has no default on purpose: a new tool
+//! does not compile until the question is answered, whereas a list of names
+//! kept elsewhere would quietly classify the next writing tool as a read.
 
 pub mod fs;
 pub mod search;
@@ -269,6 +276,12 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
     /// JSON Schema for this tool's input.
     fn schema(&self) -> serde_json::Value;
+    /// Whether this tool can change something outside the conversation.
+    ///
+    /// True for writing to the workspace or running a command; false for
+    /// reading, listing and searching. Deliberately not defaulted — see the
+    /// module docs.
+    fn consequential(&self) -> bool;
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput>;
 
     fn def(&self) -> ToolDef {
@@ -318,6 +331,14 @@ impl ToolRegistry {
 
     pub fn names(&self) -> Vec<&str> {
         self.tools.iter().map(|t| t.name()).collect()
+    }
+
+    /// Whether the named tool can change something outside the conversation.
+    ///
+    /// An unknown name is not consequential: `dispatch` turns it into an error
+    /// output, and an error is not work done.
+    pub fn is_consequential(&self, name: &str) -> bool {
+        self.tools.iter().any(|t| t.name() == name && t.consequential())
     }
 
     /// Run a tool by name. An unknown name or a failing tool becomes an error

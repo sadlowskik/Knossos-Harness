@@ -229,6 +229,334 @@ async fn repeated_empty_steps_are_reported_as_stuck() {
     assert!(outcome.changed.is_empty());
 }
 
+// ------------------------------------------------- doing nothing is not done
+
+#[tokio::test]
+async fn an_empty_reply_is_not_a_claim_of_completion() {
+    // An empty reply has no tool calls, so it used to take the "engine believes
+    // it is finished" branch -- where an empty change set satisfies every tier
+    // vacuously. Found on the Python side against a live reasoning model that
+    // spent its whole budget before producing content; the same shape was here.
+    let h = Harness::new("passing");
+
+    let outcome = h
+        .run(
+            vec![
+                text_response(""),
+                text_response(""),
+                text_response(""),
+                text_response(""),
+            ],
+            4,
+        )
+        .await;
+
+    assert!(!outcome.succeeded(), "a run that said nothing did not succeed");
+    assert_ne!(outcome.halt, Halt::Done);
+    assert!(outcome.changed.is_empty());
+}
+
+#[tokio::test]
+async fn a_passing_verdict_cannot_end_a_run_that_did_nothing() {
+    // `passing` compiles cleanly, so the real cargo ladder passes over an empty
+    // change set. That is a verdict about the repository, not about the task.
+    let h = Harness::new("passing");
+
+    let outcome = h
+        .run(
+            vec![
+                text_response("Nothing needs doing."),
+                text_response("Still nothing."),
+                text_response("Still nothing."),
+                text_response("Still nothing."),
+            ],
+            4,
+        )
+        .await;
+
+    assert!(!outcome.succeeded());
+    assert!(outcome.changed.is_empty());
+}
+
+#[tokio::test]
+async fn a_task_that_changes_no_file_can_still_succeed() {
+    // The discriminator is not whether a *file* changed -- otherwise "run the
+    // tests and tell me what breaks" could never finish. It is whether a tool
+    // that can change something outside the conversation succeeded, which `run`
+    // does and `read_file` does not.
+    let h = Harness::new("passing");
+
+    let outcome = h
+        .run(
+            vec![
+                tool_call("1", "run", serde_json::json!({"command": "cargo --version"})),
+                text_response("It builds with the stable toolchain."),
+            ],
+            4,
+        )
+        .await;
+
+    assert!(outcome.succeeded(), "running a command is real work: {}", outcome.summary);
+    assert!(outcome.changed.is_empty());
+}
+
+#[tokio::test]
+async fn reading_a_file_is_not_doing_the_task() {
+    // The vacuous pass this check exists to prevent, reached through
+    // `read_file`. `acted` used to count any successful call, so an engine
+    // could answer "add a triple() to src/lib.rs" by reading src/lib.rs and
+    // asking to be verified: the change set is empty, `passing` compiles so
+    // every tier is vacuously satisfied, and the run halted Done reporting
+    // "Completed and verified" having written nothing at all.
+    let h = Harness::new("passing");
+
+    let mut talos = h.talos(
+        vec![
+            tool_call("1", "read_file", serde_json::json!({"path": "src/lib.rs"})),
+            text_response("I have added triple()."),
+            text_response("Still added."),
+            text_response("Truly added."),
+        ],
+        4,
+        false,
+    );
+
+    let outcome = talos
+        .run(
+            "add a triple(x: u32) -> u32 to src/lib.rs",
+            &Plan { steps: vec!["add triple".into()] },
+        )
+        .await
+        .unwrap();
+
+    assert_ne!(outcome.halt, Halt::Done, "{}", outcome.summary);
+    assert!(!outcome.succeeded());
+    assert!(outcome.changed.is_empty());
+
+    // And the engine was told why, rather than being left to repeat itself.
+    let conversation: String =
+        talos.messages.iter().map(|m| m.text()).collect::<Vec<_>>().join("\n");
+    assert!(
+        conversation.contains("nothing to verify"),
+        "the engine should have been told reading is not doing: {conversation}"
+    );
+}
+
+/// Records what it was asked, and answers with a fixed verdict.
+struct Recording {
+    allow: bool,
+    asked: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl knossos::talos::Approver for Recording {
+    async fn approve(&self, tool: &str, _input: &serde_json::Value) -> bool {
+        self.asked.lock().unwrap().push(tool.to_string());
+        self.allow
+    }
+}
+
+#[tokio::test]
+async fn without_an_approver_a_run_is_unattended() {
+    // The default, and it is the right one for `daedalus task`: a one-shot CLI
+    // is non-interactive by design, and prompting there hangs CI and every
+    // scripted use. Pinned so it cannot drift into a silent full-allow that
+    // nobody chose.
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({"path": "src/added.rs", "content": "pub fn f() {}\n"}),
+            ),
+            text_response("Done."),
+        ],
+        3,
+        false,
+    );
+    assert!(talos.approver.is_none());
+
+    talos
+        .run("add a file", &Plan { steps: vec!["add".into()] })
+        .await
+        .unwrap();
+
+    assert!(h.root.join("src/added.rs").exists());
+}
+
+#[tokio::test]
+async fn an_approver_is_asked_only_about_consequential_calls() {
+    let h = Harness::new("passing");
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut talos = h.talos(
+        vec![
+            tool_call("1", "read_file", serde_json::json!({"path": "src/lib.rs"})),
+            tool_call(
+                "2",
+                "write_file",
+                serde_json::json!({"path": "src/added.rs", "content": "pub fn f() {}\n"}),
+            ),
+            text_response("Done."),
+        ],
+        4,
+        false,
+    );
+    talos.approver = Some(std::sync::Arc::new(Recording {
+        allow: true,
+        asked: asked.clone(),
+    }));
+
+    talos
+        .run("read then write", &Plan { steps: vec!["do it".into()] })
+        .await
+        .unwrap();
+
+    // Asking about every read trains people to approve without looking, which
+    // is worse than not asking. `Tool::consequential` is the discriminator and
+    // has no default, so a new tool cannot be silently unclassified.
+    assert_eq!(*asked.lock().unwrap(), vec!["write_file"]);
+}
+
+#[tokio::test]
+async fn a_refused_call_does_not_count_as_work_done() {
+    // The interaction that matters most: `acted` gates `Halt::Done`, so if a
+    // refusal counted as acting, denying every write would still let a run
+    // report success over an empty change set.
+    let h = Harness::new("passing");
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({"path": "src/nope.rs", "content": "pub fn f() {}\n"}),
+            ),
+            text_response("I could not write it."),
+            text_response("Still could not."),
+            text_response("Nothing further."),
+        ],
+        4,
+        false,
+    );
+    talos.approver = Some(std::sync::Arc::new(Recording {
+        allow: false,
+        asked: asked.clone(),
+    }));
+
+    let outcome = talos
+        .run("add a file", &Plan { steps: vec!["add".into()] })
+        .await
+        .unwrap();
+
+    assert!(!h.root.join("src/nope.rs").exists(), "a refused write happened anyway");
+    assert_ne!(outcome.halt, Halt::Done, "{}", outcome.summary);
+    assert!(outcome.changed.is_empty());
+
+    // And the engine was told, so it can propose something else rather than
+    // repeating the same call into the same refusal.
+    let conversation: String = talos
+        .messages
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter_map(|c| match c {
+            knossos::engine::Content::ToolResult { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(conversation.contains("not permitted"), "{conversation}");
+}
+
+#[tokio::test]
+async fn the_conversation_is_bounded_across_a_run() {
+    // `messages` kept every block of every turn and the whole request was
+    // rebuilt each step, so a run grew without bound -- measured at roughly
+    // 96 000 tokens by the end of turn one and past 270 000 by turn three. The
+    // step ceiling was the only thing keeping it finite, which is a blunt
+    // instrument rather than a bound.
+    let h = Harness::new("passing");
+    let big = "x".repeat(300_000);
+    std::fs::write(h.root.join("src/huge.rs"), &big).unwrap();
+
+    let mut talos = h.talos(
+        vec![
+            tool_call("1", "read_file", serde_json::json!({"path": "src/huge.rs"})),
+            tool_call("2", "read_file", serde_json::json!({"path": "src/huge.rs"})),
+            text_response("Done."),
+        ],
+        3,
+        false,
+    );
+    talos.lethe = knossos::lethe::Lethe { max_tokens: 4_000, ..Default::default() };
+
+    talos
+        .run("read the big file", &Plan { steps: vec!["read".into()] })
+        .await
+        .unwrap();
+
+    assert!(
+        knossos::lethe::estimate_tokens(&talos.messages) <= 4_000,
+        "conversation was {} tokens",
+        knossos::lethe::estimate_tokens(&talos.messages)
+    );
+
+    // The load-bearing invariant: every tool call still has its result. An id
+    // without its partner is a hard provider error, not a degradation.
+    let uses = talos
+        .messages
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter(|c| matches!(c, knossos::engine::Content::ToolUse { .. }))
+        .count();
+    let results = talos
+        .messages
+        .iter()
+        .flat_map(|m| &m.content)
+        .filter(|c| matches!(c, knossos::engine::Content::ToolResult { .. }))
+        .count();
+    assert_eq!(uses, results, "compaction split a tool call from its result");
+}
+
+#[tokio::test]
+async fn compaction_is_visible_in_the_trace() {
+    // Otherwise it is invisible: the run continues normally and the only
+    // evidence that context was given up is the model failing to refer to
+    // something it was told earlier.
+    let h = Harness::new("passing");
+    std::fs::write(h.root.join("src/huge.rs"), "x".repeat(300_000)).unwrap();
+
+    let mut talos = h.talos(
+        vec![
+            tool_call("1", "read_file", serde_json::json!({"path": "src/huge.rs"})),
+            text_response("Done."),
+        ],
+        2,
+        false,
+    );
+    talos.lethe = knossos::lethe::Lethe { max_tokens: 4_000, ..Default::default() };
+    talos
+        .run("read it", &Plan { steps: vec!["read".into()] })
+        .await
+        .unwrap();
+
+    // `#[serde(tag = "event", rename_all = "snake_case")]`, so this is the
+    // exact discriminant -- a looser match could pass on any event mentioning
+    // the word and would not be evidence of anything.
+    let events = h.trace_events();
+    let compactions: Vec<_> = events
+        .iter()
+        .filter(|e| e["event"] == "context_compacted")
+        .collect();
+
+    assert!(!compactions.is_empty(), "no compaction event in {events:?}");
+    assert!(
+        compactions[0]["tokens"].as_u64().unwrap() <= 4_000,
+        "the trace should record the size it reached: {:?}",
+        compactions[0]
+    );
+}
+
 #[tokio::test]
 async fn the_path_jail_survives_a_hostile_tool_call() {
     let h = Harness::new("passing");
@@ -241,6 +569,11 @@ async fn the_path_jail_survives_a_hostile_tool_call() {
                     "write_file",
                     serde_json::json!({"path": "../../escaped.rs", "content": "pwned"}),
                 ),
+                // Three, not one: a refused call accomplishes nothing, so the
+                // engine claiming to be done no longer ends the run. It keeps
+                // being asked until Ariadne calls it stuck.
+                text_response("Done."),
+                text_response("Done."),
                 text_response("Done."),
             ],
             4,
@@ -248,6 +581,7 @@ async fn the_path_jail_survives_a_hostile_tool_call() {
         .await;
 
     // The write was refused, so nothing changed and the file does not exist.
+    assert!(!outcome.succeeded(), "a refused run did not accomplish the task");
     assert!(outcome.changed.is_empty(), "jail must refuse the write");
     assert!(!h.root.parent().unwrap().join("escaped.rs").exists());
 
@@ -267,6 +601,8 @@ async fn disallowed_shell_commands_are_refused() {
         .run(
             vec![
                 tool_call("1", "run", serde_json::json!({"command": "rm -rf ."})),
+                text_response("Done."),
+                text_response("Done."),
                 text_response("Done."),
             ],
             4,
@@ -443,7 +779,17 @@ async fn resume_continues_the_same_conversation() {
 #[tokio::test]
 async fn resume_on_a_fresh_talos_behaves_like_a_first_task() {
     let h = Harness::new("passing");
-    let mut talos = h.talos(vec![text_response("Nothing to do.")], 4, false);
+    // Repeated because "nothing to do" no longer ends a run on its own.
+    let mut talos = h.talos(
+        vec![
+            text_response("Nothing to do."),
+            text_response("Nothing to do."),
+            text_response("Nothing to do."),
+            text_response("Nothing to do."),
+        ],
+        4,
+        false,
+    );
 
     let outcome = talos.resume("look around").await.unwrap();
     assert!(!talos.messages.is_empty());

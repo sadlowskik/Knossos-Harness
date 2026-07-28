@@ -36,6 +36,14 @@ class Case:
     expect_terms: Sequence[Sequence[str]] = ()
     #: Substrings whose presence indicates a specific known fabrication.
     forbid_terms: Sequence[str] = ()
+    #: Written after Argus's ranking was tuned, and never used to tune it.
+    #:
+    #: PLAN.md §3.4 asked for this and it stayed open a long time. A score on
+    #: cases the ranker was shaped against measures fit, not retrieval, and the
+    #: two are only distinguishable if some cases were never available to fit
+    #: to. These deliberately target `knossos/` -- the harness itself -- which
+    #: the original nineteen never touched at all.
+    held_out: bool = False
     note: str = ""
 
 
@@ -199,5 +207,115 @@ CASES: List[Case] = [
         kind="negative",
         prompt="How does the user authentication flow validate passwords?",
         note="There is no auth. Pass = says so.",
+    ),
+
+    # ---------------------------------------------------------------- held out
+    #
+    # Written after the ranker was tuned, against `knossos/` -- which none of
+    # the nineteen above mention. Scored and reported separately, because a
+    # number from cases the ranker was shaped against is a measure of fit.
+
+    Case(
+        id="ho-oracle-tiers",
+        kind="repo_specific",
+        held_out=True,
+        prompt="In what order does Oracle run its checks, and what happens "
+               "when one of them fails?",
+        expect_files=["knossos/oracle.py"],
+        expect_terms=[["tier"], ["fail fast", "fail-fast", "immediately", "stops",
+                                 "returns immediately", "first failing"]],
+        note="Cheapest first; the first failing tier returns and nothing below "
+             "it runs.",
+    ),
+    Case(
+        id="ho-oracle-judge-gate",
+        kind="repo_specific",
+        held_out=True,
+        prompt="When is the model allowed to judge whether the work is correct?",
+        expect_files=["knossos/oracle.py"],
+        expect_terms=[["tier 4", "last tier", "final tier", "judge"],
+                      ["deterministic", "every tier", "all tiers", "passed"]],
+        note="Unreachable until every deterministic tier passes; a dry run can "
+             "never satisfy that.",
+    ),
+    Case(
+        id="ho-path-jail",
+        kind="repo_specific",
+        held_out=True,
+        prompt="What stops a tool call writing outside the workspace, and how "
+               "are symlinks handled?",
+        expect_files=["knossos/workspace.py"],
+        expect_terms=[["jail", "escape", "pathescape", "outside"],
+                      ["symlink"]],
+        note="resolve() does a lexical check plus a real check on the nearest "
+             "existing ancestor.",
+    ),
+    Case(
+        id="ho-no-shell",
+        kind="repo_specific",
+        held_out=True,
+        prompt="Which programs may run_command execute, and why do shell "
+               "operators like && not work?",
+        expect_files=["knossos/tools.py"],
+        expect_terms=[["allowlist", "allowed", "python", "pytest", "ruff",
+                       "mypy", "git"],
+                      ["no shell", "without a shell", "argv", "shell=false",
+                       "not a shell"]],
+        note="ALLOWED_PROGRAMS, and the command is split into argv rather than "
+             "handed to a shell.",
+    ),
+    Case(
+        id="ho-git-readonly",
+        kind="repo_specific",
+        held_out=True,
+        prompt="Which git subcommands is the executor permitted to run?",
+        expect_files=["knossos/tools.py"],
+        expect_terms=[["read-only", "readonly", "read only"],
+                      ["status", "diff", "log", "show"]],
+        note="GIT_READONLY: nothing that mutates the repo or reaches the network.",
+    ),
+    Case(
+        id="ho-halting-pressure",
+        kind="repo_specific",
+        held_out=True,
+        prompt="How does the agent loop decide to stop, and what does it do as "
+               "the budget runs out?",
+        expect_files=["knossos/ariadne.py"],
+        expect_terms=[["ceiling", "max_steps", "hard limit", "budget"],
+                      ["pressure", "escalat", "target", "nudge"]],
+        note="A hard ceiling plus escalating textual pressure past target_steps; "
+             "carries the beta=0.01 collapse lesson from the model-level Ariadne.",
+    ),
+    Case(
+        id="ho-planner",
+        kind="repo_specific",
+        held_out=True,
+        prompt="How is a plan produced, and what happens if the model does not "
+               "return one in the expected format?",
+        expect_files=["knossos/metis.py"],
+        expect_terms=[["submit_plan", "tool call"],
+                      ["fallback", "prose", "falls back", "degenerate"]],
+        note="A submit_plan tool call, then truncated-JSON recovery, then prose "
+             "bullets, then the task as its own single step.",
+    ),
+    Case(
+        id="ho-exact-references",
+        kind="repo_specific",
+        held_out=True,
+        prompt="How does the harness rename a symbol across several files "
+               "without touching comments that happen to mention the name?",
+        expect_files=["knossos/tools.py", "knossos/lsp.py"],
+        expect_terms=[["language server", "lsp"],
+                      ["reference", "rename_symbol", "rename"]],
+        note="rename_symbol resolves uses through the language server; it "
+             "refuses rather than falling back to text substitution.",
+    ),
+    Case(
+        id="ho-no-telemetry",
+        kind="negative",
+        held_out=True,
+        prompt="Where does the harness send usage telemetry, and what fields "
+               "does the payload contain?",
+        note="There is none. Pass = says so.",
     ),
 ]

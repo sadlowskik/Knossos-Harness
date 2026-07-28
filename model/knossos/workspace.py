@@ -1,4 +1,4 @@
-"""The workspace: everything an executor is allowed to touch, and nothing else.
+﻿"""The workspace: everything an executor is allowed to touch, and nothing else.
 
 Argus only ever *reads*, so until now the harness has needed no such boundary.
 Talos will write, and the moment it does, two properties have to be structural
@@ -23,11 +23,75 @@ import time
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
 
 class PathEscape(PermissionError):
     """A tool asked for a path outside the workspace."""
+
+
+class EditorFiles(Protocol):
+    """The editor's view of the tree, when there is an editor.
+
+    Disk is not what the user is looking at. An open buffer with unsaved changes
+    is, and an agent that reads through to disk reasons about a version of the
+    file the user cannot see. Writing back the same way puts the change on the
+    editor's undo stack instead of surprising it.
+
+    Both methods report failure rather than raising, because falling back to
+    disk is always better than losing the operation.
+    """
+
+    def read_text_file(self, path: Path) -> Optional[str]:
+        """The editor's content for `path`, or None if it cannot supply it."""
+
+    def write_text_file(self, path: Path, content: str) -> bool:
+        """Write through the editor. False means the caller should use disk."""
+
+
+class Symbols(Protocol):
+    """Exact cross-file symbol knowledge, when a language server is running.
+
+    The difference between this and searching for a name is the difference
+    between a rename that works and one that quietly edits a comment, a string
+    literal, and an unrelated variable that happens to share the spelling.
+    """
+
+    def workspace_symbols(self, query: str = ""):
+        """Declarations matching `query`, as `lsp.Location`s."""
+
+    def references(self, path: Path, line: int, character: int,
+                   include_declaration: bool = True):
+        """Every use of the symbol at that position, across the project."""
+
+
+class Elicitor(Protocol):
+    """A way to put a question to the user mid-turn, when there is one.
+
+    Without this an agent that does not know which of two things was meant has
+    only one move: guess, and spend the turn finding out it guessed wrong.
+    """
+
+    def ask(self, question: str,
+            choices: Optional[Sequence[str]]) -> Optional[str]:
+        """The user's answer, or None if they declined or nobody could ask."""
+
+
+class Terminals(Protocol):
+    """The editor's terminal, when there is one.
+
+    A build run in a hidden subprocess is invisible: the user cannot watch it,
+    scroll it, or kill it. Run in the editor's own terminal it is an ordinary
+    terminal they already know how to use.
+    """
+
+    def run(self, argv: Sequence[str],
+            timeout: int) -> Optional[Tuple[Optional[int], str]]:
+        """`(exit code, output)`, or None to fall back to a subprocess.
+
+        The exit code may itself be None when a signal ended the process, which
+        is not the same as exiting zero.
+        """
 
 
 @dataclass(frozen=True)
@@ -46,13 +110,32 @@ class JournalEntry:
 class Workspace:
     """A rooted, optionally write-staged view of a directory tree."""
 
-    def __init__(self, root: str | os.PathLike, dry_run: bool = False) -> None:
+    def __init__(self, root: str | os.PathLike, dry_run: bool = False,
+                 editor: Optional[EditorFiles] = None,
+                 terminal: Optional[Terminals] = None,
+                 elicit: Optional[Elicitor] = None,
+                 symbols: Optional[Symbols] = None) -> None:
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise NotADirectoryError(f"workspace root is not a directory: {self.root}")
         self.dry_run = dry_run
         #: absolute path -> proposed content. Empty unless `dry_run`.
         self._staged: Dict[Path, str] = {}
+        #: Set when a client advertises the ACP `fs` capabilities. The jail runs
+        #: first either way -- delegation changes *where* the bytes come from,
+        #: never *which paths* may be touched.
+        self.editor = editor
+        #: Set when a client advertises `terminal`. The allowlist still runs
+        #: first: delegation changes where a command runs, never which commands
+        #: are allowed to.
+        self.terminal = terminal
+        #: Set when a client advertises `elicitation`. `None` means there is
+        #: nobody to ask, and `ask_user` says so rather than blocking.
+        self.elicit = elicit
+        #: A language server, when one is running. `None` means `rename_symbol`
+        #: refuses rather than falling back to text substitution -- a rename
+        #: that silently becomes find-and-replace is worse than no rename.
+        self.symbols = symbols
 
     # ------------------------------------------------------------------ jail
 
@@ -97,8 +180,7 @@ class Workspace:
                     pass
             else:
                 try:
-                    entry.path.parent.mkdir(parents=True, exist_ok=True)
-                    entry.path.write_text(entry.before, encoding="utf-8")
+                    self._write_through(entry.path, entry.before)
                     restored.append(entry.path)
                 except OSError:
                     pass
@@ -119,9 +201,13 @@ class Workspace:
         return list(self._journal)
 
     def _record(self, path: Path) -> None:
-        """Capture a path's current content before it is overwritten."""
+        """Capture a path's current content before it is overwritten.
+
+        Through the editor when there is one: undo has to restore what the user
+        had, and what the user had may never have been saved.
+        """
         try:
-            before: Optional[str] = path.read_text(encoding="utf-8", errors="replace")
+            before: Optional[str] = self._read_through(path)
         except (FileNotFoundError, NotADirectoryError):
             before = None
         except OSError:
@@ -136,6 +222,18 @@ class Workspace:
         lexical one on the requested path, and a real one on the nearest
         ancestor that *does* exist, which is what catches a symlink pointing
         out of the tree.
+
+        The probe tests `is_symlink() or exists()`, and the first half is
+        load-bearing. `exists()` follows the link and reports False for a
+        *broken* one, so a symlink to a path that does not exist yet used to
+        slip through the whole loop: the probe walked past it to a parent that
+        resolves cleanly inside the root, the check passed, and `write_text`
+        then followed the link and created the file outside the workspace. A
+        symlinked directory did worse, because `mkdir(parents=True)` would build
+        the entire outside tree. `is_symlink` uses `lstat`, so it sees the link
+        itself rather than its target and closes that gap. Git preserves
+        symlinks, so this arrived in an ordinary checkout rather than needing
+        the agent to create one.
         """
         candidate = Path(requested)
         joined = candidate if candidate.is_absolute() else self.root / candidate
@@ -147,7 +245,10 @@ class Workspace:
 
         probe = normalized
         while True:
-            if probe.exists():
+            if probe.is_symlink() or probe.exists():
+                # Non-strict `resolve` still follows a dangling link to the
+                # target it names, which is exactly the path that would be
+                # written, so this compares the right thing.
                 if not _is_within(probe.resolve(), self.root):
                     raise PathEscape(
                         f"path escapes the workspace via a symlink: {requested!r}")
@@ -169,11 +270,26 @@ class Workspace:
     # ------------------------------------------------------------------- io
 
     def read(self, requested: str | os.PathLike) -> str:
-        """Read a file, preferring staged content over what is on disk."""
+        """Read a file: staged content first, then the editor, then disk.
+
+        Staging outranks the editor because a staged edit is this run's own
+        proposal and has not been offered to anyone yet.
+        """
         path = self.resolve(requested)
         staged = self._staged.get(path)
         if staged is not None:
             return staged
+        return self._read_through(path)
+
+    def _read_through(self, path: Path) -> str:
+        """Editor content if there is any, else disk."""
+        if self.editor is not None:
+            try:
+                content = self.editor.read_text_file(path)
+            except Exception:                        # never let a peer break a read
+                content = None
+            if content is not None:
+                return content
         return path.read_text(encoding="utf-8", errors="replace")
 
     def exists(self, requested: str | os.PathLike) -> bool:
@@ -186,10 +302,24 @@ class Workspace:
         if self.dry_run:
             self._staged[path] = content
             return path
+        self._commit(path, content)
+        return path
+
+    def _commit(self, path: Path, content: str) -> None:
+        """Journal the old content, then write it."""
         self._record(path)
+        self._write_through(path, content)
+
+    def _write_through(self, path: Path, content: str) -> None:
+        """Write via the editor if there is one, else straight to disk."""
+        if self.editor is not None:
+            try:
+                if self.editor.write_text_file(path, content):
+                    return
+            except Exception:
+                pass                                 # fall through to disk
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        return path
 
     def edit(self, requested: str | os.PathLike, old: str, new: str) -> Path:
         """Replace `old` with `new`, requiring it to appear exactly once.
@@ -237,9 +367,7 @@ class Workspace:
         written: List[Path] = []
         for path in targets:
             content = self._staged.pop(path)
-            self._record(path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            self._commit(path, content)
             written.append(path)
         return written
 

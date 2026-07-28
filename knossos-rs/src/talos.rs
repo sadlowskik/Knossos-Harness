@@ -29,6 +29,52 @@ use crate::session::{Session, TraceEvent};
 use crate::themis::{Themis, EXECUTOR_ROLE};
 use crate::tools::{ToolCtx, ToolRegistry};
 
+/// Fed back when the engine returns nothing at all.
+///
+/// An empty reply has no tool calls, so it used to take the "the engine
+/// believes it is finished" branch, where an empty change set satisfies every
+/// tier vacuously and the run reported success having done nothing. Found on
+/// the Python side against a live reasoning model that spent its whole token
+/// budget before producing any content; the same shape was here.
+const EMPTY_REPLY_NOTE: &str =
+    "Your last reply was empty. This usually means the response was truncated \
+     before any content was produced. Reply with a tool call, or a short \
+     statement of what you intend to do.";
+
+/// Fed back when the engine asks to be verified without having done anything.
+const NOTHING_DONE_NOTE: &str =
+    "Nothing has been changed or run this turn, so there is nothing to verify \
+     and the task cannot be considered done. Reading a file tells you what to \
+     do; it is not doing it. Either carry out the task with write_file, \
+     edit_file or run, or state plainly what is blocking you.";
+
+/// Consulted before a tool call that can change something outside the
+/// conversation.
+///
+/// # Why this is a seam and not a policy
+///
+/// The Rust harness had no permission boundary at all: `drive` dispatched
+/// straight to the registry, and without `--dry-run` a run wrote to disk
+/// unattended. The Python side has had one since the ACP server existed
+/// (`talos.py`), so the two harnesses disagreed about whether the agent may act
+/// without being asked.
+///
+/// It is an `Option` on `Talos`, and `None` means **allow**, matching Python's
+/// `ask_permission=None`. That default is deliberate rather than lax: the
+/// one-shot CLI (`daedalus task`) is non-interactive by design, and a prompt
+/// there would hang CI and every scripted use. Front ends that *can* ask —
+/// `repl`, which owns stdin, and `serve`, which has a front end to ask — install
+/// one. Which front ends do and do not is documented at each call site rather
+/// than inferred from this type.
+///
+/// Implementations must **fail closed**: a disconnected front end, a dropped
+/// channel or a broken asker denies. An approver that cannot ask is not an
+/// approver that says yes.
+#[async_trait::async_trait]
+pub trait Approver: Send + Sync {
+    async fn approve(&self, tool: &str, input: &serde_json::Value) -> bool;
+}
+
 pub struct Talos {
     pub engine: Box<dyn Engine>,
     pub tools: ToolRegistry,
@@ -41,6 +87,13 @@ pub struct Talos {
     pub max_tokens: u32,
     /// Whether to run tier 4 once the deterministic ladder passes.
     pub judge: bool,
+    /// Bounds `messages`. Public so a caller can size it to the server's window
+    /// or disable it by raising `max_tokens`.
+    pub lethe: crate::lethe::Lethe,
+    /// Consulted before every consequential tool call. `None` is unattended:
+    /// the executor proceeds, which is right for a scripted run and wrong for
+    /// an editor — so the front ends that can ask, do. See [`Approver`].
+    pub approver: Option<std::sync::Arc<dyn Approver>>,
 
     // --- session state, persisted across `run`/`resume` ---
     /// The running conversation. Survives between turns.
@@ -77,6 +130,8 @@ impl Talos {
             session,
             max_tokens,
             judge,
+            lethe: crate::lethe::Lethe::default(),
+            approver: None,
             messages: Vec::new(),
             changed: BTreeSet::new(),
             task: String::new(),
@@ -158,10 +213,45 @@ impl Talos {
         self.changed.clear();
     }
 
+    /// Whether this call may run.
+    ///
+    /// Only consequential calls are put to the user. Asking about every read
+    /// would train them to approve without looking, which is worse than not
+    /// asking at all — the same reasoning as `Talos._permitted` on the Python
+    /// side, and it leans on `Tool::consequential`, which has no default, so a
+    /// tool added later cannot compile without being classified.
+    async fn permitted(&self, name: &str, input: &serde_json::Value) -> bool {
+        let Some(approver) = &self.approver else {
+            return true; // unattended
+        };
+        if !self.tools.is_consequential(name) {
+            return true;
+        }
+        approver.approve(name, input).await
+    }
+
     async fn drive(&mut self) -> Result<Outcome> {
         let mut noops = 0usize;
         let mut last_verdict: Option<Verdict> = None;
         let mut last_text = String::new();
+        // Successful calls to tools that can change something outside the
+        // conversation, this turn. The discriminator between "verified" and
+        // "verified nothing": every tier is satisfied vacuously by an empty
+        // change set, so a passing verdict is only evidence of completion if
+        // something actually happened.
+        //
+        // Not derived from `changed`, because a task whose work is a command --
+        // "run the tests and tell me what breaks" -- legitimately writes no
+        // file and is still real work. `run` is consequential, so those count.
+        //
+        // Not "any successful call" either, which is what this used to be. That
+        // let a single `read_file` satisfy the check, so an engine could answer
+        // "add a triple() to lib.rs" by reading lib.rs, asking to be verified,
+        // and being told it had completed and verified the task -- over an
+        // empty change set, having written nothing. Reading is how you find out
+        // what to do; it is not doing it. Caught by
+        // `reading_a_file_is_not_doing_the_task`.
+        let mut acted = 0usize;
 
         for step in 1..=self.ariadne.max_steps {
             if let Some(note) = self.ariadne.pressure(step) {
@@ -173,6 +263,17 @@ impl Talos {
                 description: format!("engine turn {step}"),
             });
 
+            // Bounded here, immediately before the conversation is spent,
+            // rather than after each push -- the same placement as the Python
+            // side, and for the same reason: this is the one point where the
+            // whole request is known.
+            if self.lethe.compact(&mut self.messages) {
+                self.session.log(&TraceEvent::ContextCompacted {
+                    step,
+                    tokens: crate::lethe::estimate_tokens(&self.messages),
+                });
+            }
+
             let req = Request::new(
                 self.themis.system_prompt(EXECUTOR_ROLE, Some(&self.scribe)),
                 self.messages.clone(),
@@ -182,8 +283,9 @@ impl Talos {
 
             let resp = engine::complete(self.engine.as_ref(), &req).await?;
             self.messages.push(resp.as_message());
-            if !resp.text().trim().is_empty() {
-                last_text = resp.text();
+            let reply_text = resp.text();
+            if !reply_text.trim().is_empty() {
+                last_text = reply_text.clone();
             }
 
             // Own the calls so `resp` is not borrowed across the awaits below.
@@ -195,7 +297,12 @@ impl Talos {
 
             let mut outcome = StepOutcome::default();
 
-            if calls.is_empty() {
+            if calls.is_empty() && reply_text.trim().is_empty() {
+                // An engine that said nothing has not claimed to be finished,
+                // so there is nothing to verify. Verifying here is what turns a
+                // truncated reply into a *passing* run.
+                self.messages.push(Message::user_text(EMPTY_REPLY_NOTE.to_string()));
+            } else if calls.is_empty() {
                 // The engine believes it is finished. Oracle decides.
                 let files: Vec<PathBuf> = self.changed.iter().cloned().collect();
                 let mut verdict = if self.ctx.is_dry_run() {
@@ -239,17 +346,51 @@ impl Talos {
                     verdict.tiers.push(t4);
                 }
 
-                outcome.verdict_passed = Some(verdict.passed);
+                // A pass over a run that did nothing is not a completion. The
+                // engine may request verification at any point; it may not be
+                // told it succeeded merely by declining to act.
+                outcome.verdict_passed = Some(verdict.passed && acted > 0);
                 if !verdict.passed {
                     self.messages.push(Message::user_text(verdict.report()));
+                } else if acted == 0 {
+                    self.messages.push(Message::user_text(NOTHING_DONE_NOTE.to_string()));
                 }
                 last_verdict = Some(verdict);
             } else {
                 let mut results = Vec::new();
                 for (id, name, input) in &calls {
+                    if !self.permitted(name, input).await {
+                        // A refusal is a result, not an error: the engine sees
+                        // it and can propose something else on its next step.
+                        // Ending the run would discard a whole conversation
+                        // over a decision the user is entitled to make.
+                        //
+                        // "not permitted" rather than "the user said no": this
+                        // also covers a disconnected front end, and telling the
+                        // engine a human rejected it when none was consulted
+                        // invites it to abandon a task nobody declined.
+                        outcome.tool_calls += 1;
+                        self.session.log(&TraceEvent::ToolCall {
+                            step,
+                            tool: name.clone(),
+                            input: input.clone(),
+                            output: format!("{name} was not permitted"),
+                            is_error: true,
+                            changed: Vec::new(),
+                        });
+                        results.push(Content::ToolResult {
+                            id: id.clone(),
+                            content: format!("{name} was not permitted"),
+                            is_error: true,
+                        });
+                        continue;
+                    }
                     let out = self.tools.dispatch(name, input, &self.ctx).await;
                     outcome.tool_calls += 1;
                     outcome.files_changed += out.changed.len();
+                    if !out.is_error && self.tools.is_consequential(name) {
+                        acted += 1;
+                    }
 
                     for path in &out.changed {
                         self.changed.insert(path.clone());
