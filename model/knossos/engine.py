@@ -482,11 +482,40 @@ PROVIDERS: Dict[str, Provider] = {
     # from the mainland-China console needs `dashscope.aliyuncs.com` instead and
     # will be rejected here -- pass --base-url rather than editing this entry,
     # since which one is correct is a property of the account, not the provider.
+    # Default is a *coder* model, not the general one: everything this
+    # repository evaluates is a coding task.
+    #
+    # `qwen3.7-flash` was the obvious pick on price, and is the same trap the
+    # Gemini entry above describes. It *is* listed by `/models` -- and asking
+    # for it still returned `403 AccessDenied.Unpurchased` on 29 Jul 2026,
+    # because entitlement is granted per model in the console and the listing
+    # says nothing about it. A `/models` response is a catalogue, not a
+    # permission. The only reliable test is a one-token request per candidate.
+    #
+    # This endpoint also serves other vendors' models -- deepseek-v4-*,
+    # kimi-k2.7-code, glm-5.* -- which are reachable through this same entry by
+    # passing --model.
     "qwen": Provider("https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                     "DASHSCOPE_API_KEY", "qwen3.7-flash",
-                     "Qwen direct; qwen3.7-flash is cheap enough ($0.03/M in) "
-                     "to run the coding eval repeatedly, with 1M context. Also "
-                     "serves qwen3.7-plus and qwen3.7-max"),
+                     "DASHSCOPE_API_KEY", "qwen3-coder-flash",
+                     "Qwen direct. Coder line: qwen3-coder-flash is the cheap "
+                     "one, qwen3-coder-plus and qwen3-coder-480b-a35b-instruct "
+                     "are stronger. Prefer a dated id such as "
+                     "qwen3-coder-plus-2025-09-23 for a number you intend to "
+                     "compare against later -- the undated names move"),
+    # Model ids here are paths, not names: `accounts/fireworks/models/<name>`.
+    # Passing the bare name is the standard first mistake and returns a 404
+    # that reads like the model does not exist.
+    #
+    # That shape also means `Engine.name` contains slashes. Checked: it reaches
+    # display strings only (`acp.py`, `eval.py`) and never a path, so nothing
+    # needs to sanitise it. Worth re-checking if a trace file is ever named
+    # after the engine.
+    "fireworks": Provider("https://api.fireworks.ai/inference/v1",
+                          "FIREWORKS_API_KEY",
+                          "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct",
+                          "serves open models on dedicated hardware; the coder "
+                          "line is what this repository wants. Ask /models for "
+                          "the current catalogue -- the ids move"),
     "mistral": Provider("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
                         "mistral-small-latest"),
     "together": Provider("https://api.together.xyz/v1", "TOGETHER_API_KEY",
