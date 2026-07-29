@@ -510,12 +510,21 @@ PROVIDERS: Dict[str, Provider] = {
     # display strings only (`acp.py`, `eval.py`) and never a path, so nothing
     # needs to sanitise it. Worth re-checking if a trace file is ever named
     # after the engine.
+    # Decimals are spelled with `p`: qwen3p7-plus is Qwen 3.7 Plus,
+    # deepseek-v3p1 is v3.1. Searching the catalogue for "3.7" finds nothing.
+    #
+    # `accounts/fireworks/routers/...` is a separate resource path from
+    # `.../models/...` and is not interchangeable with it.
     "fireworks": Provider("https://api.fireworks.ai/inference/v1",
                           "FIREWORKS_API_KEY",
-                          "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct",
-                          "serves open models on dedicated hardware; the coder "
-                          "line is what this repository wants. Ask /models for "
-                          "the current catalogue -- the ids move"),
+                          "accounts/fireworks/models/deepseek-v4-flash",
+                          "frontier models, per-token, no free tier. "
+                          "deepseek-v4-flash is the cheap frontier tier; "
+                          "kimi-k2p7-code and deepseek-v4-pro are the "
+                          "alternatives worth running against it. None of "
+                          "these ids carry a date, so none of them are pinned "
+                          "-- record the id and the run date with any number "
+                          "you intend to compare later"),
     "mistral": Provider("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
                         "mistral-small-latest"),
     "together": Provider("https://api.together.xyz/v1", "TOGETHER_API_KEY",
