@@ -65,6 +65,16 @@ struct LoopArgs {
     /// Skip Oracle tier 4 (model judgement against the constitution).
     #[arg(long)]
     no_judge: bool,
+    /// Record the full prompt and completion at every engine call.
+    ///
+    /// Turns the trace from an audit log into training data: each step gains
+    /// the exact request sent and the exact reply, which together are an SFT
+    /// example, while the verdict and halt events already present say whether
+    /// it worked. Costs a great deal of disk — a trace grows roughly with the
+    /// square of the run length — so it is off unless a run exists to produce
+    /// a corpus.
+    #[arg(long)]
+    collect_exchanges: bool,
 }
 
 #[derive(Subcommand)]
@@ -245,6 +255,9 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     let mut session = Session::new(&root, &engine_name).with_trace(&trace_path)?;
     if stream {
         session = session.streaming();
+    }
+    if opts.collect_exchanges {
+        session = session.collecting();
     }
 
     eprintln!("engine       {engine_name}");

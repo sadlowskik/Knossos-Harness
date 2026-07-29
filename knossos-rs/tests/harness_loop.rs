@@ -178,6 +178,97 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
     );
 }
 
+/// A collected trace has to contain a training example, not a summary of one.
+///
+/// The bar is reconstruction: from the trace alone, can you recover what the
+/// model was shown and what it produced, at every step? Presence of the event
+/// is not enough — step 5 has to carry the conversation as it stood at step 5,
+/// which is the part a naive implementation gets wrong by logging only the
+/// latest turn.
+#[tokio::test]
+async fn a_collected_trace_carries_the_prompt_and_the_completion() {
+    let h = Harness::new("passing");
+
+    let mut talos = Talos::new(
+        Box::new(MockEngine::new(vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/added.rs",
+                    "content": "pub fn triple(n: i32) -> i32 { n * 3 }\n"
+                }),
+            ),
+            text_response("done"),
+        ])),
+        ToolRegistry::standard(),
+        ToolCtx::new(&h.root),
+        Oracle::new(&h.root),
+        SymbolIndex::build(&h.root).unwrap(),
+        Themis::from_text("Be correct."),
+        Ariadne::new(6, 5),
+        Session::new(&h.root, "mock")
+            .with_trace(&h.trace)
+            .unwrap()
+            .collecting(),
+        1024,
+        false,
+    );
+
+    let plan = Plan { steps: vec!["do the thing".into()] };
+    talos.run("add a triple function", &plan).await.unwrap();
+
+    let exchanges: Vec<_> = h
+        .trace_events()
+        .into_iter()
+        .filter(|e| e["event"] == "exchange")
+        .collect();
+
+    assert!(exchanges.len() >= 2, "one exchange per engine call");
+
+    let first = &exchanges[0];
+    assert!(
+        first["request"]["system"].as_str().unwrap().contains("Be correct."),
+        "the system prompt has to be the one the model actually saw"
+    );
+    let opening = first["request"]["messages"].as_array().unwrap();
+    assert!(!opening.is_empty(), "the prompt side of the pair");
+    assert_eq!(
+        first["response"]["content"][0]["kind"], "tool_use",
+        "the completion side of the pair, verbatim"
+    );
+
+    // The reconstruction check. A later step must show the history it was
+    // actually given, or the example is a different one from the one that ran.
+    let last = exchanges.last().unwrap();
+    let later = last["request"]["messages"].as_array().unwrap();
+    assert!(
+        later.len() > opening.len(),
+        "step N must record the conversation as it stood at step N"
+    );
+    assert!(
+        serde_json::to_string(later).unwrap().contains("triple"),
+        "the earlier turn's work has to appear in the later prompt"
+    );
+}
+
+#[tokio::test]
+async fn a_trace_carries_no_prompts_unless_asked() {
+    // The default stays an audit log. Exchanges change the size of a trace by
+    // orders of magnitude, so every ordinary run must not pay for them.
+    // One step, one scripted reply: enough to produce a trace, not enough to
+    // outrun the mock.
+    let h = Harness::new("passing");
+    h.run(vec![text_response("nothing to do")], 1).await;
+
+    let events = h.trace_events();
+    assert!(!events.is_empty(), "the run has to have traced something");
+    assert!(
+        events.iter().all(|e| e["event"] != "exchange"),
+        "collecting is opt-in"
+    );
+}
+
 #[tokio::test]
 async fn a_verified_change_halts_done() {
     let h = Harness::new("passing");

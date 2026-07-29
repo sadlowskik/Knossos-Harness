@@ -409,6 +409,19 @@ impl Talos {
             .with_max_tokens(self.max_tokens);
 
             let resp = engine::complete(self.engine.as_ref(), &req).await?;
+
+            // Recorded before anything downstream touches either side, so the
+            // pair is exactly what crossed the wire. Guarded rather than
+            // logged unconditionally: the clone copies the whole conversation,
+            // and a run that is not collecting should not pay for it.
+            if self.session.collects_exchanges() {
+                self.session.log(&TraceEvent::Exchange {
+                    step,
+                    request: req.clone(),
+                    response: resp.clone(),
+                });
+            }
+
             self.messages.push(resp.as_message());
             let reply_text = resp.text();
             if !reply_text.trim().is_empty() {

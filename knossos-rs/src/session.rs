@@ -35,6 +35,27 @@ pub enum TraceEvent {
         index: usize,
         description: String,
     },
+    /// Exactly what was sent to the engine, and exactly what came back.
+    ///
+    /// This is the difference between a trace you can *read* and a trace you
+    /// can *train on*. Every other event here records what the harness did;
+    /// only this one records what the model was shown and what it answered,
+    /// which is the sole pair an SFT example can be built from. The verdict
+    /// and halt events already in the stream are the label — so a collected
+    /// trace carries both the example and whether it worked.
+    ///
+    /// Off unless the session is collecting, because a `Request` holds the
+    /// whole conversation and recording one per step makes the trace roughly
+    /// quadratic in run length. A run that exists to be audited does not need
+    /// it; a run that exists to produce training data is the only kind that
+    /// does, and it opts in.
+    ///
+    /// Written to the trace file only, never streamed — see [`streamable`].
+    Exchange {
+        step: usize,
+        request: crate::engine::Request,
+        response: crate::engine::Response,
+    },
     ToolCall {
         step: usize,
         tool: String,
@@ -90,6 +111,21 @@ pub struct Session {
     /// wants live progress needs no second mechanism — it reads the same
     /// lines the log file gets.
     stream_stdout: bool,
+    /// Record the full request and response at every engine call.
+    ///
+    /// Turns the trace from an audit log into a training corpus. Costs a great
+    /// deal of disk, so it is off unless a caller asks — see
+    /// [`TraceEvent::Exchange`].
+    collect_exchanges: bool,
+}
+
+/// Whether an event is fit to send down a front end's progress channel.
+///
+/// [`TraceEvent::Exchange`] is not. It carries the entire prompt, which is
+/// training data rather than progress; pushing tens of thousands of tokens per
+/// step at a UI would drown every other event and stall whoever is reading.
+fn streamable(event: &TraceEvent) -> bool {
+    !matches!(event, TraceEvent::Exchange { .. })
 }
 
 impl Session {
@@ -100,7 +136,25 @@ impl Session {
             messages: Vec::new(),
             trace_path: None,
             stream_stdout: false,
+            collect_exchanges: false,
         }
+    }
+
+    /// Record the full prompt and completion at every engine call.
+    ///
+    /// Requires a trace file: exchanges are never streamed, so with nothing to
+    /// write to there would be nowhere for them to go.
+    pub fn collecting(mut self) -> Self {
+        self.collect_exchanges = true;
+        self
+    }
+
+    /// Whether to build an [`TraceEvent::Exchange`] at all.
+    ///
+    /// Checked by the caller before cloning a request, so a run that is not
+    /// collecting does not pay to copy the conversation on every step.
+    pub fn collects_exchanges(&self) -> bool {
+        self.collect_exchanges && self.trace_path.is_some()
     }
 
     /// Stream events to stdout as well as to any trace file.
@@ -134,7 +188,8 @@ impl Session {
     /// Append one event. Trace failures are reported but never abort a run —
     /// losing the record is bad, losing the work is worse.
     pub fn log(&self, event: &TraceEvent) {
-        if self.trace_path.is_none() && !self.stream_stdout {
+        let to_stdout = self.stream_stdout && streamable(event);
+        if self.trace_path.is_none() && !to_stdout {
             return;
         }
         let line = match serde_json::to_string(&Envelope {
@@ -148,7 +203,7 @@ impl Session {
             }
         };
 
-        if self.stream_stdout {
+        if to_stdout {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{line}");
             let _ = out.flush();
