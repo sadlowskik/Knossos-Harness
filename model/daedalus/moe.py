@@ -30,11 +30,32 @@ class Router(nn.Module):
     """Apollo: noisy top-k gating. Noise is applied only during training to give
     under-used experts a chance to be selected (exploration)."""
 
-    def __init__(self, n_embd: int, n_experts: int, top_k: int, noise: float = 1.0):
+    def __init__(self, n_embd: int, n_experts: int, top_k: int, noise: float = 1.0,
+                 bias_update: float = 0.0):
         super().__init__()
         self.gate = nn.Linear(n_embd, n_experts, bias=False)
         self.noise = nn.Linear(n_embd, n_experts, bias=False)   # learned per-token noise scale
         self.n_experts, self.top_k, self.noise_eps = n_experts, top_k, noise
+        # Aux-loss-free load balancing (DeepSeek-V3): a per-expert bias that
+        # shifts *selection* only, never the gate weights, and is updated by a
+        # rule rather than by gradient -- hence a buffer, not a parameter.
+        #
+        # The auxiliary load-balance loss works, but it optimises something that
+        # is not the objective: it trades token prediction for balance, and that
+        # trade shows up as a measurable quality tax. Nudging the routing bias
+        # instead gets the balance without putting a competing term in the loss.
+        # `bias_update = 0.0` disables it and the router behaves exactly as before.
+        #
+        # Registered ONLY when enabled. A buffer registered unconditionally lands
+        # in every state_dict, so a checkpoint written before this existed would
+        # fail to load with "Missing key(s)" -- silently breaking --resume on any
+        # run already in flight. An opt-in feature must not touch the on-disk
+        # shape of a model that has it switched off.
+        self.bias_update = bias_update
+        if bias_update > 0:
+            self.register_buffer("expert_bias", torch.zeros(n_experts))
+        else:
+            self.expert_bias = None
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         clean = self.gate(x)
@@ -42,8 +63,17 @@ class Router(nn.Module):
             scores = clean + torch.randn_like(clean) * (F.softplus(self.noise(x)) * self.noise_eps)
         else:
             scores = clean
-        vals, idx = scores.topk(self.top_k, -1)
-        return idx, F.softmax(vals, -1), scores
+        select = scores + self.expert_bias if self.bias_update > 0 else scores
+        _, idx = select.topk(self.top_k, -1)
+        # Weights come from the UNBIASED scores. If the bias leaked into the
+        # gate values it would scale expert outputs by a load-balancing term,
+        # which is a different (and wrong) thing from steering the choice.
+        w = F.softmax(scores.gather(-1, idx), -1)
+        if self.training and self.bias_update > 0:
+            with torch.no_grad():
+                load = F.one_hot(idx, self.n_experts).float().sum(dim=(0, 1, 2)) / idx.numel()
+                self.expert_bias += self.bias_update * torch.sign(1.0 / self.n_experts - load)
+        return idx, w, scores
 
 
 def load_balance_loss(scores: torch.Tensor, idx: torch.Tensor, n_experts: int
@@ -62,10 +92,11 @@ class MoELayer(nn.Module):
     """Routed Muses (top-k) plus always-on Themis shared experts."""
 
     def __init__(self, n_embd: int, n_experts: int = 8, top_k: int = 2,
-                 n_shared: int = 1, hidden: Optional[int] = None):
+                 n_shared: int = 1, hidden: Optional[int] = None,
+                 bias_update: float = 0.0):
         super().__init__()
         hidden = hidden or n_embd
-        self.router = Router(n_embd, n_experts, top_k)
+        self.router = Router(n_embd, n_experts, top_k, bias_update=bias_update)
         self.experts = nn.ModuleList([Expert(n_embd, hidden) for _ in range(n_experts)])
         self.shared = nn.ModuleList([Expert(n_embd, hidden) for _ in range(n_shared)])
         self.top_k = top_k

@@ -35,14 +35,19 @@ from .ariadne import ponder_loss
 class RoPEMoEBlock(nn.Module):
     """Pre-norm block: RoPE attention + MoE feed-forward."""
 
-    def __init__(self, n_embd, n_head, block_size, n_experts, top_k, n_shared, hidden):
+    def __init__(self, n_embd, n_head, block_size, n_experts, top_k, n_shared, hidden,
+                 qk_norm: bool = False, n_kv_head=None, bias_update: float = 0.0):
         super().__init__()
         self.ln1, self.ln2 = nn.LayerNorm(n_embd), nn.LayerNorm(n_embd)
-        self.attn = RoPEAttention(n_embd, n_head, block_size)
-        self.moe = MoELayer(n_embd, n_experts, top_k, n_shared, hidden)
+        self.attn = RoPEAttention(n_embd, n_head, block_size, qk_norm=qk_norm,
+                                  n_kv_head=n_kv_head)
+        self.moe = MoELayer(n_embd, n_experts, top_k, n_shared, hidden,
+                            bias_update=bias_update)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = x + self.attn(self.ln1(x))
+    def forward(self, x: torch.Tensor, doc_ids=None, cache=None,
+                pos_offset: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = x + self.attn(self.ln1(x), doc_ids=doc_ids, cache=cache,
+                          pos_offset=pos_offset)
         moe_out, scores = self.moe(self.ln2(x))
         return x + moe_out, scores
 
@@ -52,22 +57,62 @@ class RecurrentMoECore(nn.Module):
 
     The prelude embedding `e` is re-added before every loop so deep recurrence
     stays anchored to the input (Huginn, Geiping et al. 2025).
+
+    `loop_embed > 0` allocates a learned per-iteration vector, added alongside
+    `e`. Without it the block has **no way to tell which iteration it is on**:
+    `e` is identical on every pass, and the only signal distinguishing loop 1
+    from loop 4 is the hidden state itself. Universal Transformer (Dehghani et
+    al. 2018) shares weights across depth and adds an explicit timestep
+    embedding for exactly this reason. The cost is `loop_embed x n_embd`
+    parameters -- 2,048 at max_loops=4, n_embd=512, or 0.005% of a 45M model --
+    which is why this is the cheapest way to test whether the loops "want" to
+    be different functions before paying for per-loop weights.
     """
 
-    def __init__(self, n_embd, n_head, block_size, core_layers, n_experts, top_k, n_shared, hidden):
+    def __init__(self, n_embd, n_head, block_size, core_layers, n_experts, top_k,
+                 n_shared, hidden, loop_embed: int = 0, inject_gate: int = 0,
+                 qk_norm: bool = False, n_kv_head=None, bias_update: float = 0.0):
         super().__init__()
         self.blocks = nn.ModuleList([
-            RoPEMoEBlock(n_embd, n_head, block_size, n_experts, top_k, n_shared, hidden)
+            RoPEMoEBlock(n_embd, n_head, block_size, n_experts, top_k, n_shared,
+                         hidden, qk_norm=qk_norm, n_kv_head=n_kv_head,
+                         bias_update=bias_update)
             for _ in range(core_layers)
         ])
+        self.loop_emb = nn.Embedding(loop_embed, n_embd) if loop_embed else None
+        # Input injection re-adds `e` on every loop -- seven times at the default
+        # config, with nothing scaling it. The residual stream therefore grows
+        # monotonically, and each block's contribution shrinks relative to it
+        # (the deep pre-norm pathology, made worse by recurrence because the same
+        # block writes into an ever-larger stream). A learned per-iteration gate
+        # lets the model decide how much input to re-inject at each depth.
+        # Initialised to 1.0, so at step zero this is exactly the old behaviour.
+        self.inject_gate = nn.Parameter(torch.ones(inject_gate)) if inject_gate else None
 
-    def forward(self, x: torch.Tensor, e: torch.Tensor, n_loops: int
-                ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def step(self, i: int):
+        """Per-iteration offset for loop `i`, or 0.0 when disabled.
+
+        Clamped, because `--variable-loops` samples loop counts above the
+        trained maximum and the test-time depth dial is meant to keep working
+        past it. Indexing past the table would crash instead.
+        """
+        if self.loop_emb is None:
+            return 0.0
+        return self.loop_emb.weight[min(i, self.loop_emb.num_embeddings - 1)]
+
+    def gate(self, i: int):
+        """Per-iteration injection strength, or 1.0 when disabled."""
+        if self.inject_gate is None:
+            return 1.0
+        return self.inject_gate[min(i, self.inject_gate.numel() - 1)]
+
+    def forward(self, x: torch.Tensor, e: torch.Tensor, n_loops: int,
+                doc_ids=None) -> Tuple[torch.Tensor, torch.Tensor]:
         aux = x.new_zeros(())
-        for _ in range(n_loops):
-            x = x + e                                      # input injection
+        for i in range(n_loops):
+            x = x + self.gate(i) * e + self.step(i)        # input injection
             for blk in self.blocks:
-                x, scores = blk(x)
+                x, scores = blk(x, doc_ids=doc_ids)
                 # load_balance_loss returns (aux, load, importance); only the
                 # scalar is summed. Dropping the [0] adds a tuple to a tensor.
                 aux = aux + load_balance_loss(
@@ -118,13 +163,14 @@ class DaedalusFull(nn.Module):
                  block_size: int = 256, core_layers: int = 2, n_loops: int = 3,
                  n_experts: int = 8, top_k: int = 2, n_shared: int = 1,
                  hidden: Optional[int] = None, n_gist: int = 16, n_stages: int = 2,
-                 n_mem_banks: int = 1):
+                 n_mem_banks: int = 1, loop_embed: bool = False):
         super().__init__()
         hidden = hidden or n_embd
         self.tok_emb = nn.Embedding(vocab_size, n_embd)      # RoPE handles position
         self.stages = nn.ModuleList([
             RecurrentMoECore(n_embd, n_head, block_size, core_layers,
-                             n_experts, top_k, n_shared, hidden)
+                             n_experts, top_k, n_shared, hidden,
+                             loop_embed=(n_loops if loop_embed else 0))
             for _ in range(n_stages)
         ])
         self.memories = nn.ModuleList([
@@ -173,15 +219,28 @@ class DaedalusFullAdaptive(nn.Module):
                  block_size: int = 256, core_layers: int = 2, fixed_loops: int = 3,
                  max_loops: int = 6, n_experts: int = 8, top_k: int = 2, n_shared: int = 1,
                  hidden: Optional[int] = None, n_gist: int = 16, n_stages: int = 2,
-                 n_mem_banks: int = 1):
+                 n_mem_banks: int = 1, loop_embed: bool = False,
+                 inject_gate: bool = False, qk_norm: bool = False,
+                 n_kv_head=None, bias_update: float = 0.0, mtp: bool = False):
         super().__init__()
         hidden = hidden or n_embd
+        n_steps = max(fixed_loops, max_loops)
         self.tok_emb = nn.Embedding(vocab_size, n_embd)
         self.stages = nn.ModuleList([
             RecurrentMoECore(n_embd, n_head, block_size, core_layers,
-                             n_experts, top_k, n_shared, hidden)
+                             n_experts, top_k, n_shared, hidden,
+                             loop_embed=(n_steps if loop_embed else 0),
+                             inject_gate=(n_steps if inject_gate else 0),
+                             qk_norm=qk_norm, n_kv_head=n_kv_head,
+                             bias_update=bias_update)
             for _ in range(n_stages)
         ])
+        # Multi-token prediction (DeepSeek-V3): a second head predicting token
+        # t+2 from position t. It costs one vocab-sized matrix and is discarded
+        # at inference, but the extra supervision per position measurably
+        # improves sample efficiency -- which is the whole point when the token
+        # budget, not the parameter count, is what you are short of.
+        self.mtp_head = nn.Linear(n_embd, vocab_size) if mtp else None
         self.memories = nn.ModuleList([
             MemoryLayer(n_embd, n_gist, n_head, n_mem_banks) for _ in range(n_stages - 1)
         ])
@@ -191,13 +250,14 @@ class DaedalusFullAdaptive(nn.Module):
         self.fixed_loops, self.max_loops, self.block_size = fixed_loops, max_loops, block_size
 
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None,
-                lambda_prior: float = 0.2, beta: float = 0.01, alpha: float = 0.01):
+                lambda_prior: float = 0.2, beta: float = 0.01, alpha: float = 0.01,
+                doc_ids: Optional[torch.Tensor] = None, mtp_weight: float = 0.0):
         e = self.tok_emb(idx)
         x = e
         aux = x.new_zeros(())
         # fixed preprocessing stages + interleaved memory
         for i in range(len(self.stages) - 1):
-            x, a = self.stages[i](x, e, self.fixed_loops)
+            x, a = self.stages[i](x, e, self.fixed_loops, doc_ids=doc_ids)
             aux = aux + a
             x, mem_aux = self.memories[i](x)
             aux = aux + mem_aux
@@ -206,9 +266,14 @@ class DaedalusFullAdaptive(nn.Module):
         still = torch.ones(idx.shape, device=idx.device)
         p_list, logits_list = [], []
         for n in range(1, self.max_loops + 1):
-            x = x + e
+            # The final core's loop is unrolled here rather than delegated to
+            # RecurrentMoECore.forward, so the per-step offset and injection gate
+            # have to be applied explicitly -- otherwise --loop-embed and
+            # --inject-gate would silently do nothing on the one stage whose
+            # depth actually varies.
+            x = x + final.gate(n - 1) * e + final.step(n - 1)
             for blk in final.blocks:
-                x, scores = blk(x)
+                x, scores = blk(x, doc_ids=doc_ids)
                 aux = aux + load_balance_loss(
                     scores, scores.topk(blk.moe.top_k, -1)[1], blk.moe.n_experts)[0]
             lam = (torch.sigmoid(self.halt(x)).squeeze(-1) if n < self.max_loops
@@ -218,7 +283,17 @@ class DaedalusFullAdaptive(nn.Module):
             logits_list.append(self.lm_head(self.ln_f(x)))
         p = torch.stack(p_list, 0)
         logits = torch.stack(logits_list, 0)
-        exp_logits = (p.unsqueeze(-1) * logits).sum(0)
+        # Accumulate the halting-weighted mixture one step at a time rather than
+        # as `(p.unsqueeze(-1) * logits).sum(0)`. That expression materialises a
+        # second (steps, B, T, vocab) tensor -- and because `p` is fp32 while
+        # `logits` is fp16 under autocast, the product promotes to fp32 and the
+        # copy is *twice* the size of the stack it came from. At max_loops=4,
+        # B=16, T=1024, vocab=16384 that single temporary is 4 GiB, which is
+        # what caps the batch size on a 16GB card. Accumulating peaks at one
+        # (B, T, vocab) term instead of `steps` of them.
+        exp_logits = logits[0] * p[0].unsqueeze(-1)
+        for s in range(1, logits.shape[0]):
+            exp_logits = exp_logits + logits[s] * p[s].unsqueeze(-1)
         # `step_logits` is kept so Echo (loop self-distillation) can use step R as a
         # teacher for step k without a second forward pass.
         extras = {"aux": aux, "p": p, "step_logits": logits}
@@ -227,4 +302,13 @@ class DaedalusFullAdaptive(nn.Module):
             pond, l_rec, l_kl = ponder_loss(p, logits, targets, lambda_prior, beta)
             loss = pond + alpha * aux
             extras.update(l_rec=l_rec, l_kl=l_kl)
+            if self.mtp_head is not None and mtp_weight > 0.0:
+                # Position t already predicts t+1 through lm_head; this head
+                # predicts t+2, so its label is `targets` shifted left by one and
+                # the final position has no label to learn from.
+                v = self.mtp_head(self.ln_f(x))
+                l_mtp = F.cross_entropy(v[:, :-1].reshape(-1, v.shape[-1]),
+                                        targets[:, 1:].reshape(-1))
+                loss = loss + mtp_weight * l_mtp
+                extras["l_mtp"] = l_mtp
         return exp_logits, loss, extras
