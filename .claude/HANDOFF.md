@@ -1,33 +1,38 @@
-# Handoff — Rust Oracle attribution complete; next is the remaining ports
+# Handoff — the Python ports are finished; nothing is in flight
 
 ## 1. Goal
-Port Python's Oracle attribution machinery to Rust. **Done.** Both halves —
-forgiveness of pre-existing diagnostics, and a suite-integrity check that catches an
-agent making failing tests disappear by deleting them — are committed and verified.
+Port the remaining Python modules to Rust: `lsp`, `mcp`, `argus`+`gate`, and the
+`jsonrpc` peer both transports sit on. **Done.** The Oracle attribution work that
+preceded them is also done and verified.
 
 ## 2. State
 **Committed and verified.** Working tree clean apart from this file.
 - `bf2a7ad` Oracle baseline + diagnostic forgiveness
 - `24a24c0` Fail verification when the suite loses tests
 - `780da1d` Quiet three lints a newer toolchain started reporting
+- `2550274` Port the JSON-RPC peer and the MCP client to Rust
+- `8b1b390` Port Argus, the retrieval gate and the LSP client to Rust
 
-284 Rust tests green (230 lib + 33 harness_loop + 16 serve_loop + 3 sandbox_env + 2
+376 Rust tests green (322 lib + 33 harness_loop + 16 serve_loop + 3 sandbox_env + 2
 live_engine), clippy `--all-targets -D warnings` clean, rustdoc clean. Python untouched.
 
-The two failures the previous handoff warned about — `scribe_tracks_edits_made_during_the_run`
-and `resume_continues_the_same_conversation` — are fixed. The cause was as suspected:
-`baseline_tests` was being recorded before the `use_baseline` early return in `prepare`,
-so loop tests that opted out of the baseline still got the integrity check and burned
-extra steps failing it.
+The 92 new tests are 22 argus, 14 gate, 16 jsonrpc, 21 mcp, 19 lsp.
 
 ## 3. Key files
-- `knossos-rs/src/oracle/mod.rs` — all of the attribution work. `Baseline`/`diagnostic_key`/
-  `tally`, then `count_test_fns`/`suite_integrity` above `impl Baseline`, `prepare` in
-  `impl Oracle`, integrity wired into `verify` right after tier 0, tests at the bottom.
-- `knossos-rs/src/talos.rs` — top of `drive()` calls `oracle.prepare()`, skipped on dry run.
-- `knossos-rs/tests/harness_loop.rs`, `tests/serve_loop.rs` — harnesses use
-  `Oracle::new(..).without_baseline()`; reason commented at the call site.
-- `model/knossos/oracle.py` — the original that was ported. Nothing left to take from it.
+- `knossos-rs/src/argus.rs` — file-level BM25 over four fields, import graph,
+  budget-packed retrieval. `Located::in_test` and `is_meta` are the test-detection
+  signals `gate` reuses. `users_of` is the LSP-backed half of `importers_of`.
+- `knossos-rs/src/gate.rs` — whether to inject at all. Weights and thresholds at the
+  top of `impl RetrievalGate`.
+- `knossos-rs/src/jsonrpc.rs` — the bidirectional peer. Split into `PeerHandle`
+  (the conversation) and `Peer` (the threads); see the module docs for why.
+- `knossos-rs/src/mcp.rs` — remote tools. `over()` is the testable seam; `connect()`
+  spawns a subprocess on top of it.
+- `knossos-rs/src/lsp.rs` — Content-Length framing, which is the whole reason it
+  cannot reuse `jsonrpc::Peer`.
+- `knossos-rs/src/oracle/mod.rs` — the attribution work from the previous session.
+- `model/knossos/` — the originals. Nothing left to take from any of them except
+  `acp.py`, and only if Zed support is wanted.
 
 ## 4. Decisions (settled — do not relitigate)
 - **Rust is the survivor.** Python keeps only the eval (`eval.py`, `codeval.py`,
@@ -46,9 +51,14 @@ extra steps failing it.
 - `TraceEvent::Exchange` is off by default (`--collect-exchanges`) and never streamed.
 
 ## 5. Next step
-Nothing is in flight. The remaining ports, in the order they were last discussed:
-`lsp`, `mcp`, `argus`+`gate`. `acp` only if Zed support is wanted. Pick one deliberately
-rather than by default — none is started, so none is half-finished.
+Nothing is in flight and nothing is half-finished. The ports are done; `acp.py` is
+the only Python module left untranslated, and only matters if Zed support is wanted.
+
+Two things are built but not yet wired into the loop, which is the obvious next
+choice rather than a defect: nothing calls `RetrievalGate` or `Argus::retrieve` on
+the way into a prompt, and nothing passes ACP's `mcpServers` to `mcp::connect_all`.
+Both are deliberate — this was a port, not an integration — but until that wiring
+exists the modules are dead weight at runtime, however well tested.
 
 ## 6. Gotchas
 - **Never round-trip a source file through PowerShell.** `Get-Content -Raw` +
