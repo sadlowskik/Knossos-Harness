@@ -37,7 +37,7 @@ impl Default for Config {
             engine: EngineKind::Anthropic,
             model: None,
             anthropic_base_url: env_or("ANTHROPIC_BASE_URL", anthropic::DEFAULT_BASE_URL),
-            ollama_base_url: env_or("OLLAMA_HOST", ollama::DEFAULT_BASE_URL),
+            ollama_base_url: ollama_host().unwrap_or_else(|| ollama::DEFAULT_BASE_URL.to_string()),
             ollama_native_tools: true,
             workspace: PathBuf::from("."),
             // Matches `Ariadne::default()` and Python's `acp.py` default. Raised
@@ -111,4 +111,76 @@ impl Config {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+/// `OLLAMA_HOST` as a base URL, however it was written.
+///
+/// People write the same address several ways -- `10.0.0.5`, `10.0.0.5:11434`,
+/// `http://10.0.0.5:11434` -- and mean one thing by all of them. Python's
+/// `_local_base_url` already normalises; this side used the variable raw, so
+/// the most natural form to type produced a base URL with no scheme and no
+/// port, and the failure surfaced much later as an opaque transport error.
+///
+/// Returns `None` when the variable is unset or blank, so the caller keeps its
+/// own default rather than being handed an empty string.
+fn ollama_host() -> Option<String> {
+    normalise_host(&std::env::var("OLLAMA_HOST").ok()?)
+}
+
+/// The normalising half, kept free of the environment.
+///
+/// Environment variables are process-global, so a test that sets one races
+/// every other test in the binary. Taking the string as an argument makes the
+/// rule testable without that.
+fn normalise_host(raw: &str) -> Option<String> {
+    let raw = raw.trim().trim_end_matches('/');
+    if raw.is_empty() {
+        return None;
+    }
+
+    let with_scheme =
+        if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
+
+    // One colon is the scheme's own; a second means a port was given.
+    Some(if with_scheme.matches(':').count() < 2 {
+        format!("{with_scheme}:11434")
+    } else {
+        with_scheme
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalise_host;
+
+    #[test]
+    fn a_bare_address_gains_a_scheme_and_the_default_port() {
+        assert_eq!(
+            normalise_host("192.168.4.103").unwrap(),
+            "http://192.168.4.103:11434"
+        );
+    }
+
+    #[test]
+    fn an_address_with_a_port_keeps_it() {
+        assert_eq!(
+            normalise_host("192.168.4.103:11500").unwrap(),
+            "http://192.168.4.103:11500"
+        );
+    }
+
+    #[test]
+    fn a_full_url_is_left_alone_but_for_a_trailing_slash() {
+        assert_eq!(
+            normalise_host("http://192.168.4.103:11434/").unwrap(),
+            "http://192.168.4.103:11434"
+        );
+    }
+
+    #[test]
+    fn a_blank_variable_is_not_a_host() {
+        // So the caller keeps its own default instead of being handed "".
+        assert!(normalise_host("   ").is_none());
+        assert!(normalise_host("").is_none());
+    }
 }
