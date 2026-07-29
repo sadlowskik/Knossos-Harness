@@ -181,6 +181,78 @@ fn tally(diags: &[diagnostics::Diagnostic]) -> std::collections::BTreeMap<(Strin
     out
 }
 
+/// How many test functions each file declares.
+///
+/// Counted from the source rather than from `cargo test --list`, and that is
+/// the point: the listing needs a tree that compiles, and an agent that has
+/// just broken the build is exactly when this check matters most. A static
+/// count still answers.
+///
+/// Matches `#[test]`, `#[tokio::test]` and any other `path::test` attribute.
+/// `#[cfg(test)]` is not one — the attribute there is `cfg`, not `test`.
+fn count_test_fns(root: &Path) -> std::collections::BTreeMap<PathBuf, usize> {
+    let re = regex::Regex::new(r"#\[\s*(?:\w+\s*::\s*)*test\s*\]")
+        .expect("static pattern");
+    let mut out = std::collections::BTreeMap::new();
+
+    for entry in ignore::WalkBuilder::new(root).build().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(src) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let n = re.find_iter(&src).count();
+        if n > 0 {
+            out.insert(path.strip_prefix(root).unwrap_or(path).to_path_buf(), n);
+        }
+    }
+    out
+}
+
+/// Whether the suite lost tests, and which files lost them.
+///
+/// Judged on the **total**, not per file. A test moved from one module to
+/// another lowers one file's count and raises another's, and failing that
+/// would make the check fire on every honest refactor — which is how a
+/// protection gets switched off. Only a drop in the total is a deletion.
+fn suite_integrity(
+    before: &std::collections::BTreeMap<PathBuf, usize>,
+    now: &std::collections::BTreeMap<PathBuf, usize>,
+) -> TierResult {
+    let total_before: usize = before.values().sum();
+    let total_now: usize = now.values().sum();
+
+    let mut lost: Vec<String> = before
+        .iter()
+        .filter_map(|(file, &had)| {
+            let has = now.get(file).copied().unwrap_or(0);
+            (has < had).then(|| format!("{}: {had} -> {has}", file.display()))
+        })
+        .collect();
+    lost.sort();
+
+    let passed = total_now >= total_before;
+    TierResult {
+        tier: 0,
+        label: "suite integrity".to_string(),
+        passed,
+        skipped: false,
+        forgiven: false,
+        detail: if passed {
+            format!("{total_now} test function(s); none removed")
+        } else {
+            format!(
+                "the suite lost {} test function(s) ({total_before} -> {total_now}). \
+                 Making a failing test disappear is not fixing it.\n\n{}",
+                total_before - total_now,
+                lost.join("\n")
+            )
+        },
+    }
+}
+
 impl Baseline {
     /// The diagnostics that are actually new: those beyond the count already
     /// present before the change.
@@ -217,6 +289,15 @@ pub struct Oracle {
     /// `None` until [`Oracle::prepare`] runs. A tier absent from it was never
     /// measured and is therefore held to the normal standard.
     baseline: Option<Baseline>,
+    /// Test functions per file before the agent started.
+    ///
+    /// Kept apart from `baseline` because it is recorded even when forgiveness
+    /// is switched off: deleting a test is not made acceptable by there being
+    /// no test runner in the ladder, and the count costs a tree walk rather
+    /// than a build.
+    baseline_tests: Option<std::collections::BTreeMap<PathBuf, usize>>,
+    /// So `prepare` stays idempotent when `baseline` is legitimately `None`.
+    prepared: bool,
 }
 
 impl Oracle {
@@ -226,6 +307,8 @@ impl Oracle {
             sandbox: crate::sandbox::Sandbox::default(),
             use_baseline: true,
             baseline: None,
+            baseline_tests: None,
+            prepared: false,
         }
     }
 
@@ -248,9 +331,20 @@ impl Oracle {
     /// One full run of the ladder. That is the price of being able to attribute
     /// a failure, and it is paid once per session rather than once per task.
     pub async fn prepare(&mut self, adapter: &dyn LanguageAdapter) -> Result<()> {
-        if self.baseline.is_some() || !self.use_baseline {
+        if self.prepared {
             return Ok(());
         }
+        self.prepared = true;
+
+        if !self.use_baseline {
+            return Ok(());
+        }
+
+        // The test count is a baseline too, so `without_baseline` switches it
+        // off with the rest. Cheap on its own — a tree walk, not a build — but
+        // it is measured here rather than separately so that "forgive nothing,
+        // compare nothing" stays one decision instead of two.
+        self.baseline_tests = Some(count_test_fns(&self.root));
 
         let mut baseline = Baseline::default();
         for cmd in adapter.verify_commands() {
@@ -309,6 +403,24 @@ impl Oracle {
         tiers.push(t0);
         if !passed0 {
             return Ok(Verdict { passed: false, reached_tier: tier0_num, tiers, dry_run: false });
+        }
+
+        // Before the toolchain runs, and deliberately so: a suite that lost
+        // tests can still compile and still pass everything that is left, so
+        // no later tier would notice. Skipped when nothing was recorded, since
+        // there is then nothing to compare against.
+        if let Some(before) = &self.baseline_tests {
+            let integrity = suite_integrity(before, &count_test_fns(&self.root));
+            let intact = integrity.passed;
+            tiers.push(integrity);
+            if !intact {
+                return Ok(Verdict {
+                    passed: false,
+                    reached_tier: tier0_num,
+                    tiers,
+                    dry_run: false,
+                });
+            }
         }
 
         // Tiers 1.. — the adapter's command chain, cheapest first.
@@ -778,6 +890,113 @@ mod tests {
             return;
         }
         assert!(v.failure().is_some(), "a new error is the agent's: {v:?}");
+    }
+
+    fn counts(pairs: &[(&str, usize)]) -> std::collections::BTreeMap<PathBuf, usize> {
+        pairs.iter().map(|(f, n)| (PathBuf::from(f), *n)).collect()
+    }
+
+    #[test]
+    fn deleting_a_test_fails_the_suite_and_names_the_file() {
+        let before = counts(&[("src/lib.rs", 3), ("src/other.rs", 2)]);
+        let after = counts(&[("src/lib.rs", 1), ("src/other.rs", 2)]);
+
+        let r = suite_integrity(&before, &after);
+        assert!(!r.passed);
+        assert!(r.detail.contains("lost 2 test function(s)"), "{}", r.detail);
+        assert!(r.detail.contains("src/lib.rs: 3 -> 1"), "{}", r.detail);
+    }
+
+    #[test]
+    fn a_whole_test_file_going_missing_is_a_deletion() {
+        let r = suite_integrity(
+            &counts(&[("tests/it.rs", 4)]),
+            &counts(&[]),
+        );
+        assert!(!r.passed);
+        assert!(r.detail.contains("tests/it.rs: 4 -> 0"), "{}", r.detail);
+    }
+
+    /// The false positive that gets a check like this switched off.
+    #[test]
+    fn moving_a_test_between_files_is_not_a_deletion() {
+        let before = counts(&[("src/a.rs", 5), ("src/b.rs", 0)]);
+        let after = counts(&[("src/a.rs", 2), ("src/b.rs", 3)]);
+
+        let r = suite_integrity(&before, &after);
+        assert!(r.passed, "a refactor must not read as a deletion: {}", r.detail);
+    }
+
+    #[test]
+    fn adding_tests_passes() {
+        let r = suite_integrity(&counts(&[("src/a.rs", 1)]), &counts(&[("src/a.rs", 9)]));
+        assert!(r.passed);
+        assert!(r.detail.contains('9'), "{}", r.detail);
+    }
+
+    #[test]
+    fn the_counter_recognises_the_attributes_and_ignores_cfg_test() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "#[cfg(test)]\nmod tests {\n\
+             #[test]\nfn one() {}\n\
+             #[tokio::test]\nasync fn two() {}\n\
+             #[ test ]\nfn three() {}\n}\n",
+        )
+        .unwrap();
+        // Not Rust; must not be counted.
+        std::fs::write(dir.path().join("b.py"), "#[test]\n").unwrap();
+
+        let found = count_test_fns(dir.path());
+        assert_eq!(found.get(&PathBuf::from("a.rs")).copied(), Some(3),
+                   "three test attributes, and `cfg(test)` is not one of them");
+        assert!(!found.contains_key(&PathBuf::from("b.py")));
+    }
+
+    /// End to end: an agent that makes a failing test disappear.
+    #[tokio::test]
+    async fn deleting_a_test_fails_verification() {
+        let dir = workspace("pub fn a() -> u32 { 1 }\n#[cfg(test)]\nmod t {\n#[test]\nfn one() {}\n#[test]\nfn two() {}\n}\n");
+        let mut oracle = Oracle::new(dir.path());
+        oracle.prepare(&RustAdapter).await.unwrap();
+
+        // Still compiles, still passes everything left — which is exactly why
+        // no later tier would catch this.
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "pub fn a() -> u32 { 1 }\n#[cfg(test)]\nmod t {\n#[test]\nfn one() {}\n}\n",
+        )
+        .unwrap();
+
+        let v = oracle
+            .verify(&RustAdapter, &[PathBuf::from("src/lib.rs")])
+            .await
+            .unwrap();
+
+        let f = v.failure().expect("a deleted test must fail the verdict");
+        assert_eq!(f.label, "suite integrity");
+        assert!(f.detail.contains("lost 1 test function"), "{}", f.detail);
+    }
+
+    #[tokio::test]
+    async fn without_a_baseline_nothing_is_compared() {
+        let dir = workspace("pub fn a() -> u32 { 1 }\n#[cfg(test)]\nmod t {\n#[test]\nfn one() {}\n}\n");
+        let mut oracle = Oracle::new(dir.path()).without_baseline();
+        oracle.prepare(&RustAdapter).await.unwrap();
+
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn a() -> u32 { 1 }\n").unwrap();
+
+        let v = oracle
+            .verify(&RustAdapter, &[PathBuf::from("src/lib.rs")])
+            .await
+            .unwrap();
+
+        // Opting out is one decision, not two: no forgiveness and no counting.
+        assert!(
+            !v.tiers.iter().any(|t| t.label == "suite integrity"),
+            "the check must not run without a baseline to compare against"
+        );
     }
 
     #[tokio::test]
