@@ -18,7 +18,8 @@ model, and it does not care which one.
 | `talos.py` | The executor loop — completion decided by the verifier, not the engine |
 | `oracle.py` | Tiered verification: fail fast, model judgement last of all |
 
-Planned: Metis (planner), Lethe (bounded context).
+| `metis.py` | The planner: turns a task into steps before Talos executes them |
+| `lethe.py` | Bounded context — summarise-and-reset. Caps a long run, but at the 24 000-token default the cap does not bind until ~step 18 |
 
 ## Execute mode
 
@@ -56,8 +57,16 @@ staged edits, rather than starting over.
 |---|---|---|
 | `--execute` | off | carry out tasks rather than only answering |
 | `--write` | off | write directly instead of staging for review |
-| `--max-steps` | 12 | Ariadne's hard ceiling |
+| `--max-steps` | 20 | Ariadne's hard ceiling |
 | `--target-steps` | 6 | where budget pressure begins |
+
+The ceiling was raised from 12 on measurement: on the hard tier it was the
+ceiling binding rather than the model, and doubling it took the score from 11/15
+to 13/15 with the flipped cases needing 15, 18, 19 and 23 steps. `target_steps`
+deliberately stayed at 6, so the pressure begins in the same place and simply
+has further to escalate — see `ariadne.py`, which also records the bug that
+change introduced (bands on absolute counts became an eleven-step plateau at the
+larger ceiling, and are fractions of it now).
 
 ## The execution side
 
@@ -71,15 +80,23 @@ staged in memory and *reads consult the staging area first*, so a previewed
 multi-step change is what would actually have happened rather than a guess about
 it.
 
-**`tools.py` — and why prompted JSON.** Most providers offer native tool calling,
-and using it would be more reliable. It would also put tool calling inside the
-engine slot — and the slot has to hold a scaled-up Daedalus core one day, which
-will emit bytes and nothing else. An executor that only works with providers
-implementing OpenAI's function-calling shape is one the from-scratch engine can
-never fill. So tools are described in the prompt, the engine emits fenced JSON,
-and the harness parses it. `parse_calls` fails closed: anything it cannot read as
-a call stays prose, so a malformed reply costs a turn instead of firing the wrong
-action.
+**`tools.py` — prompted JSON, with native as an accelerator.** The prompted path
+is the floor and cannot be removed: tools are described in the prompt, the engine
+emits fenced JSON, and the harness parses it. That is what keeps tool calling
+*outside* the engine slot, which has to hold a scaled-up Daedalus core one day —
+a core that will emit bytes and nothing else. An executor that only worked with
+providers implementing OpenAI's function-calling shape is one the from-scratch
+engine could never fill.
+
+Native tool calling is also supported now, and used when the provider offers it:
+calls travel natively when they *arrived* natively, and a call and its results go
+natively only together (`_native_pairs`). The same model may answer natively on
+one step and fall back to fences on the next, so both paths stay live in the same
+run — replaying a fenced turn as native calls would show a model a format it
+never produced.
+
+`parse_calls` fails closed either way: anything it cannot read as a call stays
+prose, so a malformed reply costs a turn instead of firing the wrong action.
 
 `run_command` uses **no shell**. Commands are split into program plus argument
 vector and executed directly, so `&&`, `|`, `;` and backticks arrive as literal
@@ -95,18 +112,39 @@ is the exact claim this harness exists to stop trusting. There is a test that
 runs an engine insisting it is done three times over and asserts the run does
 *not* succeed.
 
-Oracle does not exist yet, so Talos takes a `Verifier` — a callable returning a
-`Verdict`. Oracle will satisfy it without the loop changing. The default is
-called `accept_everything` and says so in its own summary, because a run with no
-verifier has no check on correctness and that should be visible rather than
-comfortable.
+Talos takes a `Verifier` — a callable returning a `Verdict` — and Oracle
+satisfies it without the loop knowing. The default is called `accept_everything`
+and says so in its own summary, because a run with no verifier has no check on
+correctness and that should be visible rather than comfortable. Talos records
+which it got as `claim_source` (`verifier` or `unverified`), so a run whose DONE
+means only "the engine stopped calling tools" can never be reported beside a
+verified one as though the two claims were the same measurement.
 
-One honest cost: `Engine.generate` takes two strings and has no message history,
-so the conversation is **re-rendered into the prompt every turn**. That is
-quadratic in tokens over a long run — the price of keeping the engine interface
-narrow enough for a from-scratch core to fill. Lethe is the intended fix; until
-then the step ceiling bounds the growth, which is a blunt instrument rather than
-a solution.
+One honest cost, and it is not the one this paragraph used to name. `generate`
+is still the only *required* method, but an engine may also offer
+`generate_messages(messages, cancelled)`, and `Talos._turn` prefers it whenever
+it is present — `OpenAICompatEngine` implements it, so every hosted run already
+sends a role-tagged array rather than a flattened string. The conversation is
+not re-rendered into one enormous user message any more.
+
+What remains is not a property of the interface at all: **a stateless
+completions API re-sends the whole conversation on every turn**, and an array of
+messages costs exactly what the same content costs flattened. Measured on a
+read-heavy run, each step adds ~1,341 tokens to what is sent, so cost grows with
+the square of the step count — a 14-step run costs 3.8× a 7-step one, not 2×.
+Lethe bounds the window with summarise-and-reset and `_size_transcript_budget`
+sizes it from the engine's own context limit, but at the 24 000-token default
+that ceiling does not bind until about step 18, which is past where most runs
+end. Below it the growth is quadratic and the bound is not doing any work.
+
+The lever is therefore the **cached prefix**, not the interface. Every turn's
+prompt is a strict extension of the previous one — asserted, not assumed, by
+`test_each_turn_extends_the_previous_prompt_rather_than_rewriting_it` — so
+providers that cache prefixes bill the shared portion at a fraction.
+`Usage.cached` is tracked separately for exactly this reason and the eval prints
+the hit rate. Anything volatile placed early in the prompt silently drops that
+rate to zero without failing anything, which is why the property has a test
+rather than a comment.
 
 **`ariadne.py` — the halting policy, carrying a measured lesson.** Not PonderNet:
 none of that math transfers to an agent loop. What transfers is the failure mode
@@ -398,6 +436,48 @@ python -m knossos.eval --mode answer --repeat 3      # raw vs harness
 ```
 
 Two evaluations, separate because they fail for different reasons.
+
+### The coding eval, and its control
+
+`scripts/coding_eval.py` grades an agent on fixture repositories. Everything it
+prints is *model × harness*, so it needs the same control arm the answer eval
+has:
+
+```bash
+python -m scripts.coding_eval --engine api --provider gemini            # treatment
+python -m scripts.coding_eval --engine api --provider gemini --baseline # control
+python -m scripts.coding_eval --engine api --provider gemini --repeat 3 # with an n
+```
+
+`--baseline` holds the engine, tools, workspace, prompt, fixtures and grader
+constant and removes **only the loop and the verifier** (`max_steps=1`,
+`accept_everything`). The delta is what iteration and verification buy. It is
+deliberately not a claim about "no harness at all" — retrieval and the tool layer
+are still there, and a bare `curl` would score lower for reasons unrelated to
+Talos.
+
+Expect the control to post false passes. That is the measurement, not a defect:
+it is what "completion decided by the engine" scores, and its `claim_source` is
+recorded as `unverified` so the number can never be printed beside a verified
+arm's `honest`.
+
+Read these columns knowing what each one cannot see:
+
+| column | means | blind to |
+|---|---|---|
+| `solved` | graded tests green | saturated — a lite model scores 12/12 |
+| `honest` | the harness's claim matched the truth | for a foreign harness this is an exit code, not a verdict |
+| `steps` | turns per solved case | a harness that batches tool calls spends fewer |
+| `tools` | tool calls per solved case | read *with* steps; agreement means the difference was batching |
+| `degraded` | ran with a cut allowance or after backoff | not a capability result |
+| `unreachable` | never reached the model | excluded from every rate |
+
+**Held-out tests.** `restore_tests` catches an agent that edits the assertions.
+It cannot catch one that writes code shaped to the assertions it was shown. A
+case may carry `held_out` files and `held_out_pass` node ids, written into the
+tree only *after* the agent finishes — never readable, never editable. A run that
+passes everything visible and fails one of these is reported as `OVERFIT` and
+does not count as solved.
 
 **Retrieval** asks whether Argus surfaced the expected files. Deterministic and
 free, so run it after any ranking change — a regression shows up here first.

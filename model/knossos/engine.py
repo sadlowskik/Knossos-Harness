@@ -647,6 +647,22 @@ class OpenAICompatEngine:
         #: A model answering under a shrunken `max_tokens` is being asked a
         #: different question than one that is not.
         self.output_shrinks = 0
+        #: What the caller actually asked for, kept so a *transient* shrink can
+        #: be undone. Every shrink path below is one-way, and one engine serves
+        #: a whole eval suite, so a single rate limit in case 1 silently
+        #: constrained every case after it: the score became a function of case
+        #: order and of a provider's mood ten minutes earlier.
+        self._configured_max_tokens = max_tokens
+        #: A **permanent** per-model reply cap learned from a 400, as distinct
+        #: from a per-minute rate ceiling learned from a 413. The difference is
+        #: the whole reason restoring is safe: a rate window reopens, a model's
+        #: maximum never does. Restoring past this would 400 on every request
+        #: for the rest of the run, which is strictly worse than staying small.
+        self._hard_output_cap: Optional[int] = None
+        #: How often `restore_limits` undid one. A run that restores on every
+        #: case is a run being throttled on every case, which is worth seeing
+        #: rather than quietly smoothing over.
+        self.limit_restores = 0
         #: Streaming responses carry no usage block unless it is asked for.
         #: Cleared permanently the first time a provider rejects the parameter,
         #: exactly like `fold_system` -- one wasted request, then never again.
@@ -709,6 +725,17 @@ class OpenAICompatEngine:
     _LIMIT_RE = re.compile(r"limit\s+(\d+)", re.IGNORECASE)
     _REQUESTED_RE = re.compile(r"requested\s+(\d+)", re.IGNORECASE)
 
+    #: A hard per-*model* cap on the reply allowance, which is a different thing
+    #: from the context window and is reported differently: Groq answers HTTP
+    #: 400 with "`max_tokens` must be less than or equal to `16384`" while the
+    #: same model's window is far larger. Matched tightly on purpose -- 400 is
+    #: also how a provider rejects a tool schema, and that path degrades
+    #: `_native_history` instead (`:1119`). Widening this pattern would send
+    #: those requests down the retry branch and hide the real failure.
+    _OUTPUT_CAP_RE = re.compile(
+        r"max_tokens.{0,120}?less than or equal to\D{0,8}(\d+)",
+        re.IGNORECASE | re.DOTALL)
+
     def _shrink_to_token_limit(self, code: int, body: str) -> bool:
         """Adapt to a provider's token ceiling. True if the request may be retried.
 
@@ -732,9 +759,35 @@ class OpenAICompatEngine:
         every case dying in two steps: raising the default `max_tokens` to 8192
         had put it over an 8 000 limit on its own, before a single prompt token.
         """
-        # 413 only. A 429 is the *rate* path, which `_post_with_retry` already
-        # handles and which `_is_long_quota` deliberately refuses to retry --
-        # intercepting it here would turn a daily quota into a retry loop.
+        # A per-model reply cap, reported as 400 rather than 413 because the
+        # request is malformed rather than too large: nothing about the prompt
+        # is wrong, the *allowance asked for* exceeds what this model will ever
+        # grant. Clamping is exact -- the provider states the number -- so this
+        # needs no margin and no second guess.
+        cap = self._OUTPUT_CAP_RE.search(body) if code in (400, 422) else None
+        if cap:
+            allowed = int(cap.group(1))
+            if allowed < self.MIN_OUTPUT_TOKENS or allowed >= self.max_tokens:
+                # Either the cap is too small to be worth asking under, or we
+                # were already inside it and the 400 is about something else.
+                # Retrying an unchanged request is how a bad match becomes a
+                # loop, so decline and let the caller report the real error.
+                return False
+            log(f"[engine] {self.model}: reply capped at {allowed} tokens; "
+                f"max_tokens {self.max_tokens} -> {allowed}")
+            self.output_shrinks += 1
+            # Remembered as permanent. This is a property of the model, not of
+            # the minute, so `restore_limits` must never raise back above it --
+            # doing so would re-issue the same rejected request forever.
+            self._hard_output_cap = (allowed if self._hard_output_cap is None
+                                     else min(self._hard_output_cap, allowed))
+            self.max_tokens = allowed
+            return True
+
+        # 413 only, below. A 429 is the *rate* path, which `_post_with_retry`
+        # already handles and which `_is_long_quota` deliberately refuses to
+        # retry -- intercepting it here would turn a daily quota into a retry
+        # loop.
         if code != 413 or "token" not in body:
             return False
         limit = self._LIMIT_RE.search(body)
@@ -773,6 +826,49 @@ class OpenAICompatEngine:
             f"max_tokens {self.max_tokens} -> {new_max}")
         self.output_shrinks += 1
         self.max_tokens = new_max
+        return True
+
+    def restore_limits(self) -> bool:
+        """Undo transient shrinks. True if anything was actually restored.
+
+        # Why this is needed at all
+
+        Every path in `_shrink_to_token_limit` is one-way, and one engine serves
+        a whole eval suite. So a single 413 in the first case left `max_tokens`
+        reduced for all eleven after it, long after the per-minute window had
+        reopened. The suite's score therefore depended on case order and on
+        whatever the provider was doing at the start of the run, degrading
+        monotonically as it went -- and nothing in the report said so.
+
+        # Why it is safe
+
+        Two shrinks look alike and are not. A 413 states a **per-minute** token
+        allowance: it reopens, and holding the reduction afterwards measures the
+        quota rather than the model. A 400 states a **per-model** reply cap:
+        that never reopens, and asking above it again would be rejected on every
+        request for the rest of the run. `_hard_output_cap` records the second
+        kind, and this method treats it as a floor it may not cross.
+
+        The configured value is likewise a ceiling: this restores what the caller
+        asked for and never invents headroom above it.
+
+        # Why it is explicit rather than automatic
+
+        Called at a case boundary, never mid-run. Restoring inside a run would
+        undo a shrink the very request that caused it needs, and the two would
+        oscillate -- one wasted round trip per turn, forever. Once per case the
+        cost is bounded at one rejected request, and `limit_restores` makes a
+        run that pays it every time visible.
+        """
+        ceiling = self._configured_max_tokens
+        if self._hard_output_cap is not None:
+            ceiling = min(ceiling, self._hard_output_cap)
+        if self.max_tokens >= ceiling:
+            return False
+        log(f"[engine] {self.model}: restoring max_tokens "
+            f"{self.max_tokens} -> {ceiling}")
+        self.max_tokens = ceiling
+        self.limit_restores += 1
         return True
 
     def _discover_context_window(self) -> "tuple[Optional[int], bool]":

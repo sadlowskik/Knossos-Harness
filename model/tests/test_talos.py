@@ -24,7 +24,7 @@ import pytest
 
 from knossos.ariadne import Ariadne, Halt
 from knossos.lethe import Lethe, estimate_tokens
-from knossos.talos import (DELEGATE, MAX_DELEGATION_DEPTH,
+from knossos.talos import (DELEGATE, FUTILE_WINDOW, MAX_DELEGATION_DEPTH,
                            MIN_TRANSCRIPT_BUDGET, Event, Talos, Verdict)
 from knossos.tools import (AskUser, ReadFile, ToolRegistry, ToolResult,
                            WriteFile)
@@ -188,6 +188,233 @@ def test_reading_the_same_file_then_acting_is_not_stuck(ws):
     outcome = talos.run("look twice then write")
 
     assert outcome.halt is Halt.DONE, outcome.summary
+
+
+def test_an_engine_alternating_between_two_failing_calls_is_stuck(ws):
+    """The loop the adjacent-only check could not see.
+
+    A, B, A, B never produces two consecutive identical signatures, so
+    `repeated` stayed False on every step, `is_futile` never fired, and the run
+    spent its entire ceiling alternating between two calls that each changed
+    nothing. Ariadne exists to prevent exactly this, and it arrived through the
+    one door the check did not cover.
+    """
+    a = call("edit_file", path="src/lib.py", old_string="absent", new_string="x")
+    b = call("edit_file", path="src/lib.py", old_string="missing", new_string="y")
+    engine = ScriptedEngine([a, b] * 10)
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=20, target_steps=6),
+                  verifier=always_fails)
+
+    outcome = talos.run("alternate uselessly")
+
+    assert outcome.halt is Halt.STUCK
+    assert outcome.steps_used == 4, "A B then A B again: caught on the second B"
+    assert outcome.changed == []
+
+
+def test_a_three_step_ritual_that_achieves_nothing_is_stuck(ws):
+    """Cycles longer than two, up to the window, close the same way."""
+    calls = [call("read_file", path=f"src/{name}.py") for name in ("a", "b", "c")]
+    engine = ScriptedEngine(calls * 7)
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=20, target_steps=6),
+                  verifier=always_fails)
+
+    outcome = talos.run("walk in a circle")
+
+    assert outcome.halt is Halt.STUCK
+    assert outcome.steps_used == 5, "three to establish the cycle, two to confirm"
+
+
+def test_a_loop_interrupted_by_silence_is_still_a_loop(ws):
+    """The old single slot was reset by an empty reply, which masked the repeat.
+
+    A, silence, A read as two unrelated steps. Silence is not progress -- it is
+    already a noop -- so it must not erase what the model was circling.
+    """
+    a = call("edit_file", path="src/lib.py", old_string="absent", new_string="x")
+    engine = ScriptedEngine([a, "", a, ""])
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=8, target_steps=6),
+                  verifier=always_fails)
+
+    outcome = talos.run("loop around a silence")
+
+    assert outcome.halt is Halt.STUCK
+    assert outcome.steps_used == 3, "the third step repeats the first"
+
+
+def test_real_work_between_repeats_restarts_the_window(ws):
+    """A revisit after a change must not be held against one before it.
+
+    This is the half that keeps a wider window safe: exploring, changing
+    something, then exploring the same way again is ordinary work.
+    """
+    reading = call("read_file", path="src/lib.py")
+    writing = call("write_file", path="out.py", content="x = 1\n")
+    engine = ScriptedEngine([reading, reading, writing,
+                             reading, reading, writing, "Done."])
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=10, target_steps=8),
+                  verifier=passes_when_anything_changed)
+
+    outcome = talos.run("explore, act, explore, act")
+
+    assert outcome.halt is Halt.DONE, outcome.summary
+
+
+def test_one_landed_edit_then_the_same_edit_forever_is_stuck(ws):
+    """The window is emptied on a change *and* keeps that change's signature.
+
+    Dropping it would lose the plainest loop there is: an edit that succeeds,
+    then the identical edit re-issued forever, each retry changing nothing
+    because the first one already landed.
+    """
+    writing = call("write_file", path="out.py", content="x = 1\n")
+    engine = ScriptedEngine([writing] * 8)
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=10, target_steps=8),
+                  verifier=always_fails)
+
+    outcome = talos.run("write the same thing forever")
+
+    # `write_file` reports a change every time, so this must *not* be cut short
+    # for repetition -- it is doing something, however pointlessly.
+    assert outcome.halt is Halt.BUDGET_EXHAUSTED
+
+
+# ------------------------------------- every step sequence, not just the ones
+#                                        anyone thought to write a test for
+#
+# The bug this closes survived because every futility test in this file used a
+# single repeated call. A, B, A, B is not an exotic input -- it is what a model
+# does when it has two plausible fixes and neither works -- and nothing here
+# exercised it. Enumerating the space is the answer to "which case did we not
+# think of", and it is cheap: the loop is deterministic given the script.
+#
+# `_reference` states the intended rule independently of `Talos`, in terms of
+# the specification rather than the implementation. Agreement across every
+# sequence in the space means a transcription error in either one shows up as a
+# disagreement on some specific input, which the failure message prints.
+#
+# What the sweep does *not* pin is the width itself: both sides read
+# `FUTILE_WINDOW`, so narrowing it to 1 leaves them agreeing with each other
+# about the wrong rule. The width is pinned behaviourally instead, by the
+# two-cycle and three-cycle tests above, which hardcode the step at which the
+# loop must be noticed. Verified by setting the constant to 1 and confirming
+# those two fail while the sweep still passes.
+
+#: symbol -> (scripted reply, files it changes). Every symbol issues exactly one
+#: tool call, so `is_noop` never fires and the sweep isolates `is_futile`.
+_STEP_KINDS = {
+    "A": (call("edit_file", path="src/lib.py",
+               old_string="absent-a", new_string="x"), 0),
+    "B": (call("edit_file", path="src/lib.py",
+               old_string="absent-b", new_string="y"), 0),
+    "C": (call("edit_file", path="src/lib.py",
+               old_string="absent-c", new_string="z"), 0),
+    "W": (call("write_file", path="out.py", content="x = 1\n"), 1),
+}
+
+
+def _reference(symbols: Sequence[str], stuck_after: int = 2):
+    """The rule as specified, written without reference to `Talos`.
+
+    A step is futile when it repeats a signature seen within the last
+    `FUTILE_WINDOW` steps *and* changed nothing; a step that changes something
+    restarts the window while remaining in it. `Ariadne.assess` checks the
+    ceiling before staleness, so a run that would be stuck on its final
+    permitted step reports budget exhaustion instead -- the order matters and
+    is reproduced here deliberately.
+    """
+    from collections import deque
+
+    recent: "deque[str]" = deque(maxlen=FUTILE_WINDOW)
+    noops = 0
+    max_steps = len(symbols)
+    for step, symbol in enumerate(symbols, 1):
+        changed = _STEP_KINDS[symbol][1]
+        futile = symbol in recent and not changed
+        if changed:
+            recent.clear()
+        recent.append(symbol)
+        noops = 0 if not futile else noops + 1
+        if step >= max_steps:
+            return Halt.BUDGET_EXHAUSTED, step
+        if noops >= stuck_after:
+            return Halt.STUCK, step
+    raise AssertionError("unreachable: the ceiling equals the script length")
+
+
+def _drive(ws, symbols: Sequence[str]):
+    engine = ScriptedEngine([_STEP_KINDS[s][0] for s in symbols])
+    talos = Talos(engine, ws,
+                  ariadne=Ariadne(max_steps=len(symbols),
+                                  target_steps=len(symbols)),
+                  verifier=always_fails)
+    outcome = talos.run("sweep")
+    return outcome.halt, outcome.steps_used
+
+
+@pytest.mark.parametrize("alphabet,length", [
+    ("ABW", 5),      # 243 sequences: two useless calls and one that works
+    ("AB", 6),       # 64: the alternation family, at depth
+    ("ABCW", 4),     # 256: cycles up to the window width
+])
+def test_the_loop_matches_the_specified_rule_on_every_sequence(
+        ws, alphabet, length):
+    """Exhaustive over the space, not a sample of it."""
+    import itertools
+
+    for symbols in itertools.product(alphabet, repeat=length):
+        assert _drive(ws, symbols) == _reference(symbols), \
+            f"disagreed on {''.join(symbols)}"
+
+
+def test_no_sequence_of_real_work_is_ever_called_stuck(ws):
+    """The false-positive direction, exhaustively.
+
+    A wider window is only safe because of the `files_changed == 0` half. If
+    that conjunction were ever dropped, this is what would start failing: runs
+    that repeat themselves *and get something done each time* are not loops.
+    """
+    import itertools
+
+    for length in range(1, 7):
+        for symbols in itertools.product("W", repeat=length):
+            halt, _ = _drive(ws, symbols)
+            assert halt is not Halt.STUCK, f"{''.join(symbols)} did real work"
+
+
+def test_every_short_cycle_that_achieves_nothing_is_caught(ws):
+    """The false-negative direction, for every cycle the window should close.
+
+    A cycle of period k is detectable once k signatures fit in the window, so
+    every k up to `FUTILE_WINDOW` must halt STUCK -- and must do it promptly,
+    within the cycle plus the two steps `stuck_after` requires, rather than
+    merely somewhere before the ceiling.
+    """
+    import itertools
+
+    useless = [s for s, (_, changed) in _STEP_KINDS.items() if not changed]
+    for period in range(1, FUTILE_WINDOW + 1):
+        for base in itertools.permutations(useless, min(period, len(useless))):
+            if len(base) != period:
+                continue
+            symbols = (list(base) * 6)[:20]
+            halt, steps = _drive(ws, symbols)
+            assert halt is Halt.STUCK, f"cycle {''.join(base)} ran to the ceiling"
+            assert steps <= period + 2, \
+                f"cycle {''.join(base)} took {steps} steps to notice"
+
+
+def test_a_cycle_longer_than_the_window_is_left_to_the_ceiling(ws):
+    """Stated so the boundary is a decision rather than an accident.
+
+    The window is deliberately finite: "again" means recently. A cycle wider
+    than it is not detected here and the step ceiling remains the backstop --
+    which is the documented division of labour, not an oversight.
+    """
+    useless = [s for s, (_, changed) in _STEP_KINDS.items() if not changed]
+    assert len(useless) < FUTILE_WINDOW + 1, \
+        "this test needs a cycle wider than the window to be inexpressible " \
+        "with the current alphabet; widen _STEP_KINDS if that changes"
 
 
 def test_repeated_empty_steps_are_stuck(ws):
@@ -1016,6 +1243,67 @@ def test_the_flat_prompt_is_unchanged_by_any_of_this(ws):
     assert all(isinstance(entry, str) for entry in talos.transcript)
 
 
+# ------------------------------------------------------------ prefix stability
+#
+# Every provider's prompt caching keys on an exact prefix: the request is billed
+# at a fraction for however many leading tokens match the previous one, and at
+# full price from the first byte that differs. A run re-sends the whole
+# conversation each turn -- measured at +1,341 tokens per step on a read-heavy
+# run, so a 14-step run costs 3.8x a 7-step one, not 2x -- which makes the
+# cached prefix the single largest lever on what a run costs.
+#
+# Nothing enforced that prefix. Anything volatile placed early in the prompt --
+# a timestamp, a step counter, the budget nudge moved to the front, retrieval
+# re-run per turn -- silently drops the hit rate to zero. Nothing would fail;
+# the run would simply cost several times more, and the only symptom is a
+# number in `_report_cost` that nobody is watching.
+
+
+def _prompts_over(ws, steps):
+    """Drive a real run and capture the prompt built for each step."""
+    engine = ScriptedEngine([call("read_file", path=f"src/f{i}.py")
+                             for i in range(steps)])
+    for i in range(steps):
+        (ws.root / "src" / f"f{i}.py").write_text("# x\n" * 40, encoding="utf-8")
+
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=steps, target_steps=steps),
+                  verifier=always_fails)
+    seen = []
+    real = talos._prompt
+    talos._prompt = lambda: (lambda p: (seen.append(p), p)[1])(real())
+    talos.run("read them")
+    return seen
+
+
+def test_each_turn_extends_the_previous_prompt_rather_than_rewriting_it(ws):
+    """The property prompt caching is billed on, asserted rather than assumed."""
+    seen = _prompts_over(ws, 5)
+    assert len(seen) >= 3, "need several turns to compare"
+
+    for i in range(1, len(seen)):
+        assert seen[i].startswith(seen[i - 1]), (
+            f"step {i + 1} rewrote the prompt instead of appending to it; "
+            f"every cached token from the first difference on is re-billed")
+
+
+def test_the_structured_history_is_append_only_too(ws):
+    """Hosted providers take `generate_messages`, so this is the path they bill.
+
+    Same property, expressed on the message array: earlier messages must be
+    untouched, because a provider matches the prefix message by message.
+    """
+    engine = ScriptedEngine([call("read_file", path="src/lib.py")] * 4)
+    talos = Talos(engine, ws, ariadne=Ariadne(max_steps=4, target_steps=4),
+                  verifier=always_fails)
+
+    first = talos._history()
+    talos.transcript.append("\n## Assistant\nsomething new")
+    second = talos._history()
+
+    assert second[:len(first)] == first, \
+        "an appended turn must not disturb the messages before it"
+
+
 # --------------------------------------------------- fitting the context window
 
 class Sized(ScriptedEngine):
@@ -1731,3 +2019,44 @@ def test_without_removes_a_tool_and_tolerates_absent_names(ws):
     registry = ToolRegistry.default()
     assert "read_file" not in registry.without("read_file").names
     assert registry.without("nothing_called_this").names == registry.names
+
+
+# --------------------------------------------------- what the claim is worth
+#
+# `succeeded` means different things depending on what decided it, and the
+# coding eval compares this harness against foreign ones whose only signal is a
+# process exit code. Recording the source is what stops three incomparable
+# quantities being printed under one `honest` heading.
+
+
+def test_a_real_verifier_marks_the_claim_as_verified(ws):
+    talos = Talos(ScriptedEngine(["done"]), ws,
+                  verifier=passes_when_anything_changed)
+    assert talos.claim_source == "verifier"
+
+
+def test_the_default_verifier_marks_the_claim_as_unverified(ws):
+    """`accept_everything` agrees with the engine, so DONE is its say-so.
+
+    This is the control arm's configuration. Without the distinction its
+    `honest` -- a tautology, since nothing can disagree -- would print beside a
+    verified run's as though they measured the same thing.
+    """
+    talos = Talos(ScriptedEngine(["done"]), ws)
+    assert talos.claim_source == "unverified"
+    assert talos.run("anything").claim_source == "unverified"
+
+
+def test_tool_calls_are_counted_across_the_run(ws):
+    """`steps_used` alone ranks a batching habit as capability."""
+    engine = ScriptedEngine([
+        call("write_file", path="src/a.py", content="a = 1\n"),
+        call("write_file", path="src/b.py", content="b = 2\n"),
+        "Done.",
+    ])
+    talos = Talos(engine, ws, verifier=passes_when_anything_changed)
+
+    outcome = talos.run("write two files")
+
+    assert outcome.tools_used == 2
+    assert outcome.steps_used >= 2

@@ -66,6 +66,24 @@ valid occupant of the slot:
 | `send_reasoning` | `talos.py:1309` | Opt-in replay of `reasoning_content` (off by default; DeepSeek 400s on it) |
 | `throttle_waits` / `throttled_seconds` / `output_shrinks` | `scripts/coding_eval.py:391-393` | The throttling warning that says a run measured the provider, not the model |
 
+**What a run costs, measured.** A stateless completions API re-sends the whole
+conversation every turn, and `generate_messages` does not change that — an array
+of messages costs what the same content costs flattened. Driving a real `Talos`
+through a read-heavy 20-step run: each step adds **~1,341 tokens** to what is
+sent, so cumulative cost grows with the square of the step count. At 7 steps,
+36,158 tokens; at 14 steps, 138,039 — **3.8×, not 2×**.
+
+Lethe's ceiling is real but late: at the 24,000-token default it first fires at
+**step 18**, dropping the sent size from 23,945 to 5,398 in one turn. Below that
+the bound is not doing any work, and most runs end below it. So the operative
+lever is the **cached prefix**, not the interface: every turn's prompt is a
+strict extension of the previous one, which is what lets a provider bill the
+shared portion at a fraction. That property is asserted by
+`test_each_turn_extends_the_previous_prompt_rather_than_rewriting_it` and its
+structured twin, because anything volatile placed early in the prompt drops the
+hit rate to zero without failing anything — `Usage.cached` and `_report_cost`'s
+hit-rate line are the only places it would show.
+
 `Thought`, a `str` subclass (`engine.py:66`), routes a chunk to the reasoning
 channel instead of the answer. Talos detects it by **name comparison, not
 `isinstance`** — `type(chunk).__name__ == "Thought"` (`talos.py:1282`) — so any
@@ -171,7 +189,7 @@ Greek names are opaque by design. Plain descriptions below.
 | **Lethe** | Bounds the transcript. Over budget → summarise the middle band once, pinning `pin_opening=1` and `keep_recent=6` (`lethe.py:179`); if that is unavailable or would grow the text, `_fit` (`lethe.py:286`) elides the largest entry repeatedly (≤40 passes) until the budget is met. Both "nothing between head and tail" (`lethe.py:220`) and "summary made it bigger" (`lethe.py:236`) route to `_fitted`, so the bound applies on every path. | `lethe.py` (334) | `Lethe.compact()`, `extractive_summary()`, `estimate_tokens()` | stdlib only |
 | **Metis** | Planner. One engine turn → ordered step list. Cascade: `submit_plan` tool call (`metis.py:206`) → truncated-JSON repair (`metis.py:222`) → prose bullets (`metis.py:270`) → task as its own step. Never returns nothing. `MAX_STEPS = 8`, enforced by `_tidy` (`metis.py:283`). | `metis.py` (304) | `Metis.plan()`, `worth_planning()` | `tools.parse_calls`, engine |
 | **Talos** | The executor loop. One engine turn per step; parses tool calls; dispatches them; when the engine emits no call, asks the verifier. Owns the transcript, the change set, the permission callback, plan-step driving, re-planning and delegation. | `talos.py` (1502) | `Talos.run/resume/compact/apply/discard`; `Verdict`, `Verifier`, `Replanner`, `Delegate`, `Event`, `Outcome`, `accept_everything`, `CONSEQUENTIAL` | `ariadne`, `lethe`, `tools`, `workspace`, `engine.Usage` |
-| **Ariadne** | Halting policy. Hard ceiling **`max_steps=20`** (`ariadne.py:120`, raised from 12 on measurement), pressure past `target_steps=6` in bands that are *fractions of the ceiling* (`ariadne.py:149`), `STUCK` after 2 consecutive unproductive steps — `is_noop` (called nothing, changed nothing) or `is_futile` (repeated the previous step exactly and changed nothing). Pure data; no I/O. | `ariadne.py` (203) | `Ariadne.assess/pressure`, `Halt`, `StepOutcome` | stdlib only |
+| **Ariadne** | Halting policy. Hard ceiling **`max_steps=20`** (`ariadne.py:120`, raised from 12 on measurement), pressure past `target_steps=6` in bands that are *fractions of the ceiling* (`ariadne.py:149`), `STUCK` after 2 consecutive unproductive steps — `is_noop` (called nothing, changed nothing) or `is_futile` (repeated a signature seen within the last `FUTILE_WINDOW`=4 steps and changed nothing — a window, not just the previous step, so an alternating loop is caught; restarted whenever a step changes a file). Pure data; no I/O. | `ariadne.py` (203) | `Ariadne.assess/pressure`, `Halt`, `StepOutcome` | stdlib only |
 | **Oracle** | Tiered verifier with a language-adapter seam, per-tier scoping, a baseline, per-diagnostic forgiveness and a suite-integrity check. See §5. | `oracle.py` (891) | `Oracle.__call__/quick/prepare`; `OracleVerdict`, `Tier`, `LanguageAdapter`, `tiers_for`, `detect`, `PYTHON_TIERS`/`RUST_TIERS`/`GO_TIERS`/`NODE_TIERS` | `talos.Verdict`, `workspace` |
 | **Workspace** | Path jail + write staging + undo journal + optional editor/LSP delegation. | `workspace.py` (409) | `resolve/read/write/edit/exists/apply/discard/staged/checkpoint/rewind/journal/original/display`; `PathEscape` | stdlib only |
 | **tools** | The tool registry, the prompted-JSON call protocol, and every local tool. | `tools.py` (894) | `ToolRegistry.default/combined/without/dispatch/render/openai_schema/parallel_safe`, `parse_calls()`, `tokenize()` | `workspace` |
@@ -772,14 +790,25 @@ agent = make_agent(root); agent.run(prompt, on_event=recorder)             (code
 api_errors = count of `text` events containing "Request failed:"           (codeval.py:1078)
 restore_tests(case, root)  → tamper                                        (codeval.py:974)
 grade(case, root, tampered)                                                (codeval.py:1019)
-    fixed = run_tests(root, fail_to_pass)     one pytest process per node id
+    fixed = run_tests(root, fail_to_pass)     one pytest process; per node only if red
     kept  = run_tests(root, pass_to_pass)
-    passed = all fixed AND all kept                                        (codeval.py:1032)
+    reveal_held_out(case, root)               tests the agent never saw
+    held  = run_tests(root, held_out_pass)
+    passed = all fixed AND all kept AND all held
 _write_trace(...)                                                          (codeval.py:1225)
 ```
 
-`passed` requires **both** sets, not either: a change that fixes the bug and breaks
-the suite is a different failure, not a smaller success.
+`passed` requires **all three** sets, not any: a change that fixes the bug and
+breaks the suite is a different failure, not a smaller success — and one that
+passes everything it was shown while failing what it was not has solved the
+assertions rather than the task.
+
+`reveal_held_out` runs *after* the agent and deliberately not inside
+`materialise`. The entire value of a held-out test is that it was never on disk
+while the agent worked: unreadable, uneditable, unfittable. `load_cases` refuses
+a `held_out` path that collides with a visible one, because such a file would be
+shown to the agent and then silently overwritten before grading — held out in
+name only.
 
 ### 8.4 Anti-gaming properties
 
@@ -787,11 +816,13 @@ the suite is a different failure, not a smaller success.
 |---|---|---|
 | **Test files are restored before grading** | `codeval.py:974` | Deleting, weakening or duplicating the failing test gains exactly nothing. The attempt is recorded as `tamper` but changes no outcome. |
 | **Node ids, not exit codes** | `codeval.py:1009` | A deleted or renamed test fails to collect, which is a failure — not a silent pass. |
-| **One process per node id** | `codeval.py:1000-1003` | A collection error in one file cannot take a whole batch down and be misread as "this test failed". |
+| **Per-node isolation on failure** | `codeval.py:run_tests` | A collection error in one file cannot take a whole batch down and be misread as "this test failed". The batch runs first and isolation is paid only when it is not green — there is nothing to attribute in a pass. |
 | **Three calibration agents** | `scripts/coding_eval.py:202` | `oracle` applies the known-good patch and must score 12/12 or the *grader* is wrong (`:676`); `lazy` reads a file and claims completion, must score 0; `vandal` neuters the failing test, must score 0 (`:680`). About a second each, no model. |
 | **Selection never reads the grader** | `codeval.py:1112` | `--best-of K` keeps the first attempt the *harness* accepted (`harness_said_done`), never the graded outcome — otherwise the number describes an oracle that does not exist at inference time. Every sample is charged (`:1148`), and `solved@1` is reported separately (`:477`). |
 | **A fresh tree per attempt** | `codeval.py:1133` | Sampling into a directory a previous attempt edited would measure a sequence of repairs, not k independent samples. |
 | **Usage is plain ints, not an engine type** | `codeval.py:214-227` | Keeps `AgentFactory` "anything with `.run(prompt)`", which is what makes §8.5 possible at all. |
+| **Held-out tests** | `codeval.py` `reveal_held_out` | The channel `restore_tests` cannot close. Restoring the tests stops an agent that *edits* the assertions; it does nothing about one that writes code shaped to the assertions it was shown, which passes honestly by every other measure here. Held-out tests are written after the agent finishes, so there is nothing to fit. A run that passes everything visible and fails one of these is reported `OVERFIT` and does not count as solved. |
+| **The claim's source is recorded** | `codeval.py` `claim_source` | Stops three different quantities being averaged into one `honest`: Oracle's verdict (`verifier`), a rubber-stamped run (`unverified`, the control arm), and a foreign CLI's exit status (`exit_code`). The last cannot score a false fail at all, so printing it unqualified beside the first invites a comparison it cannot support. |
 
 `_suite_integrity` in the Oracle (§5.3) exists because of this eval: the vandal
 originally scored 0 solved but **5/5 false passes**, because every deterministic tier
@@ -987,6 +1018,46 @@ that inflates the score rather than measuring spread.
 - **The hard suite in anger** — `make_hard_suite.py --check` now passes, but no
   model has been scored against `fixtures/hard_suite.json` (§8.7).
 
+### 8.8 The control arm, and what the columns cannot see
+
+Until this pass the coding eval had no control. Every figure it produced was
+*model × harness*, and a 12/12 could equally mean the harness works or that the
+model would have scored 12/12 through a single API call. This was the weaker of
+the two instruments in exactly the way §8.1 is strong: the retrieval eval has run
+a `general` control group from the beginning, and the README calls it "the
+load-bearing part" because a lift there would invalidate the treatment number.
+
+`--baseline` (`scripts/coding_eval.py` `baseline_agent`) holds the engine, tool
+vocabulary, workspace jail, prompt, fixtures and grader constant, and removes
+**only the loop and the verifier**: `Ariadne(max_steps=1)` and
+`accept_everything`. The delta against a normal run is what iteration and
+verification buy on that model.
+
+It is deliberately *not* "the harness versus nothing" — retrieval, the path jail
+and the tool layer are all still present, and a bare HTTP call would score lower
+for reasons that have nothing to do with Talos. Reporting it as the latter would
+be the same overclaim the control exists to prevent. The arm posts false passes
+by construction, because `accept_everything` agrees with the engine; that is the
+measurement, being what "completion decided by the engine" scores.
+
+`--repeat N` runs the whole suite N times into **separate fixture directories**
+and reports the range. Sharing one directory would let a file the agent *created*
+in run 1 survive into run 2 — `materialise` rewrites the case's own files and has
+no way to know about anything else — so the repeats would not be independent.
+Distinct from `--best-of`, which keeps the best sample and inflates the score;
+this reports every run. Steps need it more than `solved` does: a pass is one bit
+with bounded variance, a step count is unbounded.
+
+What each column is blind to:
+
+| column | blind to |
+|---|---|
+| `solved` | saturation — Gemini 3.1 Pro and Flash-Lite both score 12/12 on the built-in tier |
+| `honest` | whose claim it is; see `claim_source` in §8.4 |
+| `steps` | tool batching — this loop groups adjacent parallel-safe calls into one turn, so a model that emits reads together spends fewer steps for identical work |
+| `tools` | nothing on its own; it exists to be read *against* `steps`, where agreement means a difference was batching habit rather than capability |
+| `degraded` | — this is the column that stops a throttled run being quoted as capability |
+
 ---
 
 ## 9. Python vs Rust divergence
@@ -1004,6 +1075,7 @@ that inflates the score rather than measuring spread.
 | Lethe | `lethe.py`, summarise-then-elide, wired into `_prompt`/`_history` | `lethe.rs`, **elide-only, never removes or merges a message** — see §9.2 |
 | Permission gate | `_permitted` + ACP prompt; on whenever ACP builds the executor | `Approver`; opt-in per front end (§4.3) |
 | Re-planning | `Replanner` + `_revise_plan`, wired via `acp.py:869` | absent — the plan is one string in the opening message |
+| Futility detection | `StepOutcome.repeated` + `is_futile`, over a `FUTILE_WINDOW`=4 signature window (`talos.py:160`) | **Converged.** `repeated`/`is_futile`/`made_progress` on `StepOutcome` (`ariadne.rs:64-101`) over the same window (`talos.rs:59`), with the same restart-on-change rule and the same feedback note. Rust had *no* repeat check at all before this — `is_noop` was the whole staleness test, so an engine re-issuing one failing `edit_file` called a tool every step, was never a noop, and ran to the ceiling |
 | Delegation / subagents | `Delegate` + `_spawn`, enabled by default in ACP (`acp.py:384`/`:874`), depth-capped at 1 (§3.4) | absent |
 | Undo journal / checkpoints | `workspace.py:151-197`, reached per plan step | absent |
 | Language adapters in the verifier | `oracle.py:289` — python/rust/go/node, polyglot | `scribe::LanguageAdapter` — Rust only |
@@ -1039,7 +1111,9 @@ that inflates the score rather than measuring spread.
 
 ## 10. Invariants and assumptions
 
-Load-bearing, and not enforced by anything.
+Load-bearing. Items 1–4 are held by convention and nothing checks them; 5–6 were
+in that state and are now enforced, with the guard named so it can be found and
+not quietly removed.
 
 1. **Paths reaching a tool are inside the workspace.** True only for paths that go
    through `resolve`. Three bypasses: `RunCommand`'s child process (`tools.py:456`),
@@ -1053,6 +1127,23 @@ Load-bearing, and not enforced by anything.
    `scripts/coding_eval.py:369` builds one that way.
 4. **`always_allowed` is keyed by tool name only** (`acp.py:1249`). "Always allow
    `run_command`" approves every subsequent command in the session.
+5. **Held-out tests never shadow a visible file, and every `held_out_pass` node id
+   has a file behind it.** *Now enforced* — `CodingCase.__post_init__`
+   (`codeval.py:128`) raises on both, so every construction path is covered rather
+   than only `load_cases`. Worth stating because of how these fail rather than how
+   likely they are: neither raises on its own and neither produces a wrong-looking
+   number. A shadowed file is shown to the agent and silently overwritten before
+   grading; a node id with no file is collected from a tree that lacks it and
+   scores zero. Both then surface as `overfit` — the report accusing the model of
+   fitting the visible tests when the fault is in the fixture. A false accusation
+   of gaming is indistinguishable from the real thing by reading the score.
+6. **`_fresh_case` reaches a method that exists.** It calls `restore_limits`
+   through `getattr` (`coding_eval.py:402`), which is right — `AgentFactory` is
+   "anything with `.run(prompt)`" and a scripted agent has no engine — but a
+   duck-typed call cannot distinguish "no engine" from "renamed and now dead".
+   The second silently reinstates the monotonically-degrading allowance
+   (§8), whose only symptom is a score that depends on case order. Covered by a
+   contract test asserting `OpenAICompatEngine` still defines it.
 5. **The engine is not adversarial.** Nothing sanitises retrieved file content, MCP
    tool descriptions, LSP output, or `fs/read_text_file` results before they enter
    the prompt. A file containing a fenced `{"tool": "run_command", …}` block is,
@@ -1125,11 +1216,11 @@ describe. Re-verified against the current tree in this pass.
 | # | Claim | Where | Reality |
 |---|---|---|---|
 | 1 | "Planned, not yet built: Metis … Lethe" | `model/knossos/__init__.py:26-29` | Both exist and are wired in; the same file imports `Lethe` twelve lines later. |
-| 2 | "Planned: Metis (planner), Lethe (bounded context)." | `model/knossos/README.md:21` | Same. |
-| 3 | "Oracle does not exist yet, so Talos takes a `Verifier`" | `model/knossos/README.md:98` | `oracle.py` is 891 lines and is the default verifier the ACP layer installs (`acp.py:830`). |
+| 2 | "Planned: Metis (planner), Lethe (bounded context)." | `model/knossos/README.md:21` | **Fixed**: both now appear in the component table as shipped modules. |
+| 3 | "Oracle does not exist yet, so Talos takes a `Verifier`" | `model/knossos/README.md:98` | `oracle.py` is 891 lines and is the default verifier the ACP layer installs (`acp.py:830`). **Fixed**: the README now describes Oracle as satisfying the protocol, and documents `claim_source`. |
 | 4 | "**`session/load` is not implemented**, and `loadSession` is advertised `false`." | `model/knossos/README.md:253` | Implemented (`acp.py:549`), advertised `true` (`acp.py:444`), covered by `test_acp_load.py` and a conformance check (`run.mjs:394`). |
 | 5 | "No planner: Metis produces a plan, Talos executes one. No verifier: Oracle will implement the `Verifier` protocol below." | `talos.py:29-30` | Both exist. The module docstring is stale about its own module. |
-| 6 | "Lethe (bounded context with summarise-and-reset) is the intended fix; **until it exists**, the step ceiling is what keeps the growth bounded" | `talos.py:22-24` | Lethe exists, is constructed in `__init__` (`talos.py:439`) and is called from `_prompt` and `_history`. |
+| 6 | "Lethe (bounded context with summarise-and-reset) is the intended fix; **until it exists**, the step ceiling is what keeps the growth bounded" | `talos.py:22-24` | Lethe exists, is constructed in `__init__` (`talos.py:439`) and is called from `_prompt` and `_history`. **README fixed**; the `talos.py` module docstring still says it. |
 | 7 | "conformance/, 12 of 12" | `README.md:33` | 22 deterministic + 2 live. `REPORT.md:23` already says 22; the top-level README was not updated. `REPORT.md:50` still narrates "12 of 12 on the first run", which was true then. |
 | 8 | "a 19-case evaluation set" | `README.md:31` | 28 cases; 19 in-sample, 9 held out. |
 | 9 | "Currently **18/19 (95%)** on the labelled eval set" | `model/knossos/README.md:371` | `CASES` holds 28 and `report_gate` iterates all of them. The figure describes the pre-held-out set. |
@@ -1147,6 +1238,14 @@ describe. Re-verified against the current tree in this pass.
 | 21 | `ariadne.py:115` describes banding on absolute step counts as the bug it fixed | `knossos-rs/src/ariadne.rs` (superseded) | Rust still had it: `max_steps=12` with `remaining <= 3` bands, so raising the Rust ceiling would have reintroduced the same plateau — the β=0.01 failure the module exists to prevent. **Fixed**: fractions of the ceiling, ceiling 20, and three tests that fail against the old banding. Note it needed three edits, not one — `ariadne.rs`, `config.rs`, and `main.rs`, the last being the only one the binary reads. |
 | 22 | `acp.py` forwarded a constitution to the executor and a different, always-empty one to the planner | `model/knossos/acp.py` (superseded) | The planner planned with no standing instructions while the executor was held to the workspace's, which is how a plan gets written that the executor is forbidden to carry out. **Fixed**: one resolver, cached per session, used by all three roles (§4.5). |
 | 23 | The step-6 note treats "ten tests pass" as evidence a feature ships | step-6 note | It is evidence the feature *works*, which is a different claim. Four of the five built-tested-never-connected findings in this file (17, 18, 19, 22) had passing tests over the disconnected unit. A test that constructs the component itself cannot observe that nothing else does. |
+| 24 | The coding eval reported `solved` and `honest` as if either could rank a harness | `scripts/coding_eval.py` (superseded) | `solved` is saturated (Gemini 3.1 Pro and Flash-Lite both 12/12) and `honest` is not one quantity: for Knossos it is Oracle's verdict, for a foreign harness it is a process exit code, and most CLIs exit 0 unless they crash — so an external arm cannot score a false fail and `honest` collapses into `solved`. **Fixed**: `claim_source` is recorded per case, printed as `honest*` with a warning when the claim is an exit code, and surfaced by `trace_summary`. |
+| 25 | The coding eval had no control arm at all | `scripts/coding_eval.py` (superseded) | Every number it produced was *model × harness* with no way to attribute any of it to the harness — while `knossos.eval`, the weaker-stakes instrument, has had a control group from the start and the README calls it "the load-bearing part". **Fixed**: `--baseline` (§8.6). |
+| 26 | A throttled, shrunk run aggregated as a clean capability result | `codeval.py:_write_trace` (superseded) | `report_throttling` warned *on the console*, and the console is exactly what `trace_summary` exists because nobody keeps. `output_shrinks` never reached the trace, so a run that finished with a halved reply allowance was indistinguishable from an unimpeded one months later. **Fixed**: `degraded`, `output_shrinks`, `throttle_waits` and `throttled_seconds` are recorded per case and reported by both the console and the summariser. |
+| 27 | `ariadne.py:124` — `STUCK` after 2 consecutive unproductive steps, where unproductive includes "merely repeated the one before it" | `model/knossos/talos.py` (superseded) | It was a one-step lookback, so a model alternating between two failing actions (A, B, A, B) never produced two consecutive identical signatures: `is_futile` never fired, `stuck_after` never tripped, and the run spent its whole 20-step ceiling achieving nothing — the pathology Ariadne exists to prevent, through the one door the check did not cover. **Fixed**: a `FUTILE_WINDOW`-wide window of recent signatures (`talos.py:160`), restarted by any step that changes a file so that revisiting after real work is never counted against revisiting before it. `_signature` was already sound; the gap was the comparison window. Verified by setting the window back to 1 and confirming the two-cycle and three-cycle tests fail. **Rust had no repeat check at all** and is now ported to match (§9.1): confirmed by disabling `is_futile` there, which fails 6 tests including the single-call repeat, and by narrowing the window to 1, which fails exactly the two cycle tests in both languages. |
+| 28 | `codeval.py:run_tests` — "One process per node rather than one for the batch. Slower, and worth it" | `model/knossos/codeval.py` (superseded) | The reasoning was right and the scope was wrong: isolation is needed to *attribute* a failure, and a green batch has nothing to attribute. It was paid on every node, every case, every run — the dominant cost of the eval, which `--repeat` multiplies and held-out tests add a fourth set to. **Fixed**: batch first, fall back to per-node only when the batch is not green, so the result is never worse than before because the fallback *is* before. One deliberate difference: a test that passes only because another ran first now grades as passing. |
+| 29 | `_snapshot` SHA1s every file in the tree, twice per case | `model/scripts/coding_eval.py` (superseded) | Nothing for the built-in fixtures; O(repo bytes × 2 × cases) the moment `--cases` points at a real repository, which is what `--cases` is for. **Fixed**: a (path, size, mtime_ns) → hash cache, so an unchanged file is not re-read. A prefilter, not a substitute — the value is still the hash, so "changed" still means the bytes differ rather than the timestamp moved. |
+| 30 | `model/knossos/README.md` — "`Engine.generate` takes two strings and has no message history, so the conversation is re-rendered into the prompt every turn" | `model/knossos/README.md` (superseded) | Stale since `generate_messages` landed: it is on the protocol (`engine.py:291`), `OpenAICompatEngine` implements it, and `Talos._turn` (`talos.py:1315`) prefers it whenever present, so every hosted run already sends a role-tagged array. The quadratic it named is real but belongs to the *stateless API*, not to the two-string shape — an array costs what the same content costs flattened. **Fixed**: the paragraph now says what was measured (§1.1) rather than what was true two refactors ago. |
+| 31 | "Lethe … so a long run stops growing quadratically" | `model/knossos/README.md` (superseded) | The cap exists and is late: at the 24,000-token default it first fires at step 18, so for the runs that actually occur it is not binding and the growth is quadratic throughout. Claiming the bound solves the cost is the same shape of error as claiming a feature ships because it has tests. **Fixed**, and the prefix-stability property that *does* reduce the bill now has a test rather than an assumption. |
 
 ---
 

@@ -265,6 +265,58 @@ def test_every_pass_to_pass_starts_out_green(tmp_path):
             f"{case.id}: {[n for n, ok in results.items() if not ok]} already failed"
 
 
+def test_no_node_ids_runs_no_tests(tmp_path, monkeypatch):
+    """The guard the batch fast path needs and the old loop got for free.
+
+    `pytest` with no arguments collects the entire tree. The per-node loop never
+    ran in that case because there was nothing to iterate; a batch call has to
+    refuse it explicitly or an empty `pass_to_pass` would grade the world.
+    """
+    import knossos.codeval as cv
+
+    monkeypatch.setattr(cv, "_pytest", lambda *a, **k:
+                        pytest.fail("pytest must not run for an empty set"))
+    assert cv.run_tests(tmp_path, []) == {}
+
+
+def test_a_mixed_set_is_attributed_per_node(tmp_path):
+    """A red batch falls back to isolation, which is the old behaviour exactly.
+
+    The fast path may only skip work when there is nothing to attribute.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_m.py").write_text(
+        "def test_good(): pass\ndef test_bad(): assert False\n", encoding="utf-8")
+
+    assert run_tests(tmp_path, ["tests/test_m.py::test_good",
+                                "tests/test_m.py::test_bad"]) == {
+        "tests/test_m.py::test_good": True,
+        "tests/test_m.py::test_bad": False,
+    }
+
+
+def test_a_green_batch_is_reported_without_rerunning_each_node(tmp_path):
+    """The whole point: one process when everything passes."""
+    import knossos.codeval as cv
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_g.py").write_text(
+        "def test_a(): pass\ndef test_b(): pass\n", encoding="utf-8")
+
+    calls = []
+    real = cv._pytest
+    monkeypatched = lambda root, nodes: (calls.append(list(nodes)),
+                                         real(root, nodes))[1]
+    try:
+        cv._pytest = monkeypatched
+        nodes = ["tests/test_g.py::test_a", "tests/test_g.py::test_b"]
+        assert cv.run_tests(tmp_path, nodes) == {n: True for n in nodes}
+    finally:
+        cv._pytest = real
+
+    assert calls == [nodes], "a green batch must cost exactly one process"
+
+
 def test_case_ids_are_unique():
     ids = [c.id for c in CODING_CASES]
     assert len(ids) == len(set(ids))
@@ -334,6 +386,281 @@ def test_honesty_is_not_inflated_by_cases_nobody_attempted():
     refused = CaseResult(case_id="c", kind="bug", passed=False, api_errors=4)
     assert refused.honest          # it did not claim a task it never ran
     assert refused.unreachable     # ...which is why it must not be counted
+
+
+# ------------------------------------------------------------- step reporting
+#
+# `solved` saturates: a frontier model and a lite one both score 12/12 on the
+# built-in tier, so the report that gets quoted cannot rank them. Mean steps
+# separates the same two runs 6.9 against 14.2. The number was always in
+# `CaseResult`; only the aggregate was missing, and these pin the two rules that
+# make the aggregate mean anything.
+
+
+def _report_steps_output(results, capsys):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.coding_eval import _report_steps
+    _report_steps(results)
+    return capsys.readouterr().out
+
+
+def test_the_trace_header_records_the_step_count(tmp_path, case):
+    """An external-harness trace has no events, so the count must be a field.
+
+    Deriving it by counting `step` events works for Knossos and silently reports
+    zero for every foreign harness -- which reads as instant success rather than
+    as an unavailable measurement.
+    """
+    from knossos.codeval import _write_trace
+    path = tmp_path / "t.jsonl"
+    result = CaseResult(case_id="x", kind="bug", passed=True, steps_used=9)
+    _write_trace(path, case, result, [])
+    header = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert header["steps"] == 9
+
+
+def test_a_harness_reporting_no_turn_count_is_excluded_not_averaged(capsys):
+    """Zero steps means unmeasured, and a zero in a mean reads as instant."""
+    results = [
+        CaseResult(case_id="a", kind="bug", passed=True, steps_used=10),
+        CaseResult(case_id="b", kind="bug", passed=True, steps_used=0),
+    ]
+    out = _report_steps_output(results, capsys)
+    assert "10.0 mean" in out, out
+    assert "1 solved case(s) reported no turn count" in out
+
+
+def test_a_failed_case_does_not_count_as_cheap(capsys):
+    """A budget-exhausted case reports the ceiling, not a cost.
+
+    Averaging it in rewards giving up early and penalises persistence that went
+    on to work -- the same rule `_report_cost` applies to tokens.
+    """
+    results = [
+        CaseResult(case_id="a", kind="bug", passed=True, steps_used=5),
+        CaseResult(case_id="b", kind="bug", passed=False, steps_used=20),
+    ]
+    out = _report_steps_output(results, capsys)
+    assert "5.0 mean" in out, out
+
+
+def test_no_step_counts_at_all_says_so_rather_than_printing_zero(capsys):
+    results = [CaseResult(case_id="a", kind="bug", passed=True, steps_used=0)]
+    out = _report_steps_output(results, capsys)
+    assert "not reported" in out
+    assert "0.0" not in out
+
+
+def test_tools_are_reported_beside_steps(capsys):
+    """A step is not a fixed unit of work.
+
+    This loop batches adjacent parallel-safe calls into one turn, so a model
+    that emits its reads together spends fewer steps for identical work. Without
+    tools-per-step, that batching habit ranks as capability.
+    """
+    results = [CaseResult(case_id="a", kind="bug", passed=True, steps_used=4,
+                          tools_used=12)]
+    out = _report_steps_output(results, capsys)
+    assert "12.0 mean per solved case" in out
+    assert "3.0 per step" in out
+
+
+# --------------------------------------------------------------- held-out tests
+#
+# `restore_tests` closes the channel where an agent edits the assertions. It
+# cannot close the one where an agent writes code shaped to the assertions it
+# was shown, because that agent is passing honestly by every measure the grader
+# had. These pin the only structural answer: tests that were never on disk.
+
+
+@pytest.fixture()
+def held_case():
+    """`add` is checked on one input visibly and on another only after."""
+    return CodingCase(
+        id="held",
+        prompt="make add() work",
+        files={
+            "pkg/__init__.py": "",
+            "pkg/m.py": "def add(a, b):\n    return a - b\n",
+            "tests/test_m.py": (
+                "from pkg.m import add\n\n\n"
+                "def test_adds():\n    assert add(1, 2) == 3\n"),
+        },
+        fail_to_pass=["tests/test_m.py::test_adds"],
+        held_out={"tests/test_held.py": (
+            "from pkg.m import add\n\n\n"
+            "def test_other_inputs():\n    assert add(5, 7) == 12\n")},
+        held_out_pass=["tests/test_held.py::test_other_inputs"],
+    )
+
+
+def test_a_held_out_test_is_not_on_disk_while_the_agent_runs(held_case, tmp_path):
+    """The whole value of it: unreadable, uneditable, unfittable."""
+    seen = {}
+
+    class Peeking(Agent):
+        def run(self, prompt):
+            seen["files"] = sorted(p.name for p in self.root.rglob("*.py"))
+            return super().run(prompt)
+
+    agent = Peeking(writes={"pkg/m.py": FIXED})
+    run_case(held_case, factory(agent), tmp_path)
+    assert "test_held.py" not in seen["files"]
+    assert "test_m.py" in seen["files"]
+
+
+def test_fitting_the_visible_test_is_caught_by_the_held_out_one(held_case, tmp_path):
+    """Special-cases the input it was shown. Passes everything visible."""
+    cheat = "def add(a, b):\n    if (a, b) == (1, 2):\n        return 3\n    return a - b\n"
+    result = run_case(held_case, factory(Agent(writes={"pkg/m.py": cheat})), tmp_path)
+    assert result.fixed == result.fixed_total   # every visible test green
+    assert result.held == 0                     # the unseen one is not
+    assert result.overfit
+    assert not result.passed, "fitting the assertions must not score as solved"
+
+
+def test_a_real_fix_passes_the_held_out_test_too(held_case, tmp_path):
+    result = run_case(held_case, factory(Agent(writes={"pkg/m.py": FIXED})), tmp_path)
+    assert result.passed
+    assert result.held == result.held_total
+    assert not result.overfit
+
+
+def test_a_case_without_held_out_tests_is_unaffected(case, tmp_path):
+    """Empty sums to zero against a length of zero, which is True."""
+    result = run_case(case, factory(Agent(writes={"pkg/m.py": FIXED})), tmp_path)
+    assert result.passed
+    assert result.held_total == 0
+    assert not result.overfit, "a question nobody asked is not a failure"
+
+
+def test_held_out_files_may_not_shadow_a_visible_one(tmp_path):
+    """Otherwise it is shown to the agent and overwritten before grading."""
+    from knossos.codeval import load_cases
+    suite = tmp_path / "s.json"
+    suite.write_text(json.dumps([{
+        "id": "x", "prompt": "p",
+        "files": {"tests/test_a.py": "def test_a(): pass\n"},
+        "fail_to_pass": ["tests/test_a.py::test_a"],
+        "held_out": {"tests/test_a.py": "def test_a(): assert False\n"},
+        "held_out_pass": ["tests/test_a.py::test_a"],
+    }]), encoding="utf-8")
+    with pytest.raises(ValueError, match="may not overwrite visible files"):
+        load_cases(suite)
+
+
+def test_held_out_node_ids_without_their_files_are_rejected(tmp_path):
+    """They would be collected from a tree without them and score a silent zero."""
+    from knossos.codeval import load_cases
+    suite = tmp_path / "s.json"
+    suite.write_text(json.dumps([{
+        "id": "x", "prompt": "p",
+        "files": {"tests/test_a.py": "def test_a(): pass\n"},
+        "fail_to_pass": ["tests/test_a.py::test_a"],
+        "held_out_pass": ["tests/test_nope.py::test_b"],
+    }]), encoding="utf-8")
+    with pytest.raises(ValueError, match="without `held_out` files"):
+        load_cases(suite)
+
+
+# The two tests above go through `load_cases`, which is the JSON door. The
+# built-in suite does not use that door: `CODING_CASES` constructs `CodingCase`
+# directly, as do the tests and any future generator script. Both invariants
+# were therefore unenforced on the path the shipped suite actually takes.
+#
+# The reason to care is how these two mistakes fail. Neither raises and neither
+# looks wrong: a shadowed file is shown to the agent and overwritten before
+# grading, and a node id with no file behind it is collected from a tree that
+# does not contain it and scores zero. Both then surface as `overfit` -- the
+# report accusing the model of fitting the visible tests when the fault is in
+# the fixture. That is the worst output this file can produce, because it is
+# indistinguishable from the real thing by looking at the score.
+
+
+def test_a_shadowed_held_out_file_is_rejected_at_construction():
+    """Not only through `load_cases`: the built-in suite never goes that way."""
+    with pytest.raises(ValueError, match="may not overwrite visible files"):
+        CodingCase(id="x", prompt="p",
+                   files={"tests/test_a.py": "def test_a(): pass\n"},
+                   fail_to_pass=["tests/test_a.py::test_a"],
+                   held_out={"tests/test_a.py": "def test_a(): assert False\n"},
+                   held_out_pass=["tests/test_a.py::test_a"])
+
+
+def test_held_out_node_ids_without_files_are_rejected_at_construction():
+    """A silent zero here reads as an overfitting model, not a broken fixture."""
+    with pytest.raises(ValueError, match="without `held_out` files"):
+        CodingCase(id="x", prompt="p", files={"a.py": ""},
+                   fail_to_pass=["tests/test_a.py::test_a"],
+                   held_out_pass=["tests/test_held.py::test_z"])
+
+
+def test_the_built_in_suite_satisfies_the_invariants():
+    """Runs the guard over every shipped case, including future ones.
+
+    `CODING_CASES` is built at import, so a case added with either mistake now
+    fails collection rather than producing a plausible-looking score.
+    """
+    for case in CODING_CASES:
+        assert not (set(case.held_out) & set(case.files)), case.id
+        assert not (case.held_out_pass and not case.held_out), case.id
+
+
+def test_a_case_with_well_formed_held_out_tests_is_accepted():
+    """The guard must not reject the thing it exists to make safe."""
+    case = CodingCase(id="ok", prompt="p",
+                      files={"tests/test_visible.py": "def test_v(): pass\n"},
+                      fail_to_pass=["tests/test_visible.py::test_v"],
+                      held_out={"tests/test_hidden.py": "def test_h(): pass\n"},
+                      held_out_pass=["tests/test_hidden.py::test_h"])
+    assert case.held_out_pass
+
+
+# ------------------------------------------------------- degraded, not absent
+#
+# A refused request is `unreachable`. A request that succeeded after two minutes
+# of backoff with the reply allowance halved left no mark at all, and the console
+# warning that said so did not survive the terminal scrolling.
+
+
+def test_a_throttled_run_is_degraded_but_still_measured():
+    result = CaseResult(case_id="x", kind="bug", passed=True, throttle_waits=3)
+    assert result.degraded
+    assert not result.unreachable, "it did reach the model; it is not absent"
+
+
+def test_a_clean_run_is_not_degraded():
+    assert not CaseResult(case_id="x", kind="bug", passed=True).degraded
+
+
+def test_degradation_is_counted_per_case_not_per_suite(case, tmp_path):
+    """The engine is shared, so reading it raw blames case N for case 1's backoff."""
+    class WithEngine(Agent):
+        def __init__(self, engine, **kw):
+            super().__init__(**kw)
+            self.engine = engine
+
+    engine = type("E", (), {"output_shrinks": 5, "throttle_waits": 2,
+                            "throttled_seconds": 30.0})()
+    agent = WithEngine(engine, writes={"pkg/m.py": FIXED})
+    result = run_case(case, factory(agent), tmp_path)
+    # The counters never moved *during* this case, so it was not degraded by it.
+    assert result.output_shrinks == 0
+    assert not result.degraded
+
+
+def test_the_trace_header_carries_the_degradation(tmp_path, case):
+    from knossos.codeval import _write_trace
+    path = tmp_path / "t.jsonl"
+    result = CaseResult(case_id="x", kind="bug", passed=True,
+                        output_shrinks=2, throttle_waits=1,
+                        throttled_seconds=41.4)
+    _write_trace(path, case, result, [])
+    header = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert header["degraded"] is True
+    assert header["output_shrinks"] == 2
+    assert header["throttled_seconds"] == 41.4
 
 
 # --------------------------------------------------------- external suites

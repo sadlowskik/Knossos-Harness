@@ -980,6 +980,58 @@ def test_a_token_limit_shrinks_the_reply_allowance(server):
     assert engine.max_tokens == 8000 - 71 - engine._LIMIT_MARGIN
 
 
+#: Groq's actual 400, copied from a live eval run. Note it is *not* a 413 and
+#: says nothing about the prompt: the reply allowance alone is over a per-model
+#: cap, and the context window is far larger than the number quoted.
+GROQ_400_OUTPUT_CAP = (
+    "`max_tokens` must be less than or equal to `16384`, the maximum value "
+    "for `max_tokens` is less than the `context_window` for this model")
+
+
+def test_a_per_model_reply_cap_is_clamped_not_reported(server):
+    """The first live run against the generated suite died on this.
+
+    Every case came back `unreachable` because the default 32k reply allowance
+    is over Groq's 16384 per-model cap -- before a single prompt token, and on
+    a 400 rather than the 413 the existing shrink path was gated on.
+    """
+    engine = engine_for(server, max_tokens=32_000)
+
+    assert engine._shrink_to_token_limit(400, GROQ_400_OUTPUT_CAP) is True
+    # Exact, not approximate: the provider stated the number, so no margin.
+    assert engine.max_tokens == 16384
+
+
+def test_a_reply_cap_we_are_already_under_is_not_a_shrink(server):
+    """Otherwise an unrelated 400 retries an unchanged request forever."""
+    engine = engine_for(server, max_tokens=8192)
+
+    assert engine._shrink_to_token_limit(400, GROQ_400_OUTPUT_CAP) is False
+    assert engine.max_tokens == 8192
+
+
+def test_a_tool_schema_400_is_left_to_the_native_history_path(server):
+    """400 is also how a provider rejects a tool schema.
+
+    Matching it here would send those requests down the retry branch with an
+    unchanged payload and hide the real failure, which the `_native_history`
+    degrade at the call site exists to handle.
+    """
+    engine = engine_for(server, max_tokens=32_000)
+    body = "invalid value for 'tools[0].function.parameters': expected object"
+
+    assert engine._shrink_to_token_limit(400, body) is False
+    assert engine.max_tokens == 32_000
+
+
+def test_a_rate_limit_is_never_read_as_a_reply_cap(server):
+    """429 is the rate path; intercepting it turns a quota into a retry loop."""
+    engine = engine_for(server, max_tokens=32_000)
+
+    assert engine._shrink_to_token_limit(
+        429, "max_tokens must be less than or equal to 16384") is False
+
+
 def test_a_token_limit_also_bounds_the_transcript(server):
     """The same ceiling applies to input, and Talos sizes Lethe from this."""
     engine = engine_for(server, max_tokens=8192)
@@ -1453,3 +1505,74 @@ def test_the_default_budget_leaves_room_for_thinking():
 def test_the_anthropic_provider_points_at_a_current_model():
     from knossos.engine import PROVIDERS
     assert PROVIDERS["anthropic"].default_model == "claude-sonnet-5"
+
+
+# --------------------------------------------------- restoring after a shrink
+#
+# Every shrink path is one-way and one engine serves a whole eval suite, so a
+# 413 in the first case used to constrain all eleven after it. Restoring fixes
+# that and introduces two ways to make things worse, both pinned here: raising
+# past a permanent per-model cap (a 400 on every request thereafter) and
+# inventing headroom the caller never asked for.
+
+
+def test_a_transient_rate_shrink_is_undone(server):
+    """A 413 states a per-minute allowance. The minute ends."""
+    engine = engine_for(server, max_tokens=8192)
+    engine._shrink_to_token_limit(413, GROQ_413)
+    assert engine.max_tokens < 8192
+
+    assert engine.restore_limits() is True
+    assert engine.max_tokens == 8192
+    assert engine.limit_restores == 1
+
+
+def test_a_hard_model_cap_is_never_restored_past(server):
+    """A 400 states what the model will *ever* grant. That does not reopen.
+
+    Restoring above it would re-issue the same rejected request on every call
+    for the rest of the run -- strictly worse than staying small.
+    """
+    engine = engine_for(server, max_tokens=32_000)
+    engine._shrink_to_token_limit(400, GROQ_400_OUTPUT_CAP)
+    assert engine.max_tokens == 16384
+
+    assert engine.restore_limits() is False
+    assert engine.max_tokens == 16384, "the cap is permanent, not per-minute"
+
+
+def test_a_rate_shrink_under_a_hard_cap_restores_only_to_the_cap(server):
+    """Both kinds at once: restore to the model's ceiling, not the caller's."""
+    engine = engine_for(server, max_tokens=32_000)
+    engine._shrink_to_token_limit(400, GROQ_400_OUTPUT_CAP)   # -> 16384, hard
+    engine.max_tokens = 4000                                   # as if throttled
+
+    assert engine.restore_limits() is True
+    assert engine.max_tokens == 16384
+
+
+def test_restoring_never_invents_headroom(server):
+    """It gives back what was configured; it does not raise above it."""
+    engine = engine_for(server, max_tokens=8192)
+    assert engine.restore_limits() is False
+    assert engine.max_tokens == 8192
+
+
+def test_restoring_is_idempotent(server):
+    engine = engine_for(server, max_tokens=8192)
+    engine._shrink_to_token_limit(413, GROQ_413)
+    assert engine.restore_limits() is True
+    assert engine.restore_limits() is False, "nothing left to restore"
+    assert engine.limit_restores == 1, "a no-op must not count as a restore"
+
+
+def test_the_lowest_hard_cap_wins(server):
+    """Two 400s with different numbers: keep the stricter one."""
+    engine = engine_for(server, max_tokens=32_000)
+    engine._shrink_to_token_limit(400, GROQ_400_OUTPUT_CAP)     # 16384
+    engine.max_tokens = 32_000                                  # pretend re-raised
+    engine._shrink_to_token_limit(
+        400, "`max_tokens` must be less than or equal to `8192`")
+    engine.max_tokens = 100
+    engine.restore_limits()
+    assert engine.max_tokens == 8192

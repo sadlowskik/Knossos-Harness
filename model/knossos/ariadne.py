@@ -62,9 +62,14 @@ class StepOutcome:
     files_changed: int = 0
     #: Only `True` when the deterministic verification tiers passed.
     verdict_passed: Optional[bool] = None
-    #: This step made exactly the same calls, with the same arguments, as the
-    #: step before it. Set by the caller, which is the only party that can see
-    #: more than one step.
+    #: This step made exactly the same calls, with the same arguments, as a
+    #: *recent* step -- not necessarily the one immediately before it. Set by
+    #: the caller, which is the only party that can see more than one step.
+    #:
+    #: The distinction is the whole of it. Compared only against the previous
+    #: step, a model alternating A, B, A, B never repeats itself consecutively
+    #: and this stays False forever while the run burns its entire ceiling.
+    #: `talos.FUTILE_WINDOW` defines how far back "recent" reaches and why.
     repeated: bool = False
 
     @property
@@ -74,7 +79,7 @@ class StepOutcome:
 
     @property
     def is_futile(self) -> bool:
-        """A step that called tools, repeated itself exactly, and changed nothing.
+        """A step that called tools, repeated a recent step, and changed nothing.
 
         `is_noop` alone cannot see this. It requires `tool_calls == 0`, so an
         engine stuck re-issuing one failing `edit_file` looks productive on
@@ -85,6 +90,14 @@ class StepOutcome:
         The conjunction is what keeps this safe. Repetition alone is not
         failure: reading the same file twice while working toward different
         edits is ordinary. Repetition that also changed nothing is the loop.
+
+        That safety is what lets `repeated` look back further than one step
+        (`talos.FUTILE_WINDOW`). Widening the window without the
+        `files_changed == 0` half would start calling ordinary revisiting a
+        stall; with it, a wider window only ever catches cycles in which
+        nothing at all was achieved -- and the caller additionally restarts the
+        window whenever a step does change something, so a revisit that follows
+        real work is never held against a revisit that preceded it.
         """
         return self.repeated and self.files_changed == 0
 

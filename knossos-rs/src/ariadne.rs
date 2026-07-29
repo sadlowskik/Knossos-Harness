@@ -61,12 +61,43 @@ pub struct StepOutcome {
     pub files_changed: usize,
     /// `Some(true)` only when Oracle's deterministic ladder passed.
     pub verdict_passed: Option<bool>,
+    /// This step made exactly the same calls, with the same arguments, as a
+    /// *recent* step — not necessarily the one immediately before it. Set by
+    /// the caller, which is the only party that can see more than one step.
+    ///
+    /// See `talos::FUTILE_WINDOW` for how far back "recent" reaches. Comparing
+    /// against the previous step alone cannot see a loop that alternates: a
+    /// model going A, B, A, B never repeats itself consecutively.
+    pub repeated: bool,
 }
 
 impl StepOutcome {
     /// A step that called no tools and changed no files produced nothing.
     pub fn is_noop(&self) -> bool {
         self.tool_calls == 0 && self.files_changed == 0
+    }
+
+    /// A step that called tools, repeated a recent step, and changed nothing.
+    ///
+    /// `is_noop` alone cannot see this, and until now it was the whole of the
+    /// staleness check on this side. It requires `tool_calls == 0`, so an
+    /// engine stuck re-issuing one failing `edit_file` looks productive on
+    /// every step — it *is* calling a tool — and the run goes to the ceiling.
+    /// Twenty identical failures cost the same as twenty useful steps and
+    /// teach nobody anything.
+    ///
+    /// The conjunction is what keeps it safe. Repetition alone is not failure:
+    /// reading the same file twice while working toward different edits is
+    /// ordinary. Repetition that *also* changed nothing is the loop. That is
+    /// what lets `repeated` look back further than one step without turning
+    /// ordinary revisiting into a stall.
+    pub fn is_futile(&self) -> bool {
+        self.repeated && self.files_changed == 0
+    }
+
+    /// Whether this step is worth granting another one after.
+    pub fn made_progress(&self) -> bool {
+        !(self.is_noop() || self.is_futile())
     }
 }
 
@@ -190,11 +221,13 @@ mod tests {
     use super::*;
 
     fn passed() -> StepOutcome {
-        StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(true) }
+        StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(true),
+                      ..Default::default() }
     }
 
     fn worked() -> StepOutcome {
-        StepOutcome { tool_calls: 2, files_changed: 1, verdict_passed: None }
+        StepOutcome { tool_calls: 2, files_changed: 1, verdict_passed: None,
+                      ..Default::default() }
     }
 
     fn nothing() -> StepOutcome {
@@ -237,7 +270,8 @@ mod tests {
     #[test]
     fn a_failed_verdict_does_not_end_the_run() {
         let a = Ariadne::new(12, 6);
-        let failed = StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(false) };
+        let failed = StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(false),
+            ..Default::default() };
         assert_eq!(a.assess(2, &failed, 0), Halt::Continue);
     }
 
@@ -310,7 +344,8 @@ mod tests {
     fn noop_detection_is_about_evidence_not_opinion() {
         assert!(nothing().is_noop());
         assert!(!worked().is_noop());
-        assert!(!StepOutcome { tool_calls: 1, files_changed: 0, verdict_passed: None }.is_noop());
+        assert!(!StepOutcome { tool_calls: 1, files_changed: 0, verdict_passed: None,
+                             ..Default::default() }.is_noop());
     }
 
     #[test]

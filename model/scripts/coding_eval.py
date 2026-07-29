@@ -42,7 +42,7 @@ from knossos.ariadne import Ariadne                                   # noqa: E4
 from knossos.codeval import (CODING_CASES, CaseResult, load_cases,   # noqa: E402
                              run_suite)
 from knossos.oracle import Oracle                                     # noqa: E402
-from knossos.talos import Talos                                       # noqa: E402
+from knossos.talos import Talos, accept_everything                    # noqa: E402
 from knossos.workspace import Workspace                               # noqa: E402
 
 
@@ -232,6 +232,46 @@ _IGNORED_DIRS = frozenset({
 })
 
 
+#: (path, size, mtime_ns) -> (content hash, when those bytes were read).
+#:
+#: This is a prefilter, not a substitute: the value returned is still the hash,
+#: so "changed" still means *the bytes differ* rather than "the timestamp moved".
+#: What it removes is re-reading a file to learn something already known.
+#: `_snapshot` ran twice per case over the whole tree, which is nothing for the
+#: built-in fixtures and O(repo bytes x 2 x cases) the moment `--cases` points
+#: at a real repository -- which is the entire reason `--cases` exists.
+#:
+#: The read time is the half that makes the key safe to believe. An unchanged
+#: mtime only means "not rewritten" if the clock that stamped it can resolve the
+#: gap between two writes, and it cannot: Windows advances the file-write clock
+#: in ~15.6ms ticks, so a same-size rewrite inside one tick lands on the
+#: identical mtime_ns, matches this key, and is served a hash of the *previous*
+#: bytes. That is the external arm quietly under-reporting the work it graded --
+#: an agent's same-size edit scored as no change at all. So an entry is believed
+#: only once its file has gone quiet for `_SETTLED_NS`; see `_snapshot`.
+#:
+#: Process-lifetime and unbounded, which is the right size here: one entry per
+#: file the eval has looked at, in a process that exists to walk that tree.
+_HASHES: Dict[tuple, tuple] = {}
+
+
+#: How far an mtime must sit below the read that hashed it before that hash can
+#: be reused. It has to exceed the stamping clock's granularity, and comparing
+#: the two timestamps directly does not: `time.time_ns` is sub-microsecond on
+#: Windows while `st_mtime_ns` is quantised down to the ~15.6ms tick, so a read
+#: lands *above* the mtime of a write it raced and the entry would look safe.
+#: Two seconds clears every granularity that turns up in practice -- 15.6ms on
+#: NTFS, 2s on FAT and some network mounts -- so past it no later write can
+#: still quantise onto the mtime already recorded here.
+#:
+#: The cost is that a file touched in the last two seconds is re-read rather
+#: than trusted, which is the pre-cache behaviour for the one window where the
+#: timestamp genuinely cannot distinguish the two. It costs nothing in the
+#: workload this exists for: `--cases` walks a tree that was materialised once
+#: and then sat still for however long the foreign harness ran.
+_SETTLED_NS = 2_000_000_000
+
+
 def _snapshot(root: Path) -> Dict[str, str]:
     """Content hash of every file under `root`, for before/after diffing."""
     out: Dict[str, str] = {}
@@ -240,8 +280,20 @@ def _snapshot(root: Path) -> Dict[str, str]:
         for name in filenames:
             path = Path(dirpath) / name
             try:
-                out[str(path.relative_to(root))] = hashlib.sha1(
-                    path.read_bytes()).hexdigest()
+                info = path.stat()
+                key = (str(path), info.st_size, info.st_mtime_ns)
+                cached = _HASHES.get(key)
+                if cached is not None and (
+                        info.st_mtime_ns + _SETTLED_NS <= cached[1]):
+                    digest = cached[0]
+                else:
+                    # Sampled before the read, never after: a write landing
+                    # mid-read must leave an mtime this entry refuses, and a
+                    # timestamp taken afterwards would sit above it and pass.
+                    read_at = time.time_ns()
+                    digest = hashlib.sha1(path.read_bytes()).hexdigest()
+                    _HASHES[key] = (digest, read_at)
+                out[str(path.relative_to(root))] = digest
             except OSError:
                 continue
     return out
@@ -253,11 +305,20 @@ class _Halt:
 
 
 class _ExternalOutcome:
+    #: An exit status, not a self-assessment. Recorded so `report` can refuse to
+    #: print this run's `honest` as though it were Oracle's verdict.
+    claim_source = "exit_code"
+    #: A foreign harness is stopped by `--harness-timeout`, not by a step
+    #: ceiling. Naming it keeps a wall-clock arm from being compared against a
+    #: steps arm as if the same constraint bound both.
+    budget_kind = "wall_clock"
+
     def __init__(self, succeeded: bool, halt: str, steps_used: int,
-                 changed: Sequence[str]) -> None:
+                 changed: Sequence[str], tools_used: int = 0) -> None:
         self.succeeded = succeeded
         self.halt = _Halt(halt)
         self.steps_used = steps_used
+        self.tools_used = tools_used
         self.changed = list(changed)
 
 
@@ -360,8 +421,44 @@ def external_agent(command: str, timeout: int):
     return make
 
 
+def run_dir(base: Optional[Path], index: int, total: int) -> Optional[Path]:
+    """Where run `index` of `total` puts its files. A separate dir per repeat.
+
+    Extracted from `main` so the property can be tested, because it is the one
+    that makes `--repeat` mean anything and it fails silently when wrong.
+    `materialise` rewrites each case's own files, but it has no way to know
+    about a file the *agent* created -- nothing enumerates those. Share one
+    directory across repeats and run 2 starts from whatever run 1 left behind:
+    still a number, still plausible, no longer an independent sample of the same
+    thing. Since the whole purpose of `--repeat` is to give a score its `n`,
+    that failure would quietly void the flag while appearing to work.
+
+    `None` passes through for the trace directory, which is optional, and a
+    single run keeps the bare path so nothing changes for the common case.
+    """
+    if base is None or total <= 1:
+        return base
+    return base / f"run{index + 1}"
+
+
+def _fresh_case(engine) -> None:
+    """Undo the previous case's transient throttling, if any.
+
+    `make_agent(root)` is called once per case, so this is the case boundary.
+    Without it a 413 in case 1 held `max_tokens` down for every case after it --
+    every shrink path in the engine is one-way -- and the suite measured a
+    descending staircase of allowances rather than a model. Duck-typed because
+    `AgentFactory` is "anything with `.run(prompt)`" and a scripted agent has no
+    engine to restore.
+    """
+    restore = getattr(engine, "restore_limits", None)
+    if callable(restore):
+        restore()
+
+
 def live_agent(engine, max_steps: int, target_steps: int):
     def make(root: Path):
+        _fresh_case(engine)
         ws = Workspace(root)
         # Baseline on: it is what records the suite's size before the agent
         # starts, which is what catches a pass bought by deleting a test.
@@ -369,6 +466,57 @@ def live_agent(engine, max_steps: int, target_steps: int):
         return Talos(engine, ws, verifier=oracle, interim=oracle.quick,
                      ariadne=Ariadne(max_steps=max_steps,
                                      target_steps=target_steps))
+    return make
+
+
+def baseline_agent(engine):
+    """The control arm: the same model, one step, nothing checking it.
+
+    # Why this has to exist
+
+    Every number this script produced before now was *model x harness* with no
+    way to separate the two. A 12/12 could mean the harness works or it could
+    mean the model is strong enough that a single API call would also score
+    12/12, and nothing here could tell those apart. `knossos.eval` has had a
+    control arm from the start -- it runs every case `raw` and `harness` and the
+    README calls the control "the load-bearing part", correctly noting that a
+    lift on it would invalidate the treatment number too. The coding eval was
+    the weaker instrument of the two and this closes that gap.
+
+    # What it does and does not hold constant
+
+    Held constant: the engine, the tool vocabulary, the workspace jail, the
+    prompt, the fixtures and the grader. Removed: **the loop and the verifier**,
+    and only those. `max_steps=1` means one turn with no chance to read a
+    result and correct, and `accept_everything` means the run ends on the
+    engine's own say-so.
+
+    So the delta this measures is precisely *what iteration and verification
+    buy on top of the same model*. It is deliberately **not** a claim about
+    "the harness versus no harness at all" -- retrieval, the path jail and the
+    tool layer are all still present, and a bare `curl` to the same provider
+    would score lower than this for reasons that have nothing to do with Talos.
+    Quoting it as the latter would be the same overclaim the control exists to
+    prevent.
+
+    # Reading the result
+
+    Expect the baseline to post a high `FALSE PASS` count. That is not a bug in
+    the control -- `accept_everything` agrees with the engine by construction,
+    so the run reports success whenever the model stops calling tools. It is the
+    measurement: it is what "completion decided by the engine" scores, which is
+    the claim the whole project exists to refuse. `claim_source` is recorded as
+    `unverified` so the number can never be printed beside a verified arm's
+    `honest` as though they were the same quantity.
+    """
+    def make(root: Path):
+        # The control arm has to start each case from the same allowance the
+        # treatment does, or the comparison measures throttling history.
+        _fresh_case(engine)
+        ws = Workspace(root)
+        # No Oracle, and no `interim`. A verifier here would be the treatment.
+        return Talos(engine, ws, verifier=accept_everything,
+                     ariadne=Ariadne(max_steps=1, target_steps=1))
     return make
 
 
@@ -477,8 +625,43 @@ def report(results: Sequence[CaseResult], tiers: Dict[str, str]) -> int:
         print(f"  solved@1    {first}/{total}   "
               f"(the first sample, for comparison)")
         print(f"              {drawn} sample(s) drawn across {total} case(s)")
-    print(f"  honest      {honest}/{total}   "
-          f"(harness's own verdict matched reality)")
+    # Labelled by where the claim came from, because the two sources are not the
+    # same measurement. Oracle's verdict is a deterministic self-assessment; a
+    # foreign CLI's exit status is process health. Most agent CLIs exit 0 unless
+    # they crash, so for an external arm `harness_said_done` is almost always
+    # True, `honest` collapses into `passed`, and a `false fail` becomes
+    # unscoreable. Printing both under one heading invites exactly the
+    # cross-harness comparison the number cannot support.
+    by_exit = [r for r in measured if r.claim_source == "exit_code"]
+    if by_exit and len(by_exit) == len(measured):
+        print(f"  honest*     {honest}/{total}   "
+              f"(* exit status, not a verdict -- see below)")
+    else:
+        print(f"  honest      {honest}/{total}   "
+              f"(harness's own verdict matched reality)")
+    if by_exit:
+        print(f"              {len(by_exit)}/{total} case(s) claimed completion "
+              f"by exit code alone. A CLI that")
+        print("              exits 0 unless it crashes cannot score a false "
+              "fail, so this is")
+        print("              not comparable with a verifier-backed `honest`.")
+
+    # A case the provider throttled or shrunk did reach the model, so it is not
+    # `unreachable` -- but it did not run the configuration that was asked for.
+    # The console already warns; this puts it next to the score it qualifies.
+    degraded = [r for r in measured if r.degraded]
+    if degraded:
+        print(f"  degraded    {len(degraded)}/{total}   "
+              f"(ran with a reduced allowance or after backoff)")
+
+    # The failure `tamper` cannot see, and it must be louder than a pass.
+    overfit = [r for r in measured if r.overfit]
+    if overfit:
+        print(f"  OVERFIT     {len(overfit)}: "
+              f"{', '.join(r.case_id for r in overfit)}")
+        print("              passed every visible test and failed a held-out "
+              "one: the")
+        print("              assertions were solved, not the task")
     if unreachable:
         print(f"  unreachable {len(unreachable)}/{len(results)}   "
               f"(provider refused; excluded from every rate above)")
@@ -498,9 +681,121 @@ def report(results: Sequence[CaseResult], tiers: Dict[str, str]) -> int:
               f"{', '.join(r.case_id for r in false_fail)}")
         print("              solved, but the harness would not claim it (safe direction)")
 
+    _report_steps(measured)
     _report_cost(measured, passed)
     print()
     return passed
+
+
+def _report_steps(results: Sequence[CaseResult]) -> None:
+    """How many turns the harness spent on the cases it actually solved.
+
+    The axis that still has signal once `solved` saturates, and the number was
+    already being collected -- `CaseResult.steps_used` is populated for every
+    run and `summary()` prints it per case. Only the aggregate was missing, so
+    two runs that differ by a factor of two looked identical in the report that
+    gets quoted.
+
+    Measured on the built-in suite: Gemini 3.1 Pro and Gemini 3.1 Flash-Lite
+    both score 12/12, which is the saturation this tier cannot see past, while
+    the same two runs sit at 6.9 and 14.2 mean steps. On the easiest case in the
+    set the gap is 3 steps against 20-and-the-ceiling.
+
+    Solved cases only, for the reason `_report_cost` gives about tokens: a
+    harness that fails cheaply is not thereby efficient. A case that exhausted
+    its budget reports the ceiling rather than a cost, so averaging it in
+    rewards giving up early and penalises persistence that went on to work.
+
+    `steps_used == 0` is dropped rather than averaged in. A foreign harness
+    whose CLI prints no turn count reports zero (`ExternalHarness._steps`), and
+    a zero folded into a mean reads as a harness that solved the task
+    instantly -- the same confidently wrong number the token line refuses to
+    print. Excluded cases are counted on their own line instead.
+    """
+    solved = [r for r in results if r.passed]
+    counted = sorted(r.steps_used for r in solved if r.steps_used > 0)
+    if not counted:
+        print("  steps       not reported (the harness printed no turn count)")
+        return
+
+    mean = sum(counted) / len(counted)
+    print(f"  steps       {mean:.1f} mean per solved case   "
+          f"(range {counted[0]}-{counted[-1]}, n={len(counted)})")
+    missing = len(solved) - len(counted)
+    if missing:
+        print(f"              {missing} solved case(s) reported no turn count "
+              f"and are excluded")
+
+    # Printed next to steps rather than instead of it, because neither is
+    # sufficient alone. A step is not a fixed unit of work: this loop batches
+    # adjacent parallel-safe calls into one turn, so a model that emits its
+    # reads together spends fewer steps for identical work and would rank as
+    # more capable on steps alone. Tools-per-step is what makes that visible --
+    # if two runs differ on steps and agree on tools, the difference is batching
+    # habit, not capability.
+    with_tools = [r for r in solved if r.tools_used > 0]
+    tool_steps = sum(r.steps_used for r in with_tools)
+    if with_tools:
+        total = sum(r.tools_used for r in with_tools)
+        # A harness can report tool calls without reporting turns, so the ratio
+        # is guarded rather than assumed -- the mean is still worth printing.
+        ratio = (f" ({total / tool_steps:.1f} per step)" if tool_steps else "")
+        print(f"  tools       {total / len(with_tools):.1f} mean per solved case  "
+              f"{ratio}")
+
+
+def report_spread(runs: Sequence[Sequence[CaseResult]]) -> None:
+    """What repeating the whole suite showed, and how far the runs disagreed.
+
+    `scripts/seeds.py` says a score without its `n` is not a result, and until
+    now neither eval imported it: every number this suite has ever produced was
+    single-shot. That is the weaker claim in two directions. A run that scores
+    12/12 once might score 10/12 typically, and the README already documents the
+    opposite error -- at n=1 the retrieval eval understated an effect by half.
+
+    Steps need this more than `solved` does, not less. A pass is one bit with
+    bounded variance; a step count is unbounded, and the biggest per-case gap
+    observed so far (3 steps against 20) is exactly the shape of a difference
+    that could be a single unlucky sample.
+
+    Range rather than a standard deviation: at the `n` anyone will actually pay
+    for -- three, maybe five -- a standard deviation is a statistic about too
+    few points to mean much, while "best and worst run" is exactly what a reader
+    wants to know and cannot be over-read.
+    """
+    def measured(batch):
+        return [r for r in batch if not r.unreachable]
+
+    print()
+    print(f"  == across {len(runs)} run(s) " + "=" * 40)
+    for label, pick in (("solved", lambda b: sum(1 for r in b if r.passed)),
+                        ("honest", lambda b: sum(1 for r in b if r.honest))):
+        counts = [pick(measured(b)) for b in runs]
+        denom = [len(measured(b)) for b in runs]
+        if not counts or not any(denom):
+            continue
+        spread = ("" if min(counts) == max(counts)
+                  else f"   range {min(counts)}-{max(counts)}")
+        print(f"  {label:<11} {sum(counts) / len(counts):.1f} mean "
+              f"of {max(denom)}{spread}")
+
+    per_run = []
+    for batch in runs:
+        counted = [r.steps_used for r in batch if r.passed and r.steps_used > 0]
+        if counted:
+            per_run.append(sum(counted) / len(counted))
+    if per_run:
+        spread = ("" if len(per_run) < 2 or min(per_run) == max(per_run)
+                  else f"   range {min(per_run):.1f}-{max(per_run):.1f}")
+        print(f"  {'steps':<11} {sum(per_run) / len(per_run):.1f} mean "
+              f"per solved case{spread}")
+    if len(runs) < 3:
+        # Said plainly, because two runs that agree look far more convincing
+        # than they are and this is the number people will quote.
+        print("  note        n=2 shows whether the runs differ, not by how much. "
+              "Three or more")
+        print("              before quoting a mean as though it had a spread.")
+    print()
 
 
 def _report_cost(results: Sequence[CaseResult], passed: int) -> None:
@@ -564,6 +859,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="sample K attempts per case and keep the first the "
                              "harness itself accepts (never the grader). Costs K "
                              "times as much; reported separately from single-shot.")
+    parser.add_argument("--baseline", action="store_true",
+                        help="control arm: the same engine with one step and no "
+                             "verifier, isolating what the loop and Oracle buy. "
+                             "Requires --engine.")
+    parser.add_argument("--repeat", type=int, default=1, metavar="N",
+                        help="run the whole suite N times and report the spread. "
+                             "Different from --best-of, which keeps the best "
+                             "sample and inflates the score; this reports every "
+                             "run and the range across them.")
     parser.add_argument("--case", action="append",
                         help="run only these case ids (repeatable)")
     parser.add_argument("--tier", choices=["core", "hard", "all"], default="all",
@@ -592,6 +896,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.harness_cmd and (args.agent or args.engine):
         parser.error("--harness-cmd grades a foreign harness; it does not "
                      "combine with --agent or --engine")
+    if args.baseline and not args.engine:
+        parser.error("--baseline is a control for a real run: pass --engine")
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1")
+    if args.repeat > 1 and args.agent:
+        # A scripted agent replays a fixed script, so repeating it samples the
+        # same run N times. The spread would be zero by construction and would
+        # read as an unusually tight result rather than a deterministic one.
+        parser.error("--repeat measures sampling variance; the scripted agents "
+                     "are deterministic")
 
     if args.cases:
         try:
@@ -622,9 +936,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     engine = None
     wall = 0.0
+    runs: List[List[CaseResult]] = []
+
+    def repeated(factory) -> List[CaseResult]:
+        """Run the suite `--repeat` times, reporting each, and keep them all.
+
+        Each repeat gets its own fixture directory. Sharing one would let a file
+        the agent *created* in run 1 survive into run 2 -- `materialise` rewrites
+        the case's own files but has no way to know about anything else, so the
+        second run would start from a tree the first one left behind and the
+        repeats would not be independent samples of the same thing.
+        """
+        for index in range(args.repeat):
+            tag = f"run{index + 1}"
+            here = run_dir(workdir, index, args.repeat)
+            where = run_dir(trace_dir, index, args.repeat)
+            if args.repeat > 1:
+                print(f"\n  == {tag} of {args.repeat} "
+                      + "=" * 40)
+            batch = run_suite(factory, here, cases=cases, trace_dir=where,
+                              attempts=args.best_of)
+            runs.append(batch)
+            if args.repeat > 1:
+                report(batch, tiers)
+        return runs[-1]
+
     if args.agent:
         print(f"  agent       {args.agent} (scripted, no model)")
-        results: List[CaseResult] = []
+        results = []
         for case in cases:
             # `--best-of` applies to the calibration agents too, deliberately.
             # Sampling k times is adversarial pressure on the verifier: it
@@ -634,6 +973,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             results += run_suite(scripted_agent(args.agent, case.id), workdir,
                                  cases=[case], trace_dir=trace_dir,
                                  attempts=args.best_of)
+        # Not routed through `repeated`: these agents replay a fixed script, so
+        # every run is identical by construction and a spread over them would be
+        # a confidence interval of exactly zero -- which reads as a strong result
+        # rather than as a deterministic one.
+        runs.append(results)
     elif args.harness_cmd:
         print(f"  harness     {args.harness_cmd}")
         print(f"  timeout     {args.harness_timeout}s per case")
@@ -642,24 +986,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               "graded truth. Steps and tokens are\n        blank unless it "
               "prints them.")
         started = time.perf_counter()
-        results = run_suite(
-            external_agent(args.harness_cmd, args.harness_timeout), workdir,
-            cases=cases, trace_dir=trace_dir, attempts=args.best_of)
+        results = repeated(external_agent(args.harness_cmd, args.harness_timeout))
         wall = time.perf_counter() - started
     else:
         from knossos.engine import OpenAICompatEngine
         engine = OpenAICompatEngine(provider=args.provider, model=args.model,
                                     base_url=args.base_url)
         print(f"  engine      {engine.base_url}  model={engine.model}")
-        print(f"  budget      {args.max_steps} max / {args.target_steps} target")
+        if args.baseline:
+            print("  arm         BASELINE control -- 1 step, no verifier")
+            print("              Isolates what the loop and Oracle buy on this "
+                  "model. Expect")
+            print("              false passes: nothing is checking the claim. "
+                  "Not a harness score.")
+            factory = baseline_agent(engine)
+        else:
+            print(f"  budget      {args.max_steps} max / {args.target_steps} target")
+            factory = live_agent(engine, args.max_steps, args.target_steps)
         started = time.perf_counter()
-        results = run_suite(live_agent(engine, args.max_steps, args.target_steps),
-                            workdir,
-                            cases=cases, trace_dir=trace_dir,
-                            attempts=args.best_of)
+        results = repeated(factory)
         wall = time.perf_counter() - started
 
-    passed = report(results, tiers)
+    if args.repeat > 1:
+        report_spread(runs)
+        passed = sum(1 for r in results if r.passed)
+    else:
+        passed = report(results, tiers)
     if engine is not None:
         report_throttling(engine, wall)
 
