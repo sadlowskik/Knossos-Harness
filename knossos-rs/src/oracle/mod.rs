@@ -47,6 +47,20 @@ pub struct TierResult {
     /// clean bill of health.
     #[serde(default)]
     pub skipped: bool,
+    /// This tier failed, and was already failing before the agent touched
+    /// anything — so its result says nothing about the change either way.
+    ///
+    /// A third state, deliberately not folded into either of the others.
+    /// Calling it a pass would let a red tree read as a clean one; calling it a
+    /// failure sends the engine to repair code it has never seen, which is the
+    /// concrete harm: a tier reports on the *file*, not the diff, so editing
+    /// one line of a module carrying three pre-existing errors failed the run
+    /// for all three.
+    ///
+    /// Forgiven tiers do not block the ladder and do not count as evidence of
+    /// completion — see [`Verdict::deterministic_tiers_passed`].
+    #[serde(default)]
+    pub forgiven: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -62,9 +76,12 @@ pub struct Verdict {
 }
 
 impl Verdict {
-    /// The failing tier, if any. A skipped tier never ran and cannot be one.
+    /// The failing tier, if any.
+    ///
+    /// A skipped tier never ran and cannot be one; a forgiven tier ran and
+    /// failed, but was failing beforehand, so it is not this change's failure.
     pub fn failure(&self) -> Option<&TierResult> {
-        self.tiers.iter().find(|t| !t.passed && !t.skipped)
+        self.tiers.iter().find(|t| !t.passed && !t.skipped && !t.forgiven)
     }
 
     pub fn summary(&self) -> String {
@@ -123,21 +140,139 @@ impl Verdict {
     /// asked to bless code that nothing compiled. A judge is the last tier
     /// precisely because it is the least trustworthy one; reaching it by having
     /// no toolchain is the opposite of the ladder's argument.
+    /// Forgiven tiers are excluded for the same reason skipped ones are: a
+    /// ladder that only forgave is not evidence the change is sound, any more
+    /// than one that only skipped is.
     pub fn deterministic_tiers_passed(&self) -> bool {
         self.passed
             && !self.dry_run
-            && self.tiers.iter().any(|t| t.tier > 0 && !t.skipped)
+            && self.tiers.iter().any(|t| t.tier > 0 && !t.skipped && !t.forgiven)
+    }
+}
+
+/// What the ladder already complained about, before the agent touched anything.
+#[derive(Debug, Clone, Default)]
+struct Baseline {
+    /// tier -> whether it passed on its own.
+    passed: std::collections::BTreeMap<u8, bool>,
+    /// tier -> how many times it made each complaint, keyed by (file, message).
+    ///
+    /// A count rather than a set, so three identical warnings in one file
+    /// forgive exactly three and a fourth is still news.
+    diags: std::collections::BTreeMap<u8, std::collections::BTreeMap<(String, String), usize>>,
+}
+
+/// What identifies a complaint across an edit.
+///
+/// Line and column are captured by the parser and deliberately **discarded**
+/// here. Editing a file shifts every diagnostic below the edit, so keying on
+/// position would make every pre-existing complaint look new the moment the
+/// agent touched the file above it — which is precisely the case this exists to
+/// forgive.
+fn diagnostic_key(d: &diagnostics::Diagnostic) -> (String, String) {
+    (d.file.clone().unwrap_or_default(), d.message.clone())
+}
+
+fn tally(diags: &[diagnostics::Diagnostic]) -> std::collections::BTreeMap<(String, String), usize> {
+    let mut out = std::collections::BTreeMap::new();
+    for d in diags {
+        *out.entry(diagnostic_key(d)).or_insert(0usize) += 1;
+    }
+    out
+}
+
+impl Baseline {
+    /// The diagnostics that are actually new: those beyond the count already
+    /// present before the change.
+    fn unforgiven(
+        &self,
+        tier: u8,
+        diags: Vec<diagnostics::Diagnostic>,
+    ) -> Vec<diagnostics::Diagnostic> {
+        let Some(known) = self.diags.get(&tier) else {
+            // Nothing recorded for this tier means nothing to forgive, which is
+            // the behaviour from before any of this existed. When in doubt,
+            // report: a false "new error" costs a step, a false "already
+            // broken" hides a regression.
+            return diags;
+        };
+        let mut budget = known.clone();
+        diags
+            .into_iter()
+            .filter(|d| match budget.get_mut(&diagnostic_key(d)) {
+                Some(remaining) if *remaining > 0 => {
+                    *remaining -= 1;
+                    false
+                }
+                _ => true,
+            })
+            .collect()
     }
 }
 
 pub struct Oracle {
     root: PathBuf,
     sandbox: crate::sandbox::Sandbox,
+    use_baseline: bool,
+    /// `None` until [`Oracle::prepare`] runs. A tier absent from it was never
+    /// measured and is therefore held to the normal standard.
+    baseline: Option<Baseline>,
 }
 
 impl Oracle {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Oracle { root: root.into(), sandbox: crate::sandbox::Sandbox::default() }
+        Oracle {
+            root: root.into(),
+            sandbox: crate::sandbox::Sandbox::default(),
+            use_baseline: true,
+            baseline: None,
+        }
+    }
+
+    /// Judge every tier on its own merits, forgiving nothing.
+    ///
+    /// Right when the tree is known clean, and when the one extra ladder run
+    /// that [`Oracle::prepare`] costs is not worth paying for.
+    pub fn without_baseline(mut self) -> Self {
+        self.use_baseline = false;
+        self
+    }
+
+    /// Record what already fails, before the agent changes anything.
+    ///
+    /// Timing is the whole point: run this afterwards and it measures the
+    /// agent's own work, which is the thing it exists to exclude. Talos calls
+    /// it once before the loop starts, and it is idempotent, so a resumed
+    /// session costs nothing.
+    ///
+    /// One full run of the ladder. That is the price of being able to attribute
+    /// a failure, and it is paid once per session rather than once per task.
+    pub async fn prepare(&mut self, adapter: &dyn LanguageAdapter) -> Result<()> {
+        if self.baseline.is_some() || !self.use_baseline {
+            return Ok(());
+        }
+
+        let mut baseline = Baseline::default();
+        for cmd in adapter.verify_commands() {
+            let Ok(finished) = self.exec(&cmd).await else {
+                continue; // not installed; nothing to learn
+            };
+            if finished.timed_out {
+                // A tier that did not finish tells us nothing about the tree,
+                // and recording it as "already failing" would forgive a real
+                // regression later.
+                continue;
+            }
+            if cmd.structured {
+                baseline
+                    .diags
+                    .insert(cmd.tier, tally(&diagnostics::parse_cargo_json(&finished.stdout)));
+            }
+            baseline.passed.insert(cmd.tier, finished.success());
+        }
+
+        self.baseline = Some(baseline);
+        Ok(())
     }
 
     /// Run the tiers under a different environment policy.
@@ -225,6 +360,9 @@ impl Oracle {
                 label: "syntax".to_string(),
                 passed,
                 skipped: false,
+                // Tier 0 reads the change itself, never the tree, so there is
+                // no pre-existing state to forgive it against.
+                forgiven: false,
                 detail: if passed {
                     format!("{checked} staged file(s) parse cleanly")
                 } else {
@@ -258,6 +396,7 @@ impl Oracle {
             label: "syntax".to_string(),
             passed: broken.is_empty(),
             skipped: false,
+            forgiven: false,
             detail: if broken.is_empty() {
                 format!("{checked} file(s) parse cleanly")
             } else {
@@ -266,17 +405,28 @@ impl Oracle {
         }
     }
 
-    async fn run_tier(&self, cmd: &crate::scribe::VerifyCommand) -> Result<TierResult> {
-        // A verification tier runs `cargo test`, which executes whatever the
-        // agent just wrote — so it needs the same containment as the `run`
-        // tool, and gets it from the same place rather than a second copy of
-        // the same settings. `Sandbox::run_bounded` documents the deadline and
-        // why the whole process tree is killed rather than just the child.
-        let finished = match self
-            .sandbox
+    /// Run one tier and hand back the raw result, judging nothing.
+    ///
+    /// Separated so [`Oracle::prepare`] and [`Oracle::run_tier`] execute a tier
+    /// identically. A baseline taken by a different code path from the one that
+    /// later compares against it is a baseline that can disagree with itself.
+    ///
+    /// A verification tier runs `cargo test`, which executes whatever the agent
+    /// just wrote — so it needs the same containment as the `run` tool, and
+    /// gets it from the same place rather than a second copy of the same
+    /// settings. `Sandbox::run_bounded` documents the deadline and why the
+    /// whole process tree is killed rather than just the child.
+    async fn exec(
+        &self,
+        cmd: &crate::scribe::VerifyCommand,
+    ) -> std::io::Result<crate::sandbox::Finished> {
+        self.sandbox
             .run_bounded(cmd.program, &cmd.args, &self.root, COMMAND_TIMEOUT)
             .await
-        {
+    }
+
+    async fn run_tier(&self, cmd: &crate::scribe::VerifyCommand) -> Result<TierResult> {
+        let finished = match self.exec(cmd).await {
             Ok(f) => f,
             Err(e) => {
                 // The program is not there. Absent cargo is not evidence of
@@ -288,6 +438,7 @@ impl Oracle {
                     label: cmd.label.to_string(),
                     passed: true,
                     skipped: true,
+                    forgiven: false,
                     detail: format!("skipped: could not run `{}`: {e}", cmd.program),
                 });
             }
@@ -301,6 +452,9 @@ impl Oracle {
                 // Not skipped: it ran, and not finishing is a real signal
                 // about the tree rather than about the toolchain.
                 skipped: false,
+                // A tier that never finished is not "already failing"; it is
+                // unknown, and unknown does not get forgiven.
+                forgiven: false,
                 detail: format!("`{}` timed out after {COMMAND_TIMEOUT:?}", cmd.label),
             });
         }
@@ -308,29 +462,60 @@ impl Oracle {
         let stdout = &finished.stdout;
         let stderr = &finished.stderr;
 
-        let (passed, detail) = if cmd.structured {
-            let diags = diagnostics::parse_cargo_json(stdout);
-            let errors = diagnostics::error_count(&diags);
+        let (passed, forgiven, detail) = if cmd.structured {
+            let all = diagnostics::parse_cargo_json(stdout);
+            // Only complaints beyond what the tree already made are this
+            // change's problem. With no baseline this is the identity.
+            let fresh = match &self.baseline {
+                Some(b) => b.unforgiven(cmd.tier, all.clone()),
+                None => all.clone(),
+            };
+            let errors = diagnostics::error_count(&fresh);
+            let old_errors = diagnostics::error_count(&all);
+
+            // Failed, but every error in it was already there. Not a pass —
+            // the tree really is broken — and not this change's doing either.
+            let forgiven = !finished.success() && errors == 0 && old_errors > 0;
+
+            let detail = if forgiven {
+                format!(
+                    "already failing before this change; {old_errors} pre-existing \
+                     error(s) not attributed to the agent"
+                )
+            } else if errors == 0 && !finished.success() {
+                // Failure with no compiler-message: link errors, bad manifest,
+                // missing toolchain. stderr carries it.
+                cap(stderr.to_string())
+            } else {
+                diagnostics::summarize(&fresh, MAX_DETAIL)
+            };
+
             // Warnings do not fail a tier: clippy's advice is worth surfacing
             // but not worth blocking on, and `cargo check` warnings are noise
             // when the build succeeded.
-            (
-                errors == 0 && finished.success(),
-                if errors == 0 && !finished.success() {
-                    // Failure with no compiler-message: link errors, bad
-                    // manifest, missing toolchain. stderr carries it.
-                    cap(stderr.to_string())
-                } else {
-                    diagnostics::summarize(&diags, MAX_DETAIL)
-                },
-            )
+            (errors == 0 && finished.success(), forgiven, detail)
         } else {
+            // Nothing structured to subtract, so the only question this tier
+            // can answer is whether it was already red.
+            let was_failing = self
+                .baseline
+                .as_ref()
+                .and_then(|b| b.passed.get(&cmd.tier))
+                .is_some_and(|ok| !ok);
+            let forgiven = !finished.success() && was_failing;
+
             let mut body = stdout.to_string();
             if !stderr.trim().is_empty() {
                 body.push('\n');
                 body.push_str(stderr);
             }
-            (finished.success(), cap(body))
+            if forgiven {
+                body.insert_str(
+                    0,
+                    "already failing before this change; not attributed to the agent\n\n",
+                );
+            }
+            (finished.success(), forgiven, cap(body))
         };
 
         Ok(TierResult {
@@ -338,6 +523,7 @@ impl Oracle {
             label: cmd.label.to_string(),
             passed,
             skipped: false,
+            forgiven,
             detail,
         })
     }
@@ -436,6 +622,9 @@ pub async fn judge(
             label: "constitution".into(),
             passed,
             skipped: false,
+            // Tier 4 judges the change against the constitution. There is no
+            // prior judgement to forgive it against.
+            forgiven: false,
             detail: reason,
         });
     }
@@ -447,6 +636,7 @@ pub async fn judge(
         label: "constitution".into(),
         passed: true,
         skipped: false,
+        forgiven: false,
         detail: format!("no structured verdict returned; engine said: {}", resp.text()),
     })
 }
@@ -462,8 +652,132 @@ mod tests {
             label: label.into(),
             passed,
             skipped,
+            forgiven: false,
             detail: String::new(),
         }
+    }
+
+    fn diag(file: &str, message: &str, line: u64) -> diagnostics::Diagnostic {
+        diagnostics::Diagnostic {
+            level: "error".into(),
+            message: message.into(),
+            file: Some(file.into()),
+            line: Some(line),
+            rendered: None,
+        }
+    }
+
+    #[test]
+    fn a_complaint_is_forgiven_however_far_the_edit_moved_it() {
+        // The case this exists for: the agent edits above a pre-existing error,
+        // every line below shifts, and a position-keyed baseline would call all
+        // of them new.
+        let mut b = Baseline::default();
+        b.diags.insert(1, tally(&[diag("src/lib.rs", "mismatched types", 3)]));
+
+        let after_the_edit = vec![diag("src/lib.rs", "mismatched types", 47)];
+        assert!(b.unforgiven(1, after_the_edit).is_empty());
+    }
+
+    #[test]
+    fn forgiveness_is_counted_so_the_fourth_of_three_is_still_news() {
+        let mut b = Baseline::default();
+        b.diags.insert(
+            1,
+            tally(&[
+                diag("a.rs", "unused import", 1),
+                diag("a.rs", "unused import", 2),
+                diag("a.rs", "unused import", 3),
+            ]),
+        );
+
+        let now = vec![
+            diag("a.rs", "unused import", 1),
+            diag("a.rs", "unused import", 2),
+            diag("a.rs", "unused import", 3),
+            diag("a.rs", "unused import", 4),
+        ];
+        assert_eq!(b.unforgiven(1, now).len(), 1, "three forgiven, one new");
+    }
+
+    #[test]
+    fn a_tier_never_measured_is_held_to_the_normal_standard() {
+        // Silence is not permission: an unrecorded tier forgives nothing, which
+        // is the behaviour from before any of this existed.
+        let b = Baseline::default();
+        assert_eq!(b.unforgiven(1, vec![diag("a.rs", "boom", 1)]).len(), 1);
+    }
+
+    #[test]
+    fn a_forgiven_tier_neither_fails_the_verdict_nor_proves_anything() {
+        let forgiven = TierResult { forgiven: true, ..tier(1, "cargo check", false, false) };
+        let v = Verdict {
+            passed: true,
+            reached_tier: 1,
+            tiers: vec![forgiven],
+            dry_run: false,
+        };
+
+        assert!(v.failure().is_none(), "not this change's failure");
+        assert!(
+            !v.deterministic_tiers_passed(),
+            "and forgiving everything is not evidence the change is sound"
+        );
+    }
+
+    /// End to end against a real compiler: a tree that was already broken.
+    #[tokio::test]
+    async fn a_pre_existing_error_is_not_attributed_to_the_agent() {
+        // Syntactically valid, so tier 0 passes and the ladder reaches cargo.
+        let dir = workspace("pub fn a() -> u32 { \"not a number\" }\n");
+        let mut oracle = Oracle::new(dir.path());
+        oracle.prepare(&RustAdapter).await.unwrap();
+
+        let v = oracle
+            .verify(&RustAdapter, &[PathBuf::from("src/lib.rs")])
+            .await
+            .unwrap();
+
+        // cargo may be absent on the machine running this; a skipped ladder
+        // proves nothing either way and must not read as a pass.
+        if v.tiers.iter().all(|t| t.tier == 0 || t.skipped) {
+            // Said out loud. A test that quietly asserts nothing on a machine
+            // without a toolchain reads as a pass forever after.
+            eprintln!("SKIPPED: no toolchain tier ran, so this asserted nothing");
+            return;
+        }
+
+        assert!(v.failure().is_none(), "the agent did not write this: {v:?}");
+        assert!(v.tiers.iter().any(|t| t.forgiven), "recorded as forgiven: {v:?}");
+        assert!(!v.deterministic_tiers_passed(), "still not a completed task");
+    }
+
+    #[tokio::test]
+    async fn an_error_the_agent_added_is_still_its_own() {
+        let dir = workspace("pub fn a() -> u32 { \"not a number\" }\n");
+        let mut oracle = Oracle::new(dir.path());
+        oracle.prepare(&RustAdapter).await.unwrap();
+
+        // A different complaint entirely, so it cannot be mistaken for the one
+        // already on the books.
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "pub fn a() -> u32 { \"not a number\" }\npub fn b() { nope(); }\n",
+        )
+        .unwrap();
+
+        let v = oracle
+            .verify(&RustAdapter, &[PathBuf::from("src/lib.rs")])
+            .await
+            .unwrap();
+
+        if v.tiers.iter().all(|t| t.tier == 0 || t.skipped) {
+            // Said out loud. A test that quietly asserts nothing on a machine
+            // without a toolchain reads as a pass forever after.
+            eprintln!("SKIPPED: no toolchain tier ran, so this asserted nothing");
+            return;
+        }
+        assert!(v.failure().is_some(), "a new error is the agent's: {v:?}");
     }
 
     #[tokio::test]
@@ -641,6 +955,7 @@ mod tests {
                 label: "cargo check".into(),
                 passed: false,
                 skipped: false,
+                forgiven: false,
                 detail: "error[E0308]".into(),
             }],
             dry_run: false,

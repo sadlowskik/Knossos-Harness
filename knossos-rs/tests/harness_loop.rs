@@ -67,7 +67,13 @@ impl Harness {
             Box::new(MockEngine::new(scripted)),
             ToolRegistry::standard(),
             ctx,
-            Oracle::new(&self.root),
+            // No baseline. These tests are about the loop, and paying for a
+            // full ladder run before each one costs the suite far more than it
+            // proves — forgiveness is covered directly in `oracle`'s own tests.
+            // The trade is that `drive`'s call to `prepare` is not exercised
+            // here; it is one line, and the alternative was 83 extra seconds on
+            // every run of this file.
+            Oracle::new(&self.root).without_baseline(),
             SymbolIndex::build(&self.root).unwrap(),
             Themis::from_text("Be correct."),
             Ariadne::new(max_steps, max_steps.saturating_sub(1).max(1)),
@@ -139,7 +145,7 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
         ])),
         registry,
         ToolCtx::new(&h.root),
-        Oracle::new(&h.root),
+        Oracle::new(&h.root).without_baseline(),
         SymbolIndex::build(&h.root).unwrap(),
         Themis::from_text("Be correct."),
         Ariadne::new(6, 5),
@@ -203,7 +209,7 @@ async fn a_collected_trace_carries_the_prompt_and_the_completion() {
         ])),
         ToolRegistry::standard(),
         ToolCtx::new(&h.root),
-        Oracle::new(&h.root),
+        Oracle::new(&h.root).without_baseline(),
         SymbolIndex::build(&h.root).unwrap(),
         Themis::from_text("Be correct."),
         Ariadne::new(6, 5),

@@ -339,6 +339,14 @@ impl Talos {
     }
 
     async fn drive(&mut self) -> Result<Outcome> {
+        // Before the agent changes anything: whatever fails now is not its
+        // doing, and this is the only moment at which that can be established.
+        // Idempotent, so a resumed session pays for it once. Skipped in a dry
+        // run, where nothing reaches disk for a tier to look at.
+        if !self.ctx.is_dry_run() {
+            self.oracle.prepare(self.scribe.adapter()).await?;
+        }
+
         let mut noops = 0usize;
         let mut last_verdict: Option<Verdict> = None;
         let mut last_text = String::new();

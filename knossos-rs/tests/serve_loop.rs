@@ -89,7 +89,9 @@ impl Server {
             Box::new(MockEngine::new(scripted)),
             ToolRegistry::standard(),
             ctx,
-            Oracle::new(&root),
+            // See the note in `harness_loop.rs`: the baseline is measured in
+            // `oracle`'s own tests, not paid for on every loop test here.
+            Oracle::new(&root).without_baseline(),
             SymbolIndex::build(&root).unwrap(),
             Themis::from_text("Be correct."),
             Ariadne::new(4, 3),
