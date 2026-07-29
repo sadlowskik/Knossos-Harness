@@ -1,95 +1,76 @@
-# Handoff — Knossos harness hardening + first real measurements
+# Handoff — Rust Oracle attribution complete; next is the remaining ports
 
 ## 1. Goal
-Harden the Knossos agentic harness (`model/knossos/`) and get a coding-eval number that can be
-trusted. The session ran audits, fixed what they found, then took the project's first genuine
-frontier and harness-vs-harness measurements.
+Port Python's Oracle attribution machinery to Rust. **Done.** Both halves —
+forgiveness of pre-existing diagnostics, and a suite-integrity check that catches an
+agent making failing tests disappear by deleting them — are committed and verified.
 
 ## 2. State
+**Committed and verified.** Working tree clean apart from this file.
+- `bf2a7ad` Oracle baseline + diagnostic forgiveness
+- `24a24c0` Fail verification when the suite loses tests
+- `780da1d` Quiet three lints a newer toolchain started reporting
 
-**Verified green:** 763 Python tests, 172 Rust tests, `cargo clippy` clean.
-Full Python suite takes ~4 min.
+284 Rust tests green (230 lib + 33 harness_loop + 16 serve_loop + 3 sandbox_env + 2
+live_engine), clippy `--all-targets -D warnings` clean, rustdoc clean. Python untouched.
 
-**Landed this session (all tested):**
-- Eval integrity — `CaseResult.unreachable` separates "provider never reached" from a capability
-  zero; recorded in the trace header; excluded from every rate in `report()`.
-- `EngineProfile` + `RequestTooLarge` preflight; 413 now names the measured body size.
-- Sampling-param degrade-on-400 (Sonnet 5 / Opus 4.7+ reject `temperature`).
-- `max_tokens` default 8192 → 32000 (Sonnet 5 / Opus 5 think by default).
-- Gemini `thought_signature` fallback — was 400ing ~half of all engine calls.
-- Language adapters in Oracle (Rust/Go/Node/polyglot).
-- Re-planning (`Replanner`) and subagents (`Delegate`), both wired into ACP.
-- External-suite loader (`--cases`) and external-harness adapter (`--harness-cmd`).
-- Rust: `kill_on_drop` on Oracle spawn; timeout on the shell tool.
-
-**Measurements (in `model/traces/`):**
-
-| Run | solved | honest |
-|---|---|---|
-| Knossos + Gemini 3.1 Pro | 12/12 | 12/12 |
-| Knossos + Gemini 3.1 Flash-Lite | 12/12 | **10/12** |
-| Claude Code (Sonnet 5), via `--harness-cmd` | 12/12 | 12/12 |
-
-**The finding:** the built-in suite is **saturated** — a lite model aces it, so it cannot rank
-harnesses or frontier models. `honest` is the only column with signal left (Flash-Lite lost 2 to
-`budget_exhausted` after already fixing the code).
-
-**In progress / not verified:** `model/scripts/make_hard_suite.py`. First `--check` run found
-`dedupe-must-not-reorder` unwinnable (ordering tests marked `pass_to_pass` already failed). The case
-was rewritten to use integers so the `list(set(...))` trap is deterministic — **the re-check was
-interrupted and has never run.**
+The two failures the previous handoff warned about — `scribe_tracks_edits_made_during_the_run`
+and `resume_continues_the_same_conversation` — are fixed. The cause was as suspected:
+`baseline_tests` was being recorded before the `use_baseline` early return in `prepare`,
+so loop tests that opted out of the baseline still got the integrity check and burned
+extra steps failing it.
 
 ## 3. Key files
-
-- `model/knossos/codeval.py:253` — `unreachable`; `:121` `load_cases`; `:1225` `_write_trace`.
-- `model/scripts/coding_eval.py:264` — `ExternalHarness`; `:345` `external_agent`; `:235`
-  `_snapshot` (before/after hashing); `:409` `report` (denominator excludes unreachable).
-- `model/knossos/engine.py:382` — `EngineProfile`; `:361` `RequestTooLarge`; `:843` `profile`
-  property; `:987` `_NO_TOOL_MESSAGES` (holds the `thought_signature` markers); `:1027`
-  `_NO_SAMPLING`.
-- `model/knossos/talos.py:141` — `Delegate`; `:489` `_spawn`; `:96` `Replanner`; `:533`
-  `_revise_plan` (fires only when the failed step produced evidence).
-- `model/knossos/oracle.py:289` — `LanguageAdapter`; `:328` `tiers_for`; `:258`/`:280` Rust/Node tiers.
-- `model/scripts/trace_summary.py` — aggregates `traces/`, reconstructs `unreachable` for old traces.
-- `model/scripts/make_hard_suite.py` — 6 harder cases + `--check` calibration. **Unverified.**
-- `ARCHITECTURE.md` — written early in the session, now **substantially stale**.
+- `knossos-rs/src/oracle/mod.rs` — all of the attribution work. `Baseline`/`diagnostic_key`/
+  `tally`, then `count_test_fns`/`suite_integrity` above `impl Baseline`, `prepare` in
+  `impl Oracle`, integrity wired into `verify` right after tier 0, tests at the bottom.
+- `knossos-rs/src/talos.rs` — top of `drive()` calls `oracle.prepare()`, skipped on dry run.
+- `knossos-rs/tests/harness_loop.rs`, `tests/serve_loop.rs` — harnesses use
+  `Oracle::new(..).without_baseline()`; reason commented at the call site.
+- `model/knossos/oracle.py` — the original that was ported. Nothing left to take from it.
 
 ## 4. Decisions (settled — do not relitigate)
-
-- **Watch `honest`, not `solved`.** `solved` is saturated across models and harnesses.
-- **No provider key substitutes for another.** Groq/Gemini/Google keys cannot serve Claude; that
-  needs an `sk-ant-` API key. A **Claude Pro subscription is not API credit** — it powers the
-  `claude` CLI, not `--provider anthropic`.
-- **Never tabulate model IDs.** Detect capability by degrading on the 400 (the provider table's own
-  comment says ids drift). This is why the sampling fix is a marker list, not a model list.
-- **Antigravity cannot be benchmarked.** Installed at `%LOCALAPPDATA%\Programs\antigravity`, but
-  GUI-only: `resources/bin` has just `language_server.exe` and `webm_encoder.exe`, no CLI shim.
-  Same applies to Cursor/Windsurf without a separate headless binary.
-- **No "Hermes" coding harness exists.** PyPI matches are unrelated or unknown provenance; nothing
-  was installed. Hermes is Nous Research's *model* line.
-- **aider is the right second harness** — holds the model constant (same Gemini key), so a
-  difference is attributable to the harness. Claude Code vs Knossos confounds harness × model.
-  Needs `pip install aider-chat`; user has not yet approved.
+- **Rust is the survivor.** Python keeps only the eval (`eval.py`, `codeval.py`,
+  `evalset.py`), which drives the Rust binary via `coding_eval.py --harness-cmd`.
+- `forgiven` is a **third tier state**, not a pass. It neither blocks the ladder nor
+  satisfies `deterministic_tiers_passed`.
+- Diagnostics keyed on `(file, message)` — line/column deliberately dropped, because an
+  edit shifts every diagnostic below it.
+- Integrity judged on the **total** count, not per file, so moving a test between modules
+  is not a deletion. Per-file detail still reported.
+- Test functions counted from source with a regex, not `cargo test --list`: the listing
+  needs a tree that compiles, and a broken build is when the check matters most.
+- `without_baseline()` disables forgiveness **and** counting — one decision, matching
+  Python, where `use_baseline=False` returns before recording counts.
+- Loop tests opt out of the baseline: running the ladder per test cost +83s.
+- `TraceEvent::Exchange` is off by default (`--collect-exchanges`) and never streamed.
 
 ## 5. Next step
-
-Run `cd model && "$PY" -m scripts.make_hard_suite --check`. All 6 cases must report `ok`. Then run
-the suite against Flash-Lite (the only config with headroom):
-`"$PY" -m scripts.coding_eval --cases fixtures/hard_suite.json --engine api --provider gemini --model gemini-3.1-flash-lite`
+Nothing is in flight. The remaining ports, in the order they were last discussed:
+`lsp`, `mcp`, `argus`+`gate`. `acp` only if Zed support is wanted. Pick one deliberately
+rather than by default — none is started, so none is half-finished.
 
 ## 6. Gotchas
-
-- `python` is not on PATH. Use `$env:PY` / `"$PY"` (see user CLAUDE.md).
-- **`GEMINI_API_KEY` is set at Windows *User* scope only** and is NOT inherited by tool shells.
-  Load it explicitly:
-  `export GEMINI_API_KEY="$(powershell.exe -NoProfile -Command '[Environment]::GetEnvironmentVariable("GEMINI_API_KEY","User")' | tr -d '\r\n')"`
-- `ANTHROPIC_API_KEY` is unset. `claude` CLI auth was revoked mid-session; user fixed it with
-  `/login` (needs the slash — bare `login` is sent as a chat message). It works now.
-- `claude login` is interactive and cannot be run from a tool shell.
-- **The repo changed under the session while work was in progress** (user edited files in parallel).
-  Re-read before assuming any earlier finding still holds — several audit findings were already
-  stale when reported.
-- `--repeat` does not exist on `coding_eval` (it's on `eval.py`). `--best-of` is different: it
-  inflates the score rather than measuring spread. No repeated-runs mode exists yet.
-- Every number so far is single-shot; `seeds.py` ("no number without its `n`") is not imported by
-  either eval.
+- **Never round-trip a source file through PowerShell.** `Get-Content -Raw` +
+  `Set-Content -Encoding utf8` added a BOM and mojibake'd every em-dash in
+  `oracle/mod.rs`. A "repair" via Latin-1 then destroyed the characters outright (the
+  corruption was CP1252). Recovered with `git checkout`. Use the Edit tool only.
+- **`git commit -m` breaks on embedded double quotes** under PowerShell native-arg
+  passing. Write the message to a file and use `git commit -F <file>`.
+- **Do not move the fixture's tests out of `passing/src/lib.rs`.** Tried it; the scripted
+  agents rewrite that file wholesale and each drops a *different* part of the API
+  (`Adder`, `double`, everything), so no `tests/` file can reference the crate and keep
+  compiling. Fixed the right way instead — see the `without_baseline` decision.
+- The toolchain has moved since the last session; `manual_repeat_n` and
+  `private_intra_doc_links` were new. Run clippy with `--all-targets`, not just the lib.
+- `python` is not on PATH; use `$env:PY`. Python tests need
+  `$env:PYTHONPATH='C:\Users\korbi\Downloads\daedalus\model'`.
+- Homelab ollama: `$env:OLLAMA_HOST='192.168.4.103'`, model `qwen3.5:9b-32k`. The plain
+  `qwen3.5:9b` tag has no `num_ctx` and defaults to 4096, silently truncating the system
+  prompt from the left.
+- Fireworks key is billing-suspended; the DashScope key was leaked in a screenshot and
+  should be rotated. Local ollama is the free path for the eval.
+- Both repos were reconciled into `C:\Users\korbi\Downloads\daedalus`.
+  `Recurring Transformer Model` still exists with its work on branch
+  `checkpoint/before-harness-merge`; its `main` is untouched because Kaggle clones it.
+- Nothing is pushed. All work is local commits on `fix/wire-delegation-constitution-ariadne`.
