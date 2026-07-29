@@ -50,7 +50,7 @@ pub enum TraceEvent {
     /// it; a run that exists to produce training data is the only kind that
     /// does, and it opts in.
     ///
-    /// Written to the trace file only, never streamed — see [`streamable`].
+    /// Written to the trace file only, never streamed — see `streamable`.
     Exchange {
         step: usize,
         request: crate::engine::Request,

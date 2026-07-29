@@ -56,7 +56,7 @@ struct LoopArgs {
     /// Where budget pressure begins.
     #[arg(long, default_value = "6")]
     target_steps: usize,
-    /// JSONL trajectory log. Defaults to .daedalus/trace-<pid>.jsonl.
+    /// JSONL trajectory log. Defaults to `.daedalus/trace-<pid>.jsonl`.
     #[arg(long)]
     trace: Option<PathBuf>,
     /// Stage edits in memory and show diffs instead of writing to disk.

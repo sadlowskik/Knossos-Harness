@@ -1241,7 +1241,7 @@ async fn no_sequence_of_real_work_is_ever_called_stuck() {
     // The false-positive direction. If the `files_changed == 0` half of
     // `is_futile` were ever dropped, this is what would start failing.
     for length in 1..=5 {
-        let word: String = std::iter::repeat('W').take(length).collect();
+        let word = "W".repeat(length);
         let (halt, _) = drive(&word).await;
         assert_ne!(halt, Halt::Stuck, "{word} did real work every step");
     }
