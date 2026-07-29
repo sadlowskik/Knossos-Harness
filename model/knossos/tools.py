@@ -44,8 +44,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from . import hooks, sandbox
 from .jsonrpc import log
-from .workspace import PathEscape, Workspace
+from .workspace import PathEscape, StaleWrite, Workspace
 
 __all__ = [
     "ToolSpec", "ToolResult", "ToolCall", "Tool", "ToolRegistry",
@@ -455,9 +456,10 @@ class RunCommand(Tool):
             return ToolResult(text, is_error=code != 0)
 
         try:
-            proc = subprocess.run(
-                argv, cwd=ws.root, capture_output=True, text=True,
-                timeout=self.timeout, stdin=subprocess.DEVNULL, shell=False)
+            # Through the sandbox: the allowlist admits `pytest`, which runs
+            # whatever is in the workspace, so what that code can *see* is a
+            # separate question from what may be started. See `sandbox`.
+            proc = sandbox.DEFAULT.run(argv, cwd=ws.root, timeout=self.timeout)
         except FileNotFoundError:
             return ToolResult(f"`{argv[0]}` is not installed", is_error=True)
         except subprocess.TimeoutExpired:
@@ -758,8 +760,21 @@ Rules:
 
 
 class ToolRegistry:
-    def __init__(self, tools: Sequence[Tool]) -> None:
+    def __init__(self, tools: Sequence[Tool],
+                 hook_list: Optional[Sequence["hooks.Hook"]] = None) -> None:
         self._tools: Dict[str, Tool] = {t.spec.name: t for t in tools}
+        #: Policy that runs around every call. Defaults to protecting `.git`,
+        #: because the hole it closes -- `write_file` into `.git/`, which the
+        #: path jail permits since `.git` is under the root -- is present in
+        #: every workspace and is not something a caller should have to know to
+        #: opt into.
+        self._hooks: List["hooks.Hook"] = (
+            [hooks.ProtectPaths()] if hook_list is None else list(hook_list))
+
+    def with_hook(self, hook: "hooks.Hook") -> "ToolRegistry":
+        """Add a policy hook. They run in the order they are added."""
+        self._hooks.append(hook)
+        return self
 
     @classmethod
     def default(cls) -> "ToolRegistry":
@@ -794,8 +809,10 @@ class ToolRegistry:
         to spawn further children -- a capability that has to be removed by
         construction rather than by asking the model not to use it.
         """
+        # The hooks come too: a child agent losing the policy its parent ran
+        # under would be a capability *gained* by delegation.
         return ToolRegistry([tool for name, tool in self._tools.items()
-                             if name not in names])
+                             if name not in names], self._hooks)
 
     @property
     def names(self) -> List[str]:
@@ -818,18 +835,40 @@ class ToolRegistry:
 
         An unknown tool or a bad argument is something the engine can correct on
         its next turn; raising would end the run instead.
+
+        Policy hooks run around the call -- see `knossos.hooks`. There is one
+        exit point on purpose: an early return for any outcome would make the
+        hook contract "every call except the ones we forgot", which is not a
+        contract an audit hook can be built on.
         """
-        tool = self._tools.get(call.name)
-        if tool is None:
-            return ToolResult(
-                f"unknown tool `{call.name}`; available: {', '.join(self.names)}",
-                is_error=True)
-        try:
-            return tool.run(call.args, ws)
-        except PathEscape as exc:
-            return ToolResult(f"refused: {exc}", is_error=True)
-        except Exception as exc:                     # noqa: BLE001 - see docstring
-            return ToolResult(f"{call.name} failed: {exc}", is_error=True)
+        args, denial = hooks.before_chain(self._hooks, call.name, call.args)
+
+        if denial is not None:
+            result = ToolResult(denial, is_error=True)
+        else:
+            tool = self._tools.get(call.name)
+            if tool is None:
+                result = ToolResult(
+                    f"unknown tool `{call.name}`; "
+                    f"available: {', '.join(self.names)}",
+                    is_error=True)
+            else:
+                try:
+                    result = tool.run(args, ws)
+                except PathEscape as exc:
+                    result = ToolResult(f"refused: {exc}", is_error=True)
+                except StaleWrite as exc:
+                    # Its own arm rather than the catch-all below, because the
+                    # message already says what to do about it and "write_file
+                    # failed:" in front would read like a fault in the harness.
+                    result = ToolResult(str(exc), is_error=True)
+                except Exception as exc:             # noqa: BLE001 - see docstring
+                    result = ToolResult(f"{call.name} failed: {exc}",
+                                        is_error=True)
+
+        for hook in self._hooks:
+            hook.after(call.name, args, result)
+        return result
 
     def openai_schema(self) -> List[Dict[str, Any]]:
         """The same tools in OpenAI's `tools` format.

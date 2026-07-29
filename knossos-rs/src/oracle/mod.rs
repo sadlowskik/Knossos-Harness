@@ -17,7 +17,6 @@
 pub mod diagnostics;
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -133,11 +132,28 @@ impl Verdict {
 
 pub struct Oracle {
     root: PathBuf,
+    sandbox: crate::sandbox::Sandbox,
 }
 
 impl Oracle {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Oracle { root: root.into() }
+        Oracle { root: root.into(), sandbox: crate::sandbox::Sandbox::default() }
+    }
+
+    /// Run the tiers under a different environment policy.
+    ///
+    /// The ladder needs this at least as much as the `run` tool does: `cargo
+    /// test` is a verification tier, it executes whatever the agent just wrote,
+    /// and unlike the `run` tool it fires automatically rather than because the
+    /// agent asked for it.
+    ///
+    /// That tool holds its own [`Sandbox`](crate::sandbox::Sandbox) — see
+    /// [`Run::with_sandbox`](crate::tools::shell::Run::with_sandbox). Both
+    /// spawn through `Sandbox::command`, so the settings cannot drift, but the
+    /// policies are separate values: customise both or neither.
+    pub fn with_sandbox(mut self, sandbox: crate::sandbox::Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
     }
 
     /// Run the deterministic ladder (tiers 0..3), stopping at the first failure.
@@ -251,32 +267,18 @@ impl Oracle {
     }
 
     async fn run_tier(&self, cmd: &crate::scribe::VerifyCommand) -> Result<TierResult> {
-        let child = tokio::process::Command::new(cmd.program)
-            .args(&cmd.args)
-            .current_dir(&self.root)
-            .stdin(Stdio::null())
-            // Without this the timeout below bounds the *wait*, not the
-            // process: dropping the future leaves the child running, and a
-            // hanging `cargo test` is reported as timed out while it keeps its
-            // `target/` lock and its CPU. Ariadne then grants another step, so
-            // one wedged tree accumulates one orphan per step, all of which
-            // outlive the harness.
-            .kill_on_drop(true)
-            .output();
-
-        let output = match tokio::time::timeout(COMMAND_TIMEOUT, child).await {
-            Err(_) => {
-                return Ok(TierResult {
-                    tier: cmd.tier,
-                    label: cmd.label.to_string(),
-                    passed: false,
-                    // Not skipped: it ran, and not finishing is a real signal
-                    // about the tree rather than about the toolchain.
-                    skipped: false,
-                    detail: format!("`{}` timed out after {COMMAND_TIMEOUT:?}", cmd.label),
-                })
-            }
-            Ok(Err(e)) => {
+        // A verification tier runs `cargo test`, which executes whatever the
+        // agent just wrote — so it needs the same containment as the `run`
+        // tool, and gets it from the same place rather than a second copy of
+        // the same settings. `Sandbox::run_bounded` documents the deadline and
+        // why the whole process tree is killed rather than just the child.
+        let finished = match self
+            .sandbox
+            .run_bounded(cmd.program, &cmd.args, &self.root, COMMAND_TIMEOUT)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
                 // The program is not there. Absent cargo is not evidence of
                 // broken code, and failing here reported `FAILED at cargo` on
                 // every run on such a machine -- sending the engine to repair
@@ -287,23 +289,34 @@ impl Oracle {
                     passed: true,
                     skipped: true,
                     detail: format!("skipped: could not run `{}`: {e}", cmd.program),
-                })
+                });
             }
-            Ok(Ok(o)) => o,
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        if finished.timed_out {
+            return Ok(TierResult {
+                tier: cmd.tier,
+                label: cmd.label.to_string(),
+                passed: false,
+                // Not skipped: it ran, and not finishing is a real signal
+                // about the tree rather than about the toolchain.
+                skipped: false,
+                detail: format!("`{}` timed out after {COMMAND_TIMEOUT:?}", cmd.label),
+            });
+        }
+
+        let stdout = &finished.stdout;
+        let stderr = &finished.stderr;
 
         let (passed, detail) = if cmd.structured {
-            let diags = diagnostics::parse_cargo_json(&stdout);
+            let diags = diagnostics::parse_cargo_json(stdout);
             let errors = diagnostics::error_count(&diags);
             // Warnings do not fail a tier: clippy's advice is worth surfacing
             // but not worth blocking on, and `cargo check` warnings are noise
             // when the build succeeded.
             (
-                errors == 0 && output.status.success(),
-                if errors == 0 && !output.status.success() {
+                errors == 0 && finished.success(),
+                if errors == 0 && !finished.success() {
                     // Failure with no compiler-message: link errors, bad
                     // manifest, missing toolchain. stderr carries it.
                     cap(stderr.to_string())
@@ -315,9 +328,9 @@ impl Oracle {
             let mut body = stdout.to_string();
             if !stderr.trim().is_empty() {
                 body.push('\n');
-                body.push_str(&stderr);
+                body.push_str(stderr);
             }
-            (output.status.success(), cap(body))
+            (finished.success(), cap(body))
         };
 
         Ok(TierResult {

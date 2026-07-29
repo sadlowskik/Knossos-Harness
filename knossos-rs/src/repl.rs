@@ -28,13 +28,19 @@ Commands:
 
 Anything else is sent to the agent as an instruction.";
 
+/// An approval waiting for the next line the user types.
+type Pending = std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>;
+
 /// Asks on the terminal before a consequential call.
 ///
-/// Safe here for a reason that does not generalise: the REPL reads a command,
-/// *then* runs it, so stdin is idle for the whole turn and there is nobody else
-/// to race for it. `serve` cannot do this — its loop would be inside the very
-/// command waiting for the answer — which is why that side routes replies
-/// through a reader task instead.
+/// This used to read stdin directly, and could, because the REPL read a command
+/// and *then* ran it: stdin was idle for the whole turn with nobody to race for
+/// it. That is exactly what stopped the REPL from accepting interjections — a
+/// second reader would have raced this one, and a `y` meant for a permission
+/// prompt could have been swallowed as a message to the agent, or the reverse.
+///
+/// So it no longer reads anything. One reader owns stdin (see [`route`]) and
+/// hands the answer over, the same shape `serve` has always used.
 ///
 /// Two deliberate choices, both failing closed:
 ///
@@ -44,29 +50,93 @@ Anything else is sent to the agent as an instruction.";
 /// * **Anything that is not an explicit yes denies.** No default-accept on a
 ///   bare newline, because a user pressing enter to get their prompt back is not
 ///   consenting to a write.
-struct PromptApprover;
+struct PromptApprover {
+    pending: Pending,
+}
 
 #[async_trait::async_trait]
 impl crate::talos::Approver for PromptApprover {
     async fn approve(&self, tool: &str, input: &serde_json::Value) -> bool {
-        let summary = describe(tool, input);
-        // Off the async worker: this blocks for as long as the user takes.
-        tokio::task::spawn_blocking(move || {
-            use std::io::BufRead;
-            println!("\n  {summary}");
-            print!("  allow? [y/N] ");
-            if std::io::stdout().flush().is_err() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        {
+            let mut slot = self.pending.lock().unwrap();
+            if slot.is_some() {
+                // Tool calls are dispatched one at a time, so this should not
+                // happen. If it ever does, overwriting would strand the first
+                // request forever; refusing the second is recoverable.
                 return false;
             }
-            let mut answer = String::new();
-            match std::io::stdin().lock().read_line(&mut answer) {
-                Ok(0) | Err(_) => false, // EOF or a broken terminal
-                Ok(_) => matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"),
-            }
-        })
-        .await
-        .unwrap_or(false) // the blocking task panicked; nobody approved anything
+            *slot = Some(tx);
+        }
+
+        println!("\n  {}", describe(tool, input));
+        print!("  allow? [y/N] ");
+        let _ = std::io::stdout().flush();
+
+        // The router drops or answers the sender. A dropped one — stdin closed,
+        // router gone — resolves to an error, which is a refusal.
+        rx.await.unwrap_or(false)
     }
+}
+
+/// Refuse anything still waiting. Called when stdin goes away.
+///
+/// Without it the approver awaits a sender nobody holds any more, `talos.run`
+/// never returns, and the session hangs at exactly the moment the user pressed
+/// Ctrl-D to leave.
+fn deny_outstanding(pending: &Pending) {
+    if let Some(tx) = pending.lock().unwrap().take() {
+        let _ = tx.send(false);
+    }
+}
+
+/// Read lines and decide what each one is for.
+///
+/// Three destinations, in this order, and the order is the whole design:
+///
+/// 1. **A waiting approval.** If one is outstanding, the next line answers it —
+///    including a line that looks like a command. Someone who types `/quit` at
+///    `allow? [y/N]` has not approved the write, and treating it as a command
+///    would leave the agent waiting for an answer that already went elsewhere.
+/// 2. **The running agent.** Anything typed while a turn is in flight is a
+///    message to it, delivered at the next step boundary rather than ending the
+///    run. See [`interject`](crate::interject).
+/// 3. **The command loop**, when nothing else is going on.
+async fn route(
+    mut lines: tokio::sync::mpsc::UnboundedReceiver<String>,
+    commands: tokio::sync::mpsc::UnboundedSender<String>,
+    pending: Pending,
+    busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    interjections: crate::interject::Interjections,
+) {
+    while let Some(raw) = lines.recv().await {
+        let line = clean(&raw);
+
+        if let Some(tx) = pending.lock().unwrap().take() {
+            let _ = tx.send(matches!(line.as_str(), "y" | "Y" | "yes" | "Yes"));
+            continue;
+        }
+
+        if line.is_empty() {
+            continue;
+        }
+
+        if busy.load(std::sync::atomic::Ordering::Relaxed) {
+            if interjections.push(line.clone()) {
+                println!("  (queued — the agent will see it at the next step)");
+            } else {
+                println!("  (not queued — too many are already waiting)");
+            }
+            continue;
+        }
+
+        if commands.send(line).is_err() {
+            return; // the command loop is gone
+        }
+    }
+
+    deny_outstanding(&pending);
 }
 
 /// One line describing what is about to happen, for the prompt.
@@ -89,35 +159,68 @@ fn describe(tool: &str, input: &serde_json::Value) -> String {
 }
 
 pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> Result<()> {
-    talos.approver = Some(std::sync::Arc::new(PromptApprover));
+    let pending: Pending = Default::default();
+    let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    talos.approver = Some(std::sync::Arc::new(PromptApprover { pending: pending.clone() }));
+
+    // One reader owns stdin for the whole session. On its own thread because
+    // `read_line` blocks for as long as the user takes to type, which is not
+    // something to do to an async worker.
+    let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        loop {
+            let mut buf = String::new();
+            match stdin.lock().read_line(&mut buf) {
+                // EOF (Ctrl-D, or piped input ending) or a broken terminal.
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if line_tx.send(buf).is_err() {
+                        break; // the router is gone
+                    }
+                }
+            }
+        }
+    });
+
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(route(
+        line_rx,
+        cmd_tx,
+        pending.clone(),
+        busy.clone(),
+        talos.interjections(),
+    ));
+
     println!("Daedalus interactive session. /help for commands, /quit to leave.");
+    println!("Type while it is working to steer it without stopping it.");
     if talos.ctx.is_dry_run() {
         println!("DRY RUN — nothing will be written until you /apply.");
     }
     println!();
 
     if let Some(task) = initial {
-        first_task(&mut talos, &task, max_tokens).await?;
+        busy.store(true, std::sync::atomic::Ordering::Relaxed);
+        let started = first_task(&mut talos, &task, max_tokens).await;
+        busy.store(false, std::sync::atomic::Ordering::Relaxed);
+        started?;
     }
 
-    let stdin = std::io::stdin();
     loop {
         print!("daedalus> ");
         std::io::stdout().flush()?;
 
-        let mut line = String::new();
-        if stdin.lock().read_line(&mut line)? == 0 {
+        // Already cleaned and non-empty: the router does both, because it has
+        // to make the same judgement about a line it routes elsewhere. A UTF-8
+        // BOM is not whitespace, so `trim` leaves it in place; piped input on
+        // Windows routinely carries one, and left alone it turns `/quit` into
+        // an instruction for the engine.
+        let Some(line) = cmd_rx.recv().await else {
             println!();
-            break; // EOF (Ctrl-D / piped input ended)
-        }
-        // A UTF-8 BOM is not whitespace, so `trim` leaves it in place. Piped
-        // input on Windows routinely carries one, and left alone it turns
-        // `/quit` into an instruction for the engine.
-        let line = clean(&line);
+            break; // stdin closed
+        };
         let line = line.as_str();
-        if line.is_empty() {
-            continue;
-        }
 
         if let Some(rest) = line.strip_prefix('/') {
             let (cmd, arg) = split_command(rest);
@@ -146,6 +249,12 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
 
         // An engine failure must not end the session: staged changes and the
         // whole conversation would go with it. Report and keep the prompt.
+        //
+        // `busy` is what tells the router that a line typed from here on is for
+        // the agent rather than for the command loop. Set around the whole
+        // turn, including the planning call, since that is time the user spends
+        // watching too.
+        busy.store(true, std::sync::atomic::Ordering::Relaxed);
         let result = if talos.messages.is_empty() {
             first_task(&mut talos, line, max_tokens).await
         } else {
@@ -157,6 +266,7 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
                 Err(e) => Err(e),
             }
         };
+        busy.store(false, std::sync::atomic::Ordering::Relaxed);
 
         if let Err(e) = result {
             eprintln!("\nEngine error: {e:#}\n");
@@ -170,6 +280,158 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
         );
     }
     Ok(())
+}
+
+/// Where each line the user types ends up.
+#[cfg(test)]
+mod routing {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct Harness {
+        lines: tokio::sync::mpsc::UnboundedSender<String>,
+        commands: tokio::sync::mpsc::UnboundedReceiver<String>,
+        pending: Pending,
+        busy: Arc<AtomicBool>,
+        interjections: crate::interject::Interjections,
+    }
+
+    fn start() -> Harness {
+        let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+        let pending: Pending = Default::default();
+        let busy = Arc::new(AtomicBool::new(false));
+        let interjections = crate::interject::Interjections::new();
+
+        tokio::spawn(route(
+            line_rx,
+            cmd_tx,
+            pending.clone(),
+            busy.clone(),
+            interjections.clone(),
+        ));
+
+        Harness { lines: line_tx, commands: cmd_rx, pending, busy, interjections }
+    }
+
+    impl Harness {
+        fn send(&self, line: &str) {
+            self.lines.send(format!("{line}\n")).unwrap();
+        }
+
+        /// Register an approval the way `PromptApprover` does.
+        fn ask_permission(&self) -> tokio::sync::oneshot::Receiver<bool> {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            *self.pending.lock().unwrap() = Some(tx);
+            rx
+        }
+
+        /// Bounded wait, so a routing bug fails instead of hanging the suite.
+        async fn eventually(&self, mut done: impl FnMut(&Harness) -> bool) -> bool {
+            for _ in 0..200 {
+                if done(self) {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn an_idle_line_reaches_the_command_loop() {
+        let mut h = start();
+        h.send("/diff");
+        assert_eq!(h.commands.recv().await.unwrap(), "/diff");
+    }
+
+    #[tokio::test]
+    async fn a_line_typed_while_the_agent_works_becomes_an_interjection() {
+        let h = start();
+        h.busy.store(true, Ordering::Relaxed);
+        h.send("actually use the existing helper");
+
+        assert!(
+            h.eventually(|h| h.interjections.len() == 1).await,
+            "a line typed during a run should reach the agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_waiting_approval_takes_the_next_line_before_anything_else() {
+        let h = start();
+        let rx = h.ask_permission();
+        h.send("y");
+        assert!(rx.await.unwrap(), "`y` should approve");
+    }
+
+    /// The reason the approval check runs first. Someone typing `/quit` at
+    /// `allow? [y/N]` has not approved the write, and routing it to the command
+    /// loop would leave the agent waiting for an answer that went elsewhere.
+    #[tokio::test]
+    async fn a_command_typed_at_the_permission_prompt_answers_it_and_denies() {
+        let mut h = start();
+        let rx = h.ask_permission();
+        h.send("/quit");
+
+        assert!(!rx.await.unwrap(), "anything that is not yes must deny");
+        assert!(
+            h.commands.try_recv().is_err(),
+            "the line answered the prompt; it must not also run as a command"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_an_explicit_yes_approves() {
+        for answer in ["", "n", "no", "sure", "Y E S"] {
+            let h = start();
+            let rx = h.ask_permission();
+            h.send(answer);
+            assert!(!rx.await.unwrap(), "{answer:?} must not approve");
+        }
+        for answer in ["y", "Y", "yes", "Yes"] {
+            let h = start();
+            let rx = h.ask_permission();
+            h.send(answer);
+            assert!(rx.await.unwrap(), "{answer:?} should approve");
+        }
+    }
+
+    /// Fail closed. Without this the approver waits on a sender nobody holds,
+    /// and the session hangs at the moment the user pressed Ctrl-D to leave.
+    #[tokio::test]
+    async fn stdin_closing_denies_an_outstanding_approval() {
+        let h = start();
+        let rx = h.ask_permission();
+        drop(h.lines); // EOF
+
+        assert!(!rx.await.unwrap(), "EOF is not approval");
+    }
+
+    #[tokio::test]
+    async fn an_approval_does_not_swallow_the_line_after_it() {
+        let mut h = start();
+        let rx = h.ask_permission();
+        h.send("y");
+        assert!(rx.await.unwrap());
+
+        h.send("/diff");
+        assert_eq!(h.commands.recv().await.unwrap(), "/diff");
+    }
+
+    #[tokio::test]
+    async fn blank_lines_are_not_commands_and_not_interjections() {
+        let mut h = start();
+        h.send("   ");
+        h.send("/diff");
+
+        // The blank was dropped rather than forwarded, so the next command is
+        // the first thing the loop sees.
+        assert_eq!(h.commands.recv().await.unwrap(), "/diff");
+        assert!(h.interjections.is_empty());
+    }
 }
 
 async fn first_task(talos: &mut Talos, task: &str, max_tokens: u32) -> Result<()> {

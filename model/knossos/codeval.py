@@ -62,6 +62,7 @@ import subprocess
 import sys
 import time
 
+from . import sandbox
 from .jsonrpc import log
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,6 +102,19 @@ class CodingCase:
     fail_to_pass: Sequence[str]
     #: pytest node ids that must be passing before and after.
     pass_to_pass: Sequence[str] = ()
+    #: Tests the agent never sees. Written into the tree *after* it finishes and
+    #: before grading, so they cannot be read, edited, or fitted.
+    #:
+    #: `restore_tests` closes one channel -- an agent that rewrites the
+    #: assertions gets them overwritten and is recorded as `tamper`. It cannot
+    #: close the other: an agent that writes code shaped to the assertions it
+    #: was shown passes honestly by every measure this file had. Held-out tests
+    #: are the only structural answer, because the thing being defended against
+    #: is the agent optimising against exactly what it can see.
+    held_out: Dict[str, str] = field(default_factory=dict)
+    #: pytest node ids inside `held_out` that must pass. Empty is allowed and
+    #: means this case asks the question of nobody -- most fixtures predate it.
+    held_out_pass: Sequence[str] = ()
     #: bugfix | feature | cross_file | regression_trap
     kind: str = "bugfix"
     #: `core` or `hard`. The core set separates a working harness from a broken
@@ -111,6 +125,35 @@ class CodingCase:
     tier: str = "core"
     #: What this case is really testing about the harness.
     note: str = ""
+
+    def __post_init__(self) -> None:
+        """Enforce the held-out invariants on *every* construction path.
+
+        `load_cases` already checks these and reports them with the offending
+        entry's index, which is the better message and stays. But the built-in
+        suite is not built through `load_cases` -- `CODING_CASES` constructs
+        `CodingCase` directly, and so does every test and every future generator
+        script. The invariants were reachable only through the JSON door.
+
+        That matters more here than the usual argument for validating at the
+        boundary, because of *how* these two mistakes fail. Neither raises and
+        neither produces a wrong-looking number: a shadowed file is shown to the
+        agent and silently overwritten before grading, and a node id with no
+        file behind it is collected from a tree that does not contain it and
+        scores zero. Both surface as `overfit` -- the suite accusing the model
+        of fitting the visible tests when the fault is in the fixture. A false
+        accusation of gaming is the worst failure this file can produce, and it
+        is indistinguishable from the real thing by inspection of the score.
+        """
+        clash = sorted(set(self.held_out) & set(self.files))
+        if clash:
+            raise ValueError(
+                f"case {self.id!r}: `held_out` may not overwrite visible "
+                f"files: {', '.join(clash)}")
+        if self.held_out_pass and not self.held_out:
+            raise ValueError(
+                f"case {self.id!r}: `held_out_pass` without `held_out` files -- "
+                f"these node ids would score a silent zero and read as overfit")
 
     @property
     def test_files(self) -> List[str]:
@@ -167,6 +210,22 @@ def load_cases(path: str | Path) -> List[CodingCase]:
             raise ValueError(f"{where}: missing {', '.join(missing)}")
         if not isinstance(entry["files"], dict):
             raise ValueError(f"{where}: `files` must be a path -> contents map")
+        held_files = entry.get("held_out") or {}
+        if not isinstance(held_files, dict):
+            raise ValueError(f"{where}: `held_out` must be a path -> contents map")
+        # Node ids without the files they live in would be collected from a tree
+        # that does not contain them and score a silent zero, which reads as an
+        # agent that overfitted rather than a suite that was written wrong.
+        if entry.get("held_out_pass") and not held_files:
+            raise ValueError(f"{where}: `held_out_pass` without `held_out` files")
+        # A held-out file that collides with a visible one would be shown to the
+        # agent by `materialise` and then overwritten before grading -- held out
+        # in name only, and worse, silently.
+        clash = sorted(set(held_files) & set(entry["files"]))
+        if clash:
+            raise ValueError(
+                f"{where}: `held_out` may not overwrite visible files: "
+                f"{', '.join(clash)}")
         # A case with nothing to fix cannot be passed or failed, which is worse
         # than a missing case: it inflates the denominator with a free point.
         cases.append(CodingCase(
@@ -175,6 +234,8 @@ def load_cases(path: str | Path) -> List[CodingCase]:
             files={str(k): str(v) for k, v in entry["files"].items()},
             fail_to_pass=[str(n) for n in entry["fail_to_pass"]],
             pass_to_pass=[str(n) for n in entry.get("pass_to_pass", [])],
+            held_out={str(k): str(v) for k, v in held_files.items()},
+            held_out_pass=[str(n) for n in entry.get("held_out_pass", [])],
             kind=str(entry.get("kind", "bugfix")),
             tier=str(entry.get("tier", "core")),
             note=str(entry.get("note", ""))))
@@ -196,6 +257,11 @@ class CaseResult:
     #: Of `pass_to_pass`, how many still pass.
     kept: int = 0
     kept_total: int = 0
+    #: Of `held_out_pass`, how many pass. These tests were never on disk while
+    #: the agent was running, so they are the only evidence here that separates
+    #: solving the task from fitting the assertions that were visible.
+    held: int = 0
+    held_total: int = 0
     #: The agent edited a file under `tests/`. Did not help -- see module docs.
     tamper: bool = False
     #: Turns the provider refused outright -- HTTP errors, rate limits, quota.
@@ -207,6 +273,29 @@ class CaseResult:
     halt: str = ""
     harness_said_done: bool = False
     steps_used: int = 0
+    #: Tool calls issued across the run. Reported beside `steps_used` because a
+    #: step is not a fixed unit of work: a harness that batches five calls into
+    #: one turn spends a fifth of the steps for the same work, so steps alone
+    #: rank tool-batching habits as if they were capability.
+    tools_used: int = 0
+    #: Where `harness_said_done` came from, because the two sources are not the
+    #: same measurement and must not be averaged into one `honest` column.
+    #:
+    #: * `verifier` -- a deterministic verdict from Oracle. A real self-assessment.
+    #: * `exit_code` -- a foreign CLI returned 0. Process health, not a claim:
+    #:   most agent CLIs exit 0 unless they crash, so `honest` collapses into
+    #:   `passed` and a false fail becomes impossible to score.
+    claim_source: str = ""
+    #: Which budget the run was actually bounded by, so a steps-limited arm is
+    #: never silently compared against a wall-clock-limited one.
+    budget_kind: str = ""
+    #: Configuration the provider forced the engine to give up mid-run. A case
+    #: that finished with a halved reply allowance, or after minutes of backoff,
+    #: is not the same configuration as one that ran clean -- and the console
+    #: warning that says so does not survive into the trace.
+    output_shrinks: int = 0
+    throttle_waits: int = 0
+    throttled_seconds: float = 0.0
     changed_files: List[str] = field(default_factory=list)
     seconds: float = 0.0
     error: str = ""
@@ -283,12 +372,45 @@ class CaseResult:
         never_ran = bool(self.error) and not self.steps_used
         return (bool(self.api_errors) or never_ran) and not self.passed
 
+    @property
+    def degraded(self) -> bool:
+        """Whether the provider forced the engine to run in a smaller shape.
+
+        The third state between `unreachable` and a clean result, and the one
+        with no home before now. A refused request is visible in `api_errors`;
+        a request that *succeeded* after ninety seconds of backoff with the
+        reply allowance halved leaves no mark on the transcript at all. Both
+        produce a number, and only one of them is a capability result.
+
+        Kept separate from `unreachable` rather than folded into it: a degraded
+        case did measure the model, just not the model as configured. Excluding
+        it would discard real evidence; counting it silently is how a provider's
+        free tier gets published as a model's ceiling.
+        """
+        return bool(self.output_shrinks or self.throttle_waits)
+
+    @property
+    def overfit(self) -> bool:
+        """Passed the visible tests and failed the held-out ones.
+
+        The failure `tamper` cannot see. `restore_tests` catches an agent that
+        edits the assertions; nothing catches an agent that writes code shaped
+        to the assertions it was shown. This is that signal, and it only exists
+        for cases that carry held-out tests -- for the rest it is False because
+        the question was never asked, not because the answer was no.
+        """
+        return bool(self.held_total) and self.held < self.held_total and (
+            self.fixed == self.fixed_total and self.kept == self.kept_total)
+
     def summary(self) -> str:
         mark = "PASS" if self.passed else "FAIL"
         claim = "" if self.honest else "  <-- HARNESS DISAGREED"
+        if self.overfit:
+            claim += "  <-- FITTED THE VISIBLE TESTS"
+        held = f" held {self.held}/{self.held_total}" if self.held_total else ""
         return (f"[{mark}] {self.case_id:<22} "
                 f"fix {self.fixed}/{self.fixed_total} "
-                f"keep {self.kept}/{self.kept_total} "
+                f"keep {self.kept}/{self.kept_total}{held} "
                 f"steps {self.steps_used:>2} "
                 f"{self.seconds:5.1f}s{claim}")
 
@@ -994,42 +1116,89 @@ def restore_tests(case: CodingCase, root: Path) -> bool:
     return tampered
 
 
-def run_tests(root: Path, node_ids: Sequence[str]) -> Dict[str, bool]:
-    """Run each node id and report pass/fail.
+def reveal_held_out(case: CodingCase, root: Path) -> None:
+    """Write the held-out tests, after the agent and before grading.
 
-    One process per node rather than one for the batch. Slower, and worth it:
-    a collection error in one test file takes the whole batch down with it, so
-    a batched run cannot distinguish "this test failed" from "something else
-    did not import". These fixtures are tiny; correctness is the better trade.
+    Deliberately not part of `materialise`: the whole value of these tests is
+    that they were never on disk while the agent was working, so it could not
+    read them, could not edit them, and could not shape its solution to them.
+    Writing them here is what makes `overfit` mean anything.
     """
-    results: Dict[str, bool] = {}
-    for node in node_ids:
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "pytest", node, "-q", "--no-header",
-                 "-p", "no:cacheprovider"],
-                cwd=root, capture_output=True, text=True,
-                timeout=TEST_TIMEOUT, stdin=subprocess.DEVNULL)
-            results[node] = proc.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            results[node] = False
-    return results
+    for rel, content in case.held_out.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+
+def _pytest(root: Path, node_ids: Sequence[str]) -> bool:
+    """Run these node ids in one process. True only if every one passed."""
+    try:
+        # The sharpest instance of the leak this guards: these are tests an
+        # agent wrote, run by the eval loop, and their stdout is graded.
+        proc = sandbox.DEFAULT.run(
+            [sys.executable, "-m", "pytest", *node_ids, "-q", "--no-header",
+             "-p", "no:cacheprovider"],
+            cwd=root, timeout=TEST_TIMEOUT)
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def run_tests(root: Path, node_ids: Sequence[str]) -> Dict[str, bool]:
+    """Run the node ids and report pass/fail for each.
+
+    **The batch first, one process per node only if it is not green.** Isolation
+    is needed to *attribute* a failure -- a collection error in one file takes
+    the whole batch down and cannot be told apart from a test that failed -- and
+    a green batch has nothing to attribute. So the expensive path is paid only
+    when something is wrong, which on a solved case is never.
+
+    That is the dominant cost of the whole eval: it was one process per node,
+    per case, per run, and `--repeat` multiplies it while held-out tests add a
+    fourth set. The result is never worse than the old behaviour, because the
+    fallback *is* the old behaviour.
+
+    One deliberate difference: a test that passes only because another ran first
+    is graded as passing here, where per-node isolation would have failed it.
+    Order-dependence is a property of the fixture rather than of the agent, and
+    a suite is how these tests are meant to be run -- but it is a difference,
+    not an equivalence.
+    """
+    # Never call pytest with no arguments: it would collect the entire tree and
+    # report on tests nobody asked about. The empty set has no results.
+    if not node_ids:
+        return {}
+    if _pytest(root, node_ids):
+        return {node: True for node in node_ids}
+    return {node: _pytest(root, [node]) for node in node_ids}
 
 
 def grade(case: CodingCase, root: Path, tampered: bool) -> Dict[str, Any]:
     """Run both expectation sets and decide. Assumes tests are restored."""
     fixed = run_tests(root, case.fail_to_pass)
     kept = run_tests(root, case.pass_to_pass)
+    reveal_held_out(case, root)
+    held = run_tests(root, case.held_out_pass)
     n_fixed = sum(fixed.values())
     n_kept = sum(kept.values())
+    n_held = sum(held.values())
     return {
         "fixed": n_fixed,
         "fixed_total": len(case.fail_to_pass),
         "kept": n_kept,
         "kept_total": len(case.pass_to_pass),
-        # Both, not either. A change that fixes the bug and breaks the suite is
-        # not partial success, it is a different failure.
-        "passed": n_fixed == len(case.fail_to_pass) and n_kept == len(case.pass_to_pass),
+        "held": n_held,
+        "held_total": len(case.held_out_pass),
+        # All three, not any. A change that fixes the bug and breaks the suite is
+        # not partial success, it is a different failure -- and one that passes
+        # everything it was shown while failing what it was not has not solved
+        # the task, it has solved the assertions.
+        #
+        # Cases with no held-out tests are unaffected: an empty set sums to zero
+        # against a length of zero, which is True.
+        "passed": (n_fixed == len(case.fail_to_pass)
+                   and n_kept == len(case.pass_to_pass)
+                   and n_held == len(case.held_out_pass)),
         "tamper": tampered,
     }
 
@@ -1040,24 +1209,55 @@ def grade(case: CodingCase, root: Path, tampered: bool) -> Dict[str, Any]:
 AgentFactory = Callable[[Path], Any]
 
 
+def _degradation(agent: Any) -> tuple:
+    """The engine's give-up counters, or zeros for an agent without one.
+
+    Reached through the agent rather than passed in, because `AgentFactory` is
+    deliberately "anything with `.run(prompt)`" and requiring an engine here
+    would close the seam that lets a foreign harness be graded by the same
+    instrument. A scripted agent has no engine and truthfully reports nothing.
+    """
+    engine = getattr(agent, "engine", None)
+    if engine is None:
+        return (0, 0, 0.0)
+    return (int(getattr(engine, "output_shrinks", 0) or 0),
+            int(getattr(engine, "throttle_waits", 0) or 0),
+            float(getattr(engine, "throttled_seconds", 0.0) or 0.0))
+
+
 def run_case(case: CodingCase, make_agent: AgentFactory, root: Path,
              trace: Optional[Path] = None) -> CaseResult:
     """Materialise, run the agent, restore the tests, grade."""
     materialise(case, root)
     result = CaseResult(case_id=case.id, kind=case.kind, passed=False,
                         fixed_total=len(case.fail_to_pass),
-                        kept_total=len(case.pass_to_pass))
+                        kept_total=len(case.pass_to_pass),
+                        held_total=len(case.held_out_pass))
     started = time.perf_counter()
 
     events: List[Dict[str, Any]] = []
     try:
         agent = make_agent(root)
+        # Snapshotted before the run and differenced after, so the counters are
+        # per case rather than per suite. The engine is shared across cases, so
+        # reading it raw would attribute every earlier case's backoff to this
+        # one and make the last case in a throttled run look catastrophic.
+        before = _degradation(agent)
         outcome = agent.run(case.prompt, on_event=_recorder(events)) \
             if _takes_events(agent) else agent.run(case.prompt)
         result.halt = getattr(getattr(outcome, "halt", None), "value", "") or ""
         result.harness_said_done = bool(getattr(outcome, "succeeded", False))
         result.steps_used = int(getattr(outcome, "steps_used", 0) or 0)
+        result.tools_used = int(getattr(outcome, "tools_used", 0) or 0)
         result.changed_files = [Path(p).name for p in getattr(outcome, "changed", [])]
+        # Duck-typed like the rest: an agent that reports neither leaves the
+        # defaults, and `report` prints "not reported" rather than a zero.
+        result.claim_source = str(getattr(outcome, "claim_source", "") or "")
+        result.budget_kind = str(getattr(outcome, "budget_kind", "") or "")
+        after = _degradation(agent)
+        (result.output_shrinks, result.throttle_waits,
+         result.throttled_seconds) = (after[0] - before[0], after[1] - before[1],
+                                      after[2] - before[2])
         # Duck-typed for the same reason the fields are plain ints: an agent
         # that reports nothing simply leaves these at zero.
         usage = getattr(outcome, "usage", None)
@@ -1078,12 +1278,20 @@ def run_case(case: CodingCase, make_agent: AgentFactory, root: Path,
     result.api_errors = sum(
         1 for e in events
         if e.get("kind") == "text" and _API_FAILURE in (e.get("text") or ""))
+    # Counted from the stream rather than asked of the outcome, because this is
+    # the number that keeps `steps_used` honest: a harness batching five calls
+    # into one turn is not five times more capable than one that serialises.
+    # An agent that emits no events leaves it at zero, which `report` excludes
+    # rather than averaging in.
+    if not result.tools_used:
+        result.tools_used = sum(1 for e in events if e.get("kind") == "tool")
 
     tampered = restore_tests(case, root)
     verdict = grade(case, root, tampered)
     result.passed = verdict["passed"]
     result.fixed = verdict["fixed"]
     result.kept = verdict["kept"]
+    result.held = verdict["held"]
     result.tamper = verdict["tamper"]
     result.seconds = time.perf_counter() - started
     # Set here so a single-attempt run already carries it; `run_best_of`
@@ -1245,7 +1453,36 @@ def _write_trace(path: Path, case: CodingCase, result: CaseResult,
                   # file is what anyone aggregates months later -- so the
                   # distinction has to survive here or the number lies.
                   "api_errors": result.api_errors,
-                  "unreachable": result.unreachable}
+                  "unreachable": result.unreachable,
+                  # The console warning about a throttled, shrunk run does not
+                  # survive the terminal scrolling, and this file is what gets
+                  # aggregated months later. Recording only `unreachable` meant
+                  # a run that finished with a halved reply allowance and
+                  # minutes of backoff aggregated as a clean capability number
+                  # -- the same failure `trace_summary` exists to prevent, on a
+                  # field it did not yet cover.
+                  "output_shrinks": result.output_shrinks,
+                  "throttle_waits": result.throttle_waits,
+                  "throttled_seconds": round(result.throttled_seconds, 1),
+                  "degraded": result.degraded,
+                  # Named so `honest` is never read across harnesses as though
+                  # a verifier's verdict and a process exit code were the same
+                  # measurement.
+                  "claim_source": result.claim_source,
+                  "budget_kind": result.budget_kind,
+                  "held": f"{result.held}/{result.held_total}",
+                  "overfit": result.overfit,
+                  "tools": result.tools_used,
+                  # Recorded rather than left to be counted from the events
+                  # below, because for an external harness there are no events
+                  # to count. `--harness-cmd` runs write a header and nothing
+                  # else, so a summariser that derives the turn count by
+                  # tallying `step` events reads every foreign harness as zero
+                  # -- which is indistinguishable from a harness that solved
+                  # the case instantly. This is the one field that makes a
+                  # harness-vs-harness comparison legible on the axis that
+                  # still separates runs once `solved` saturates.
+                  "steps": result.steps_used}
         fh.write(json.dumps(header) + "\n")
         for event in events:
             fh.write(json.dumps(event) + "\n")

@@ -55,7 +55,22 @@ impl Config {
     ///
     /// The only place a concrete engine type is named. Everything downstream
     /// holds `Box<dyn Engine>`, which is what makes the slot swappable.
+    ///
+    /// The result is wrapped in [`Resilient`](crate::resilience::Resilient), so
+    /// every configured backend retries transient failures and stops calling a
+    /// dead one. Wrapped here rather than inside each backend because it is a
+    /// property of *using* an engine over a network, not of the wire format —
+    /// and doing it once is what keeps the two implementations from drifting
+    /// into two different retry policies.
     pub fn build_engine(&self) -> Result<Box<dyn Engine>> {
+        Ok(Box::new(crate::resilience::Resilient::new(
+            self.build_backend()?,
+        )))
+    }
+
+    /// The bare backend, without retrying. Exposed for a caller that wants to
+    /// choose its own [`Policy`](crate::resilience::Policy).
+    pub fn build_backend(&self) -> Result<Box<dyn Engine>> {
         match self.engine {
             EngineKind::Anthropic => {
                 let key = std::env::var("ANTHROPIC_API_KEY").context(

@@ -45,6 +45,12 @@ pub enum Command {
     },
     /// Clear the conversation, keep the workspace.
     Reset,
+    /// Put the workspace back as it was before the last turn began.
+    ///
+    /// The inverse of `Reset`: that keeps the files and drops the conversation,
+    /// this keeps the conversation and drops the files. Dispatched normally —
+    /// there is no turn running to undo while a turn is running.
+    Undo,
     /// What this front end can do. Send before anything else.
     ///
     /// **Permission gating is opt-in, and it has to be.** A front end that does
@@ -61,6 +67,18 @@ pub enum Command {
         #[serde(default)]
         permissions: bool,
     },
+    /// Say something to a task that is already running. **Routed, never
+    /// dispatched.**
+    ///
+    /// Same reason as a permission reply: the dispatch loop is inside
+    /// `talos.run` for the whole turn, so anything that must reach a running
+    /// task cannot be a command it handles. Unlike a permission reply this does
+    /// not block the agent — it is queued and picked up at the next step
+    /// boundary. See [`interject`](crate::interject).
+    ///
+    /// Sending this with no task running is harmless: it waits, and the next
+    /// task begins by reading it.
+    Interject { text: String },
     /// Answer to a `permission_request`. **Routed, never dispatched.**
     ///
     /// This is the one command that must be handled while another command is
@@ -113,6 +131,10 @@ pub enum Event {
         hits: Vec<String>,
     },
     Reset,
+    /// Files put back by an `undo`, workspace-relative.
+    Undone {
+        files: Vec<String>,
+    },
     Error {
         message: String,
     },
@@ -272,6 +294,8 @@ async fn route(
     commands: tokio::sync::mpsc::UnboundedSender<Result<Command, String>>,
     pending: Pending,
     gating: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    interjections: crate::interject::Interjections,
+    events: Emitter,
 ) {
     while let Some(line) = lines.recv().await {
         let trimmed = line.trim_start_matches('\u{feff}').trim();
@@ -284,6 +308,16 @@ async fn route(
                 // permission reply: it changes how the *approver* behaves, and
                 // the approver lives outside the dispatch loop.
                 gating.store(permissions, std::sync::atomic::Ordering::Relaxed);
+            }
+            Ok(Command::Interject { text }) => {
+                // Refusal is reported rather than swallowed: the person typed
+                // something and is entitled to know the agent will not see it.
+                if !interjections.push(text) {
+                    events.send(Event::Error {
+                        message: "interjection not accepted: empty, or too many are already queued"
+                            .to_string(),
+                    });
+                }
             }
             Ok(Command::Permission { id, allow }) => {
                 let waiting = pending.lock().ok().and_then(|mut m| m.remove(&id));
@@ -368,7 +402,14 @@ pub async fn run(
     events.send(Event::Idle);
 
     let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
-    let router = tokio::spawn(route(lines, command_tx, pending, gating));
+    let router = tokio::spawn(route(
+        lines,
+        command_tx,
+        pending,
+        gating,
+        talos.interjections(),
+        events.clone(),
+    ));
 
     while let Some(incoming) = command_rx.recv().await {
         let command = match incoming {
@@ -501,6 +542,15 @@ async fn dispatch(
             talos.changed.clear();
             events.send(Event::Reset);
         }
+        Command::Undo => match talos.undo_turn() {
+            Ok(restored) => {
+                let files = restored.iter().map(|p| talos.ctx.display(p)).collect();
+                events.send(Event::Undone { files });
+            }
+            // "No turn has run yet" is a legitimate answer, not a session-ending
+            // fault, so it reports like any other refused command.
+            Err(e) => events.send(Event::Error { message: format!("{e:#}") }),
+        },
         // Both are intercepted before they get here: `Shutdown` by the loop,
         // `Permission` by the router. Reaching either would mean a reply was
         // queued behind the very command that is waiting for it — the deadlock
@@ -512,6 +562,9 @@ async fn dispatch(
         }
         Command::Capabilities { .. } => {
             unreachable!("capabilities are routed, never dispatched")
+        }
+        Command::Interject { .. } => {
+            unreachable!("interjections are routed, never dispatched")
         }
     }
     Ok(())
@@ -588,6 +641,8 @@ mod tests {
             r#"{"cmd":"index"}"#,
             r#"{"cmd":"index","name":"Adder"}"#,
             r#"{"cmd":"reset"}"#,
+            r#"{"cmd":"undo"}"#,
+            r#"{"cmd":"interject","text":"use the existing helper"}"#,
             r#"{"cmd":"shutdown"}"#,
         ];
         for c in cases {

@@ -19,6 +19,7 @@ Stdlib only, like the rest of the harness.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 import os
 from dataclasses import dataclass
@@ -28,6 +29,23 @@ from typing import Dict, List, Optional, Protocol, Sequence, Tuple
 
 class PathEscape(PermissionError):
     """A tool asked for a path outside the workspace."""
+
+
+class StaleWrite(RuntimeError):
+    """A whole-file write would have overwritten a change nobody here made."""
+
+
+def _stamp(content: str) -> str:
+    """What a file held, in constant space.
+
+    A content digest rather than a modification time. mtime resolution varies by
+    filesystem -- whole seconds on some -- and the case this has to catch is an
+    editor saving a file of the same length inside one tick, which is precisely
+    where mtime says nothing. The content is already in memory when a read
+    happens, so digesting it there costs nothing.
+    """
+    return hashlib.blake2b(content.encode("utf-8", "surrogatepass"),
+                           digest_size=16).hexdigest()
 
 
 class EditorFiles(Protocol):
@@ -145,6 +163,10 @@ class Workspace:
         self._journal: List[JournalEntry] = []
         #: label -> journal length when the mark was taken.
         self._marks: Dict[str, int] = {}
+        #: path -> what it held when this run last read it. Feeds `conflict`,
+        #: which is what stops a whole-file write built on a stale read from
+        #: silently discarding an edit made outside the harness.
+        self._observed: Dict[Path, str] = {}
 
     # ------------------------------------------------------------ checkpoints
 
@@ -188,6 +210,11 @@ class Workspace:
         del self._journal[mark:]
         # Marks taken after this one no longer refer to anything real.
         self._marks = {k: v for k, v in self._marks.items() if v <= mark}
+        # A rewind changes files behind the freshness check's back. Without
+        # re-baselining, every write after an undo would be refused as somebody
+        # else's edit.
+        for path in restored:
+            self.accept_current(path)
         # Deduplicate while preserving order.
         seen, out = set(), []
         for path in restored:
@@ -278,8 +305,13 @@ class Workspace:
         path = self.resolve(requested)
         staged = self._staged.get(path)
         if staged is not None:
+            # Deliberately not stamped: this is the run's own pending work, not
+            # an observation of anything, and recording it would make every
+            # later freshness check compare against the wrong thing.
             return staged
-        return self._read_through(path)
+        content = self._read_through(path)
+        self._observed[path] = _stamp(content)
+        return content
 
     def _read_through(self, path: Path) -> str:
         """Editor content if there is any, else disk."""
@@ -297,18 +329,74 @@ class Workspace:
         return path in self._staged or path.exists()
 
     def write(self, requested: str | os.PathLike, content: str) -> Path:
-        """Write a file, or stage it when running dry. Returns the resolved path."""
+        """Write a file, or stage it when running dry. Returns the resolved path.
+
+        Raises `StaleWrite` if the file changed since this run last read it. A
+        whole-file write replaces everything, including whatever changed while
+        the model was composing the replacement, so refusing costs a re-read and
+        a retry while proceeding costs somebody their work -- silently, with the
+        transcript showing a successful write.
+
+        `edit` needs no such check: it re-reads and requires `old` to still
+        appear exactly once, which fails on its own when the region it targeted
+        has moved.
+        """
         path = self.resolve(requested)
         if self.dry_run:
             self._staged[path] = content
             return path
+        divergence = self.conflict(path)
+        if divergence is not None:
+            raise StaleWrite(
+                f"{self.display(path)} {divergence}. Read it again before "
+                f"writing -- the version you composed this content from is no "
+                f"longer what is there.")
         self._commit(path, content)
         return path
+
+    def conflict(self, requested: str | os.PathLike) -> Optional[str]:
+        """How the file diverged from what this run last read, or None.
+
+        Compared through `_read_through` rather than against disk, because the
+        editor may hold an unsaved buffer that is the real current state. Asking
+        disk would report a conflict for content the user is still typing, and
+        miss one they have already saved into the editor's buffer only.
+        """
+        path = self.resolve(requested)
+        expected = self._observed.get(path)
+        if expected is None:
+            # Never read, so there is nothing to be stale against -- a new file,
+            # or a blind overwrite, neither of which is the case this guards.
+            return None
+        try:
+            current = self._read_through(path)
+        except (FileNotFoundError, NotADirectoryError):
+            return "was deleted after it was read"
+        except OSError:
+            return "became unreadable after it was read"
+        if _stamp(current) == expected:
+            return None
+        return "changed since it was read"
+
+    def accept_current(self, requested: str | os.PathLike) -> None:
+        """Take whatever is there now as the new baseline.
+
+        The escape hatch for a divergence the caller has decided is fine --
+        otherwise a file that changed once would refuse writes forever.
+        """
+        path = self.resolve(requested)
+        try:
+            self._observed[path] = _stamp(self._read_through(path))
+        except OSError:
+            self._observed.pop(path, None)
 
     def _commit(self, path: Path, content: str) -> None:
         """Journal the old content, then write it."""
         self._record(path)
         self._write_through(path, content)
+        # This run's own write is not an external change. Without it, the second
+        # write to any file would be refused as somebody else's edit.
+        self._observed[path] = _stamp(content)
 
     def _write_through(self, path: Path, content: str) -> None:
         """Write via the editor if there is one, else straight to disk."""

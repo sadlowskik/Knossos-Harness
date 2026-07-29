@@ -8,13 +8,15 @@ use std::path::{Path, PathBuf};
 
 use knossos::ariadne::{Ariadne, Halt};
 use knossos::engine::mock::{text_response, tool_call, MockEngine};
+use knossos::hooks::Hook;
+use knossos::interject::Interjections;
 use knossos::metis::Plan;
 use knossos::oracle::Oracle;
 use knossos::scribe::SymbolIndex;
 use knossos::session::Session;
 use knossos::talos::{Outcome, Talos};
 use knossos::themis::Themis;
-use knossos::tools::{ToolCtx, ToolRegistry};
+use knossos::tools::{ToolCtx, ToolOutput, ToolRegistry};
 
 /// Copy a fixture crate into a temp dir so tests can edit it freely.
 fn fixture(name: &str) -> tempfile::TempDir {
@@ -89,6 +91,91 @@ impl Harness {
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect()
     }
+}
+
+/// Speaks once, from inside a tool call.
+///
+/// This is how the test gets an interjection to land *between* engine turns
+/// without depending on timing. A `push` before `run` would prove only that the
+/// queue drains at step 1, which is indistinguishable from an ordinary
+/// instruction; this pushes while step 1 is being carried out, so a delivery at
+/// step 2 is the real behaviour under test.
+struct SpeakDuringFirstToolCall {
+    handle: Interjections,
+    spoken: std::sync::atomic::AtomicBool,
+}
+
+impl Hook for SpeakDuringFirstToolCall {
+    fn name(&self) -> &str {
+        "test-speaker"
+    }
+
+    fn after(&self, _tool: &str, _input: &serde_json::Value, _out: &ToolOutput) {
+        use std::sync::atomic::Ordering;
+        if !self.spoken.swap(true, Ordering::SeqCst) {
+            self.handle.push("actually, name it quadruple");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
+    let h = Harness::new("passing");
+
+    let interjections = Interjections::new();
+    let registry = ToolRegistry::standard().with_hook(Box::new(SpeakDuringFirstToolCall {
+        handle: interjections.clone(),
+        spoken: std::sync::atomic::AtomicBool::new(false),
+    }));
+
+    let mut talos = Talos::new(
+        Box::new(MockEngine::new(vec![
+            tool_call("1", "write_file", serde_json::json!({
+                "path": "src/added.rs",
+                "content": "pub fn triple(n: i32) -> i32 { n * 3 }\n"
+            })),
+            tool_call("2", "read_file", serde_json::json!({"path": "src/added.rs"})),
+            text_response("done"),
+        ])),
+        registry,
+        ToolCtx::new(&h.root),
+        Oracle::new(&h.root),
+        SymbolIndex::build(&h.root).unwrap(),
+        Themis::from_text("Be correct."),
+        Ariadne::new(6, 5),
+        Session::new(&h.root, "mock").with_trace(&h.trace).unwrap(),
+        1024,
+        false,
+    )
+    // The hook already holds a queue and was moved into the registry above, so
+    // Talos adopts that one rather than the queue `new` would have made.
+    .with_interjections(interjections.clone());
+
+    let plan = Plan { steps: vec!["do the thing".into()] };
+    let outcome = talos.run("test task", &plan).await.unwrap();
+
+    let interjected: Vec<_> = h
+        .trace_events()
+        .into_iter()
+        .filter(|e| e["event"] == "interjected")
+        .collect();
+
+    assert_eq!(interjected.len(), 1, "exactly one delivery, not one per step");
+    assert_eq!(
+        interjected[0]["notes"][0], "actually, name it quadruple",
+        "the user's words, verbatim"
+    );
+    assert!(
+        interjected[0]["step"].as_u64().unwrap() >= 2,
+        "delivered at a later step, not folded into the opening request"
+    );
+
+    // The point of interjecting rather than cancelling: the run keeps going.
+    assert!(outcome.steps_used >= 2, "the run continued past the interruption");
+    assert!(
+        talos.interjections.is_empty(),
+        "nothing may be left queued when the run ends"
+    );
 }
 
 #[tokio::test]
@@ -476,13 +563,21 @@ async fn the_conversation_is_bounded_across_a_run() {
     // step ceiling was the only thing keeping it finite, which is a blunt
     // instrument rather than a bound.
     let h = Harness::new("passing");
+    // Two *different* files, deliberately. Reading the same one twice changes
+    // nothing on the second read, which `is_futile` now recognises as a repeat
+    // and answers with a feedback note -- correct behaviour, but it lands after
+    // the final compaction and so shows up in the post-run total, which is not
+    // what this test is about. Distinct files exercise the same bound (a
+    // conversation far larger than the ceiling) without the entanglement.
+    // The repeat path has its own test: `a_repeated_call_is_told_it_is_repeating`.
     let big = "x".repeat(300_000);
     std::fs::write(h.root.join("src/huge.rs"), &big).unwrap();
+    std::fs::write(h.root.join("src/huger.rs"), &big).unwrap();
 
     let mut talos = h.talos(
         vec![
             tool_call("1", "read_file", serde_json::json!({"path": "src/huge.rs"})),
-            tool_call("2", "read_file", serde_json::json!({"path": "src/huge.rs"})),
+            tool_call("2", "read_file", serde_json::json!({"path": "src/huger.rs"})),
             text_response("Done."),
         ],
         3,
@@ -826,4 +921,231 @@ async fn scribe_tracks_edits_made_during_the_run() {
     let hits = after.lookup("triple");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].signature, "pub fn triple(x: u32) -> u32");
+}
+
+// ------------------------------------------------------------------- futility
+//
+// Ported from the Python side, where the check existed but compared only
+// against the immediately previous step. Here it did not exist at all:
+// `is_noop` was the whole staleness test, and an engine re-issuing one failing
+// `edit_file` calls a tool every step, so it was never a noop and every such
+// run went to the ceiling.
+
+/// A call that always fails: `old_string` is not in the file, so nothing changes.
+fn doomed_edit(id: &str, marker: &str) -> knossos::engine::Response {
+    tool_call(
+        id,
+        "edit_file",
+        serde_json::json!({
+            "path": "src/lib.rs",
+            "old_string": format!("absent-{marker}"),
+            "new_string": "x"
+        }),
+    )
+}
+
+#[tokio::test]
+async fn an_engine_repeating_one_failing_call_is_stuck() {
+    // `is_noop` cannot see this: the engine *is* calling a tool every step.
+    let h = Harness::new("passing");
+    let script: Vec<_> = (0..12).map(|i| doomed_edit(&i.to_string(), "a")).collect();
+
+    let outcome = h.run(script, 12).await;
+
+    assert_eq!(outcome.halt, Halt::Stuck);
+    assert_eq!(outcome.steps_used, 3, "one attempt, then two repeats");
+}
+
+#[tokio::test]
+async fn an_engine_alternating_between_two_failing_calls_is_stuck() {
+    // The loop an adjacent-only check cannot see, and which nothing here saw at
+    // all: A, B, A, B never repeats itself consecutively.
+    let h = Harness::new("passing");
+    let script: Vec<_> = (0..20)
+        .map(|i| doomed_edit(&i.to_string(), if i % 2 == 0 { "a" } else { "b" }))
+        .collect();
+
+    let outcome = h.run(script, 20).await;
+
+    assert_eq!(outcome.halt, Halt::Stuck);
+    assert_eq!(outcome.steps_used, 4, "A B then A B again: caught on the second B");
+}
+
+#[tokio::test]
+async fn a_three_step_ritual_that_achieves_nothing_is_stuck() {
+    let h = Harness::new("passing");
+    let marks = ["a", "b", "c"];
+    let script: Vec<_> = (0..20)
+        .map(|i| doomed_edit(&i.to_string(), marks[i % 3]))
+        .collect();
+
+    let outcome = h.run(script, 20).await;
+
+    assert_eq!(outcome.halt, Halt::Stuck);
+    assert_eq!(outcome.steps_used, 5, "three to establish the cycle, two to confirm");
+}
+
+#[tokio::test]
+async fn a_repeated_call_is_told_it_is_repeating() {
+    // Halting is the backstop; the cheaper outcome is the engine noticing it is
+    // going in a circle while it still has budget left.
+    let h = Harness::new("passing");
+    let script: Vec<_> = (0..4).map(|i| doomed_edit(&i.to_string(), "a")).collect();
+    let mut talos = h.talos(script, 6, false);
+
+    talos
+        .run("edit something", &Plan { steps: vec!["edit".into()] })
+        .await
+        .unwrap();
+
+    let conversation = format!("{:?}", talos.messages);
+    assert!(
+        conversation.contains("same tool call"),
+        "the engine was never told it was repeating"
+    );
+}
+
+#[tokio::test]
+async fn real_work_between_repeats_restarts_the_window() {
+    // The half that keeps a wider window safe: exploring, changing something,
+    // then exploring the same way again is ordinary work, not a loop.
+    let h = Harness::new("passing");
+    let read = |id: &str| tool_call(id, "read_file", serde_json::json!({"path": "src/lib.rs"}));
+    let write = |id: &str, body: &str| {
+        tool_call(
+            id,
+            "write_file",
+            serde_json::json!({"path": "src/added.rs", "content": body}),
+        )
+    };
+
+    let outcome = h
+        .run(
+            vec![
+                read("1"),
+                read("2"),
+                write("3", "pub fn a() {}\n"),
+                read("4"),
+                read("5"),
+                write("6", "pub fn b() {}\n"),
+                text_response("Done."),
+            ],
+            10,
+        )
+        .await;
+
+    assert_ne!(outcome.halt, Halt::Stuck, "real work happened between the reads");
+}
+
+// ----------------------------- every step sequence, not just the ones anyone
+//                                thought to write a test for
+//
+// `reference_halt` states the intended rule without reference to `Talos`.
+// Agreement across every sequence in the space means a transcription error in
+// either one surfaces as a disagreement on a specific input, which the failure
+// message prints. What it cannot pin is the window *width* -- both sides read
+// `FUTILE_WINDOW` -- so the two-cycle and three-cycle tests above hardcode the
+// step at which a loop must be noticed, and those are what fix the value.
+
+/// `true` when the symbol changes a file.
+fn changes(symbol: char) -> bool {
+    symbol == 'W'
+}
+
+fn script_for(symbols: &str) -> Vec<knossos::engine::Response> {
+    symbols
+        .chars()
+        .enumerate()
+        .map(|(i, c)| {
+            let id = i.to_string();
+            if changes(c) {
+                tool_call(
+                    &id,
+                    "write_file",
+                    serde_json::json!({"path": "src/sweep.rs", "content": "pub fn s() {}\n"}),
+                )
+            } else {
+                doomed_edit(&id, &c.to_string())
+            }
+        })
+        .collect()
+}
+
+/// The rule as specified: futile when a signature seen within the last
+/// `FUTILE_WINDOW` steps recurs and nothing changed; a step that changes
+/// something restarts the window while remaining in it. `assess` checks the
+/// ceiling before staleness, so a run that would be stuck on its final
+/// permitted step reports budget exhaustion — reproduced here deliberately.
+fn reference_halt(symbols: &str) -> (Halt, usize) {
+    use std::collections::VecDeque;
+    let max_steps = symbols.chars().count();
+    let mut recent: VecDeque<char> = VecDeque::new();
+    let mut noops = 0usize;
+    for (i, c) in symbols.chars().enumerate() {
+        let step = i + 1;
+        let futile = recent.contains(&c) && !changes(c);
+        if changes(c) {
+            recent.clear();
+        }
+        if recent.len() == knossos::talos::FUTILE_WINDOW {
+            recent.pop_front();
+        }
+        recent.push_back(c);
+        if futile {
+            noops += 1;
+        } else {
+            noops = 0;
+        }
+        if step >= max_steps {
+            return (Halt::BudgetExhausted, step);
+        }
+        if noops >= 2 {
+            return (Halt::Stuck, step);
+        }
+    }
+    unreachable!("the ceiling equals the script length")
+}
+
+async fn drive(symbols: &str) -> (Halt, usize) {
+    let h = Harness::new("passing");
+    let n = symbols.chars().count();
+    let outcome = h.run(script_for(symbols), n).await;
+    (outcome.halt, outcome.steps_used)
+}
+
+async fn sweep(alphabet: &[char], length: usize) {
+    let total = alphabet.len().pow(length as u32);
+    for n in 0..total {
+        let mut rest = n;
+        let mut symbols = vec![alphabet[0]; length];
+        for slot in symbols.iter_mut() {
+            *slot = alphabet[rest % alphabet.len()];
+            rest /= alphabet.len();
+        }
+        let word: String = symbols.iter().collect();
+        assert_eq!(drive(&word).await, reference_halt(&word), "disagreed on {word}");
+    }
+}
+
+#[tokio::test]
+async fn the_loop_matches_the_specified_rule_on_every_short_sequence() {
+    // Two useless calls and one that works, exhaustively to depth 4.
+    sweep(&['a', 'b', 'W'], 4).await;
+}
+
+#[tokio::test]
+async fn the_loop_matches_the_specified_rule_on_every_alternation() {
+    // The alternation family, at depth: every sequence over two failing calls.
+    sweep(&['a', 'b'], 5).await;
+}
+
+#[tokio::test]
+async fn no_sequence_of_real_work_is_ever_called_stuck() {
+    // The false-positive direction. If the `files_changed == 0` half of
+    // `is_futile` were ever dropped, this is what would start failing.
+    for length in 1..=5 {
+        let word: String = std::iter::repeat('W').take(length).collect();
+        let (halt, _) = drive(&word).await;
+        assert_ne!(halt, Halt::Stuck, "{word} did real work every step");
+    }
 }

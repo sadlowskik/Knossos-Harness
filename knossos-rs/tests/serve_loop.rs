@@ -151,6 +151,127 @@ fn is_idle(e: &Event) -> bool {
     matches!(e, Event::Idle)
 }
 
+/// Routed, not dispatched — the same property permission replies need.
+///
+/// The dispatch loop is inside `talos.run` for the whole turn, so an
+/// interjection sent during a task can only arrive if the router handles it
+/// without touching that loop. If it were an ordinary command it would sit in
+/// the queue until the task finished, by which point saying it was pointless.
+#[tokio::test]
+async fn a_word_typed_during_a_task_reaches_the_run_without_stopping_it() {
+    let mut server = Server::start(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/added.rs",
+                    "content": "pub fn triple(n: i32) -> i32 { n * 3 }\n"
+                }),
+            ),
+            text_response("done"),
+        ],
+        false,
+    );
+
+    assert!(matches!(server.next().await, Event::Ready { .. }));
+    assert!(matches!(server.next().await, Event::Idle));
+
+    server.send(r#"{"cmd":"task","text":"add a helper"}"#);
+    server.send(r#"{"cmd":"interject","text":"call it quadruple instead"}"#);
+
+    let (_, seen) = server.until(is_idle).await;
+    assert!(
+        !seen.iter().any(|e| matches!(e, Event::Error { .. })),
+        "the interjection produced an error event"
+    );
+
+    let trace = std::fs::read_to_string(server.root.join("trace.jsonl")).unwrap();
+    assert!(trace.contains("interjected"), "the run never saw it:\n{trace}");
+    assert!(trace.contains("call it quadruple instead"), "{trace}");
+}
+
+#[tokio::test]
+async fn an_interjection_that_cannot_be_queued_is_reported_not_swallowed() {
+    // Dropping it silently would leave the person believing the agent had been
+    // told something it will never read.
+    let mut server = Server::start(vec![text_response("idle")], false);
+
+    assert!(matches!(server.next().await, Event::Ready { .. }));
+    assert!(matches!(server.next().await, Event::Idle));
+
+    server.send(r#"{"cmd":"interject","text":"   "}"#);
+
+    match server.next().await {
+        Event::Error { message } => {
+            assert!(message.contains("not accepted"), "{message}")
+        }
+        _ => panic!("an unqueueable interjection must produce an error event"),
+    }
+}
+
+#[tokio::test]
+async fn a_turns_work_can_be_put_back_after_it_has_been_written() {
+    // Not a dry run: staging already covers the previewed case. This is the
+    // one the journal exists for — the write reached disk and the only way
+    // back is the recorded `before`.
+    let mut server = Server::start(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "// the agent replaced everything\n"
+                }),
+            ),
+            text_response("done"),
+        ],
+        false,
+    );
+
+    assert!(matches!(server.next().await, Event::Ready { .. }));
+    assert!(matches!(server.next().await, Event::Idle));
+
+    let lib = server.root.join("src/lib.rs");
+    let original = std::fs::read_to_string(&lib).unwrap();
+
+    server.send(r#"{"cmd":"task","text":"rewrite the lib"}"#);
+    server.until(is_idle).await;
+    assert_ne!(
+        std::fs::read_to_string(&lib).unwrap(),
+        original,
+        "the turn should have changed the file"
+    );
+
+    server.send(r#"{"cmd":"undo"}"#);
+    let (event, _) = server.until(|e| matches!(e, Event::Undone { .. })).await;
+    match event {
+        Event::Undone { files } => assert!(!files.is_empty(), "something was put back"),
+        _ => unreachable!(),
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&lib).unwrap(),
+        original,
+        "undo must restore the exact prior content"
+    );
+}
+
+#[tokio::test]
+async fn undoing_before_any_turn_is_an_error_not_a_crash() {
+    let mut server = Server::start(vec![text_response("idle")], false);
+
+    assert!(matches!(server.next().await, Event::Ready { .. }));
+    assert!(matches!(server.next().await, Event::Idle));
+
+    server.send(r#"{"cmd":"undo"}"#);
+    match server.next().await {
+        Event::Error { message } => assert!(message.contains("no checkpoint"), "{message}"),
+        _ => panic!("undo with nothing to undo should report an error"),
+    }
+}
+
 #[tokio::test]
 async fn the_loop_answers_a_command_and_returns_to_idle() {
     // The baseline the rest of the file depends on: the protocol works when

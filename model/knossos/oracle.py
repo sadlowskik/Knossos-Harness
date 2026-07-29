@@ -62,6 +62,8 @@ import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass, field, replace
+
+from . import sandbox
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -557,9 +559,8 @@ class Oracle:
             argv += targets
 
         try:
-            proc = subprocess.run(argv, cwd=self.root, capture_output=True,
-                                  text=True, timeout=self.timeout,
-                                  stdin=subprocess.DEVNULL, shell=False)
+            proc = sandbox.DEFAULT.run(argv, cwd=self.root,
+                                       timeout=self.timeout)
         except OSError as exc:
             return TierResult(tier.number, tier.label, passed=True, skipped=True,
                               detail=f"skipped: could not run ({exc})")
@@ -605,9 +606,8 @@ class Oracle:
             if targets:
                 argv += targets
         try:
-            proc = subprocess.run(argv, cwd=self.root, capture_output=True,
-                                  text=True, timeout=self.timeout,
-                                  stdin=subprocess.DEVNULL, shell=False)
+            proc = sandbox.DEFAULT.run(argv, cwd=self.root,
+                                       timeout=self.timeout)
         except (OSError, subprocess.TimeoutExpired):
             # No baseline is a worse verdict, not a reason to abandon the run:
             # an empty counter forgives nothing, which is the behaviour before
@@ -668,11 +668,10 @@ class Oracle:
         if not any(not t.scopes for t in self.tiers):
             return None                      # no pytest-shaped tier configured
         try:
-            proc = subprocess.run(
+            proc = sandbox.DEFAULT.run(
                 [sys.executable, "-m", "pytest", "--collect-only", "-q",
                  "-p", "no:cacheprovider"],
-                cwd=self.root, capture_output=True, text=True,
-                timeout=self.timeout, stdin=subprocess.DEVNULL, shell=False)
+                cwd=self.root, timeout=self.timeout)
         except (OSError, subprocess.TimeoutExpired):
             return None
         # Count node ids rather than parsing the summary line, whose wording

@@ -33,6 +33,7 @@ Talos is testable today against a scripted engine and a trivial verifier.
 from __future__ import annotations
 
 import json
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,7 @@ from typing import Any, Callable, Iterable, List, Optional, Protocol, Sequence
 
 from .ariadne import Ariadne, Halt, StepOutcome
 from .engine import Usage
+from .interject import Interjections
 from .jsonrpc import log
 from .lethe import Lethe, estimate_tokens
 from .tools import (Tool, ToolCall, ToolRegistry, ToolResult, ToolSpec,
@@ -136,6 +138,27 @@ DELEGATE = "delegate"
 #: reading does not land in the parent's context -- and nothing beyond it has
 #: paid for itself in any harness the author is aware of.
 MAX_DELEGATION_DEPTH = 1
+
+#: How many recent tool-call signatures count as "again".
+#:
+#: This used to be one -- a step was a repeat only of the step immediately
+#: before it -- which cannot see a loop that alternates. A model going
+#: A, B, A, B, A, B never produces two consecutive identical signatures, so
+#: `is_futile` never fired, `stuck_after` never tripped, and the run spent its
+#: whole ceiling achieving nothing. That is the exact pathology Ariadne exists
+#: to prevent, arriving through the one door the check did not cover.
+#:
+#: Four, because the window only has to be as long as the cycle it must close:
+#: a cycle of length k is caught once k signatures fit, and the cycles that
+#: actually occur are short (re-issuing one failing edit, alternating between
+#: two, walking a three-step ritual). Longer than the cycle buys nothing, and
+#: the ceiling remains the backstop for anything more baroque.
+#:
+#: Bounding it at all -- rather than remembering everything since the last
+#: change -- keeps "again" meaning *recently*. An unbounded window would make
+#: the detector more sensitive the longer a run had gone without progress,
+#: which is a coupling nobody asked for and nothing would test.
+FUTILE_WINDOW = 4
 
 
 class Delegate(Tool):
@@ -314,7 +337,8 @@ class Entry(str):
 class Event:
     """Progress, for a caller that wants to stream it (the ACP server does)."""
 
-    kind: str        # step | plan_step | text | thought | tool | verdict | halt
+    kind: str        # step | plan_step | text | thought | tool | verdict |
+                     # halt | interjected
     step: int = 0
     text: str = ""
     call: Optional[ToolCall] = None
@@ -325,8 +349,20 @@ class Event:
 
 @dataclass
 class Outcome:
+    #: Talos is bounded by Ariadne's step ceiling, never by wall clock.
+    budget_kind = "steps"
+
     halt: Halt
     steps_used: int
+    #: Where `succeeded` came from: `verifier` when a real verdict decided it,
+    #: `unverified` when the run used `accept_everything` and DONE therefore
+    #: means only that the engine stopped calling tools. The distinction
+    #: `CaseResult.claim_source` keeps visible, so a control arm's `honest` is
+    #: never read beside a verified arm's as though they measured the same thing.
+    claim_source: str = "verifier"
+    #: Tool calls issued across the run, so `steps_used` can be read against the
+    #: work done rather than as though a step were a fixed unit.
+    tools_used: int = 0
     changed: List[Path] = field(default_factory=list)
     verdict: Optional[Verdict] = None
     summary: str = ""
@@ -380,9 +416,9 @@ EMPTY_REPLY_TEXT = (
 #: The halting policy will stop this on its own, but stopping is the expensive
 #: outcome: the engine has budget left at this point and only needs to notice.
 REPEATED_CALL_NOTE = (
-    "\n## Note\nThat was the same tool call, with the same arguments, as your "
-    "previous step, and it changed nothing. Repeating it again will not "
-    "produce a different result. Read the error above and do something "
+    "\n## Note\nThat was the same tool call, with the same arguments, as one "
+    "you made a moment ago, and it changed nothing. Cycling back to it will "
+    "not produce a different result. Read the error above and do something "
     "different: check the file's actual contents, try a different approach, or "
     "state plainly what is blocking you.")
 
@@ -421,6 +457,14 @@ class Talos:
                 [Delegate(self._spawn)], self.tools)
         self.ariadne = ariadne or Ariadne()
         self.verify = verifier or accept_everything
+        #: Whether `Outcome.succeeded` is backed by evidence. `accept_everything`
+        #: agrees with the engine by construction, so a run using it reports DONE
+        #: on the model's say-so and `honest` becomes a tautology. The eval needs
+        #: to know that to avoid printing such a run beside a verified one -- and
+        #: the control arm depends on exactly this configuration, so the
+        #: distinction has to be recorded rather than assumed away.
+        self.claim_source = ("unverified" if self.verify is accept_everything
+                             else "verifier")
         self.constitution = constitution
         #: Revises the *remaining* plan after a step fails. `None` keeps the
         #: original behaviour: the plan is a guess made before anything was
@@ -452,10 +496,20 @@ class Talos:
         #: correct but slow -- the ACP layer passes `Oracle.quick`.
         self.interim = interim or self.verify
 
+        #: Words from the user, delivered at the next step boundary. Hold this
+        #: object before starting a run and push to it while the loop is going
+        #: to steer it without ending it. See `knossos.interject`.
+        self.interjections = Interjections()
+
         #: The rendered conversation so far. Persisted across `run` and
         #: `resume` so a user can redirect without losing context.
         self.transcript: List[str] = []
         self.changed: List[Path] = []
+        #: Tool calls issued across the run. Reported on `Outcome` so the eval
+        #: can read `steps_used` against the work a step contained: this loop
+        #: batches adjacent parallel-safe calls into one turn, so step count
+        #: alone rewards a model that happens to emit them together.
+        self.tools_used = 0
         self.task: str = ""
         #: Reasoning emitted during the turn in flight. Reset per turn by
         #: `_turn`, read once the stream has been drained.
@@ -729,6 +783,11 @@ class Talos:
                             require_action=not worked)
 
         return Outcome(halt=final.halt, steps_used=used + final.steps_used,
+                       # Not `used + final.tools_used`: the counter lives on the
+                       # executor and already spans every plan step, the same
+                       # reason `usage` is passed whole rather than summed.
+                       tools_used=self.tools_used,
+                       claim_source=self.claim_source,
                        changed=list(self.changed), verdict=final.verdict,
                        summary=final.summary, dry_run=self.ws.dry_run,
                        # `self.usage` already spans every plan step: it is reset
@@ -1093,11 +1152,14 @@ class Talos:
         noops = 0
         last_verdict: Optional[Verdict] = None
         last_text = ""
-        #: The previous step's tool calls, for spotting a repeat. Local to this
+        #: Recent tool-call signatures, for spotting a repeat. Local to this
         #: drive rather than to the instance: each plan step and each `resume`
         #: gets a fresh budget, so it should get a fresh idea of what "again"
         #: means.
-        last_signature = ""
+        #:
+        #: A window rather than a single previous value, because a loop does not
+        #: have to be adjacent to be a loop -- see `FUTILE_WINDOW`.
+        recent_signatures: "deque[str]" = deque(maxlen=FUTILE_WINDOW)
         #: Successful calls to tools that can change something outside the
         #: conversation, this turn. The discriminator between "verified" and
         #: "verified nothing": every tier is satisfied vacuously by an empty
@@ -1128,6 +1190,18 @@ class Talos:
             nudge = ariadne.pressure(step)
             if nudge:
                 self.transcript.append(f"\n## Budget\n{nudge}")
+
+            # Drained here, at the one point in the step where the transcript is
+            # a complete exchange -- see `knossos.interject` for why not sooner.
+            # After the budget note, so the user's words are the last thing
+            # before the request rather than buried behind the harness's own
+            # prompting.
+            interjected = self.interjections.drain()
+            if interjected:
+                self.transcript.append(
+                    f"\n## User\n{Interjections.render(interjected)}")
+                emit(Event(kind="interjected", step=step,
+                           text="\n".join(interjected)))
 
             emit(Event(kind="step", step=step))
 
@@ -1161,8 +1235,20 @@ class Talos:
                           calls=calls, results=results, native=native))
 
                 signature = _signature(calls)
-                outcome.repeated = signature == last_signature
-                last_signature = signature
+                outcome.repeated = signature in recent_signatures
+                # A step that changed something is where "again" starts over:
+                # whatever the model was circling, it is no longer circling it,
+                # and the reads that led up to the change must not be held
+                # against the reads that follow it.
+                #
+                # The window is emptied *and* this step is then remembered, not
+                # skipped. Dropping it would lose the plainest loop of all --
+                # one successful edit followed by the same edit re-issued
+                # forever, each retry changing nothing because the first one
+                # already landed.
+                if outcome.files_changed:
+                    recent_signatures.clear()
+                recent_signatures.append(signature)
                 if outcome.is_futile:
                     # Say so in the transcript as well as counting it. Halting
                     # is the backstop; the cheaper outcome is the engine
@@ -1170,7 +1256,12 @@ class Talos:
                     # else while it still has budget left.
                     self.transcript.append(REPEATED_CALL_NOTE)
             elif not reply.strip():
-                last_signature = ""
+                # The window is deliberately *not* cleared here. A silent turn
+                # is not progress -- it is already a noop by `is_noop`, and it
+                # counts toward `stuck_after` on its own. Forgetting the loop
+                # because the model paused inside it is how A, silence, A reads
+                # as two unrelated steps; the old single-slot version reset here
+                # and did exactly that.
                 # An engine that said nothing has not claimed to be finished, so
                 # there is nothing to verify. Falling through to the verifier
                 # here is what turns a truncated reply into a *passing* run: the
@@ -1314,6 +1405,10 @@ class Talos:
                    emit: Callable[[Event], None]) -> List[ToolResult]:
         """Run a turn's calls, overlapping the ones that may overlap.
 
+        Counted here rather than at the emit site: this is where a turn's calls
+        are known as a set, and it runs for permitted and refused calls alike --
+        a call the user declined was still a call the model chose to make.
+
         # What runs together
 
         A *run* of adjacent calls that are all `parallel_safe` goes at once;
@@ -1350,6 +1445,7 @@ class Talos:
         # a missing or broken asker, and telling the engine a human rejected it
         # when none was consulted invites it to give up on a task that was never
         # actually declined.
+        self.tools_used += len(calls)
         allowed: List[bool] = []
         for call in calls:
             permitted = self._permitted(call)
@@ -1473,7 +1569,9 @@ class Talos:
                 last_text: str, emit: Callable[[Event], None]) -> Outcome:
         summary = self._summarise(halt, verdict, last_text)
         emit(Event(kind="halt", step=step, halt=halt, text=summary))
-        return Outcome(halt=halt, steps_used=step, changed=list(self.changed),
+        return Outcome(halt=halt, steps_used=step, tools_used=self.tools_used,
+                       claim_source=self.claim_source,
+                       changed=list(self.changed),
                        verdict=verdict, summary=summary, dry_run=self.ws.dry_run,
                        usage=self.usage)
 

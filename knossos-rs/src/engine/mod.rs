@@ -12,6 +12,7 @@
 //! (`prompt_fallback`) that it parses itself.
 
 pub mod anthropic;
+pub mod error;
 pub mod mock;
 pub mod ollama;
 pub mod prompt_fallback;
@@ -20,6 +21,7 @@ pub mod types;
 use anyhow::Result;
 use async_trait::async_trait;
 
+pub use error::EngineError;
 pub use types::{
     Content, Message, Request, Response, Role, StopReason, ToolDef, Usage,
 };

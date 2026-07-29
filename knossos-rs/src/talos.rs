@@ -14,7 +14,7 @@
 //! turns a one-shot command into an interactive session: the user disagrees,
 //! and the agent keeps its whole context instead of starting over.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -41,12 +41,59 @@ const EMPTY_REPLY_NOTE: &str =
      before any content was produced. Reply with a tool call, or a short \
      statement of what you intend to do.";
 
+/// How many recent tool-call signatures count as "again".
+///
+/// Ported from the Python side, where this was a one-step lookback and could
+/// not see a loop that alternates. Here it was worse: there was no repeat check
+/// at all, so `is_noop` was the whole staleness test and an engine re-issuing
+/// one failing `edit_file` ran to the ceiling — it calls a tool every step, so
+/// it is never a noop.
+///
+/// Four, because the window only has to be as long as the cycle it must close,
+/// and the cycles that actually occur are short: re-issuing one failing edit,
+/// alternating between two, walking a three-step ritual. Longer buys nothing
+/// and `max_steps` remains the backstop for anything more baroque. Bounding it
+/// at all keeps "again" meaning *recently* — an unbounded window would grow
+/// more sensitive the longer a run went without progress, a coupling nothing
+/// would test.
+pub const FUTILE_WINDOW: usize = 4;
+
+/// Fed back when the engine repeats a call that achieved nothing.
+///
+/// Halting is the backstop; the cheaper outcome is the engine noticing it is
+/// going in a circle and trying something else while it still has budget.
+const REPEATED_CALL_NOTE: &str =
+    "That was the same tool call, with the same arguments, as one you made a \
+     moment ago, and it changed nothing. Cycling back to it will not produce a \
+     different result. Read the error above and do something different: check \
+     the file's actual contents, try a different approach, or state plainly \
+     what is blocking you.";
+
 /// Fed back when the engine asks to be verified without having done anything.
 const NOTHING_DONE_NOTE: &str =
     "Nothing has been changed or run this turn, so there is nothing to verify \
      and the task cannot be considered done. Reading a file tells you what to \
      do; it is not doing it. Either carry out the task with write_file, \
      edit_file or run, or state plainly what is blocking you.";
+
+/// A stable identity for a step's tool calls.
+///
+/// Name and arguments, in the order issued. The provider's call `id` is
+/// deliberately excluded: it is fresh on every turn, so including it would make
+/// every step unique and the repeat check dead on arrival — the same reason the
+/// Python side excludes the raw text of the call.
+///
+/// `serde_json::Value` keeps object keys in a `BTreeMap` unless `preserve_order`
+/// is enabled, which this crate does not enable, so two calls with the same
+/// arguments in a different order already serialise identically. That is what
+/// makes this comparable without a hand-rolled canonicaliser.
+fn signature(calls: &[(String, String, serde_json::Value)]) -> String {
+    let pairs: Vec<serde_json::Value> = calls
+        .iter()
+        .map(|(_, name, input)| serde_json::json!([name, input]))
+        .collect();
+    serde_json::Value::Array(pairs).to_string()
+}
 
 /// Consulted before a tool call that can change something outside the
 /// conversation.
@@ -94,6 +141,11 @@ pub struct Talos {
     /// the executor proceeds, which is right for a scripted run and wrong for
     /// an editor — so the front ends that can ask, do. See [`Approver`].
     pub approver: Option<std::sync::Arc<dyn Approver>>,
+    /// Words from the user, delivered at the next step boundary.
+    ///
+    /// Clone the handle out with [`Talos::interjections`] before starting a
+    /// run; pushing to it afterwards steers the loop without ending it.
+    pub interjections: crate::interject::Interjections,
 
     // --- session state, persisted across `run`/`resume` ---
     /// The running conversation. Survives between turns.
@@ -132,6 +184,7 @@ impl Talos {
             judge,
             lethe: crate::lethe::Lethe::default(),
             approver: None,
+            interjections: crate::interject::Interjections::new(),
             messages: Vec::new(),
             changed: BTreeSet::new(),
             task: String::new(),
@@ -169,6 +222,7 @@ impl Talos {
             plan.render()
         ))];
 
+        self.mark_turn();
         self.drive().await
     }
 
@@ -182,7 +236,61 @@ impl Talos {
             return self.run(instruction, &plan).await;
         }
         self.messages.push(Message::user_text(instruction.to_string()));
+        self.mark_turn();
         self.drive().await
+    }
+
+    /// The label every turn is checkpointed under.
+    ///
+    /// One rolling mark rather than one per turn: undoing is something people
+    /// want for the turn that just went wrong, and a growing set of labels
+    /// nobody names is a leak with a filing system. Rewinding further back is
+    /// what version control is for.
+    pub const LAST_TURN: &'static str = "turn";
+
+    /// Take the checkpoint a later [`Talos::undo_turn`] rewinds to.
+    ///
+    /// Costs a `Vec::len()` — see [`ToolCtx::checkpoint`] — so doing it on
+    /// every turn is free.
+    fn mark_turn(&mut self) {
+        self.ctx.checkpoint(Self::LAST_TURN);
+    }
+
+    /// Put the workspace back as it was before the last turn began.
+    ///
+    /// Returns the files that changed. Errors when no turn has run yet, which
+    /// is the honest answer to "undo what?".
+    pub fn undo_turn(&mut self) -> Result<Vec<PathBuf>> {
+        let restored = self.ctx.rewind(Self::LAST_TURN)?;
+        for path in &restored {
+            // The index has to follow the files back, or the next turn reasons
+            // about symbols that no longer exist.
+            let _ = self.scribe.refresh(path);
+            self.changed.remove(path);
+        }
+        Ok(restored)
+    }
+
+    /// Adopt a queue that already exists, instead of the one `new` built.
+    ///
+    /// Needed because of a construction order that cannot be avoided: anything
+    /// which pushes interjections may have to exist *before* Talos does — a
+    /// hook inside the [`ToolRegistry`] is built and moved in by `new`, and a
+    /// front end may want the handle before the first run. Without this the
+    /// only way to share one queue is to overwrite the field afterwards, which
+    /// works and reads like a mistake.
+    pub fn with_interjections(mut self, handle: crate::interject::Interjections) -> Self {
+        self.interjections = handle;
+        self
+    }
+
+    /// A handle for steering this run from outside it.
+    ///
+    /// Clone it before calling `run`, then push to it while the loop is going;
+    /// what you push arrives at the next step boundary. See
+    /// [`interject`](crate::interject) for why not sooner.
+    pub fn interjections(&self) -> crate::interject::Interjections {
+        self.interjections.clone()
     }
 
     /// Proposed changes, when running dry.
@@ -252,10 +360,29 @@ impl Talos {
         // what to do; it is not doing it. Caught by
         // `reading_a_file_is_not_doing_the_task`.
         let mut acted = 0usize;
+        // Recent tool-call signatures, for spotting a repeat. Local to this
+        // drive rather than to the struct: each run gets a fresh budget, so it
+        // should get a fresh idea of what "again" means.
+        let mut recent: VecDeque<String> = VecDeque::with_capacity(FUTILE_WINDOW);
 
         for step in 1..=self.ariadne.max_steps {
             if let Some(note) = self.ariadne.pressure(step) {
                 self.messages.push(Message::user_text(note));
+            }
+
+            // Drained here, at the one point in the step where the conversation
+            // is a complete exchange. Pushed after the pressure note so the
+            // user's words are the last thing before the request rather than
+            // buried behind the harness's own prompting.
+            let interjected = self.interjections.drain();
+            if !interjected.is_empty() {
+                self.session.log(&TraceEvent::Interjected {
+                    step,
+                    notes: interjected.clone(),
+                });
+                self.messages.push(Message::user_text(
+                    crate::interject::Interjections::render(&interjected),
+                ));
             }
 
             self.session.log(&TraceEvent::StepStarted {
@@ -418,12 +545,39 @@ impl Talos {
                     });
                 }
                 self.messages.push(Message::user(results));
+
+                let sig = signature(&calls);
+                outcome.repeated = recent.contains(&sig);
+                // A step that changed something is where "again" starts over:
+                // whatever the model was circling, it is no longer circling it,
+                // and the reads that led up to the change must not be held
+                // against the reads that follow it.
+                //
+                // The window is emptied *and* this step is then remembered, not
+                // skipped. Dropping it would lose the plainest loop of all: one
+                // edit that lands, then the identical edit re-issued forever,
+                // each retry changing nothing because the first one worked.
+                if outcome.files_changed > 0 {
+                    recent.clear();
+                }
+                if recent.len() == FUTILE_WINDOW {
+                    recent.pop_front();
+                }
+                recent.push_back(sig);
+                if outcome.is_futile() {
+                    self.messages
+                        .push(Message::user_text(REPEATED_CALL_NOTE.to_string()));
+                }
             }
 
-            if outcome.is_noop() {
-                noops += 1;
-            } else {
+            // `made_progress`, not `is_noop`: a step that repeated a recent
+            // call and changed nothing is unproductive even though it called a
+            // tool, and before `is_futile` existed here that step reset the
+            // counter and bought the loop another turn.
+            if outcome.made_progress() {
                 noops = 0;
+            } else {
+                noops += 1;
             }
 
             let halt = self.ariadne.assess(step, &outcome, noops);

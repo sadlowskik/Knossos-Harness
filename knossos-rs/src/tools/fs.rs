@@ -106,6 +106,19 @@ impl Tool for WriteFile {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let content = req_str(input, "content")?;
 
+        // A whole-file write replaces everything, including whatever changed
+        // since the agent last looked at it. Refusing costs a re-read and a
+        // retry; overwriting costs somebody their work, silently, with the
+        // transcript showing a successful write.
+        if let Some(conflict) = ctx.conflict(&path) {
+            return Ok(ToolOutput::error(format!(
+                "{} {}. Read it again before writing — the version you composed \
+                 this content from is no longer what is there.",
+                ctx.display(&path),
+                conflict.describe()
+            )));
+        }
+
         ctx.write(&path, content)?;
 
         let n = content.lines().count();
@@ -438,6 +451,131 @@ mod tests {
             .run(&json!({"path": "../escaped.rs", "content": "x"}), &c)
             .await
             .is_err());
+    }
+
+    /// The case this exists for: the agent reads a file, someone else changes
+    /// it, and the agent writes back content composed from what it read.
+    #[tokio::test]
+    async fn a_whole_file_write_after_an_external_edit_is_refused() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "fn one() {}\n").unwrap();
+
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        // The user saves the file in their editor while the agent is thinking.
+        std::fs::write(c.root().join("a.rs"), "fn one() {}\nfn theirs() {}\n").unwrap();
+
+        let w = WriteFile
+            .run(&json!({"path": "a.rs", "content": "fn one() {}\nfn mine() {}\n"}), &c)
+            .await
+            .unwrap();
+
+        assert!(w.is_error, "the write should have been refused");
+        assert!(w.content.contains("changed on disk"));
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "fn one() {}\nfn theirs() {}\n",
+            "their edit must survive"
+        );
+    }
+
+    #[tokio::test]
+    async fn creating_a_file_the_agent_has_never_read_is_not_a_conflict() {
+        let (_d, c) = ctx();
+        let w = WriteFile
+            .run(&json!({"path": "new.rs", "content": "fresh\n"}), &c)
+            .await
+            .unwrap();
+        assert!(!w.is_error, "{}", w.content);
+    }
+
+    /// The harness's own writes are not external changes. Without re-stamping
+    /// on write, the second write to any file would be refused.
+    #[tokio::test]
+    async fn consecutive_writes_by_the_agent_do_not_conflict() {
+        let (_d, c) = ctx();
+        for content in ["one\n", "two\n", "three\n"] {
+            let w = WriteFile
+                .run(&json!({"path": "a.rs", "content": content}), &c)
+                .await
+                .unwrap();
+            assert!(!w.is_error, "{}", w.content);
+        }
+        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "three\n");
+    }
+
+    #[tokio::test]
+    async fn a_file_deleted_after_being_read_is_reported_as_such() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "gone soon\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+        std::fs::remove_file(c.root().join("a.rs")).unwrap();
+
+        let w = WriteFile
+            .run(&json!({"path": "a.rs", "content": "back\n"}), &c)
+            .await
+            .unwrap();
+        assert!(w.is_error);
+        assert!(w.content.contains("deleted"));
+    }
+
+    /// `edit_file` needs no freshness check because it re-reads and requires an
+    /// exact match. This pins that reasoning: if the targeted region changed,
+    /// the edit fails on its own.
+    #[tokio::test]
+    async fn an_edit_whose_region_changed_externally_fails_on_the_match() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        std::fs::write(c.root().join("a.rs"), "let x = 99;\n").unwrap();
+
+        let e = EditFile
+            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}), &c)
+            .await
+            .unwrap();
+        assert!(e.is_error);
+        assert!(e.content.contains("not found"));
+    }
+
+    /// The other half of that reasoning: an external change elsewhere in the
+    /// file must not block an edit that still matches. Refusing here would make
+    /// the agent unable to work in any file the user is also touching.
+    #[tokio::test]
+    async fn an_edit_elsewhere_in_an_externally_changed_file_still_applies() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\nlet y = 2;\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\nlet y = 2;\nlet z = 3;\n").unwrap();
+
+        let e = EditFile
+            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 7;"}), &c)
+            .await
+            .unwrap();
+        assert!(!e.is_error, "{}", e.content);
+
+        let after = std::fs::read_to_string(c.root().join("a.rs")).unwrap();
+        assert!(after.contains("let x = 7;"), "the edit applied");
+        assert!(after.contains("let z = 3;"), "their addition survived");
+    }
+
+    #[tokio::test]
+    async fn accepting_the_current_state_clears_a_conflict() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "one\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+        std::fs::write(c.root().join("a.rs"), "theirs\n").unwrap();
+
+        assert!(c.conflict(&c.root().join("a.rs")).is_some());
+        c.accept_current(&c.root().join("a.rs"));
+        assert!(c.conflict(&c.root().join("a.rs")).is_none());
+
+        let w = WriteFile
+            .run(&json!({"path": "a.rs", "content": "mine\n"}), &c)
+            .await
+            .unwrap();
+        assert!(!w.is_error, "{}", w.content);
     }
 
     #[tokio::test]

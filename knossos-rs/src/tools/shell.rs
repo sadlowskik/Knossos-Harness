@@ -9,8 +9,13 @@
 //!
 //! On top of that, the program name must be on an allowlist, and `git` is
 //! restricted to read-only subcommands.
+//!
+//! The allowlist bounds *which* program runs, which is as far as it can go:
+//! `cargo test` is on it, and `cargo test` executes whatever the agent wrote.
+//! [`Sandbox`] covers the other half — what that code can see once it is
+//! running — and is the reason the harness's own API key is not readable from
+//! inside a test the agent authored.
 
-use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -18,6 +23,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::{req_str, Tool, ToolCtx, ToolOutput};
+use crate::sandbox::Sandbox;
 
 const MAX_OUTPUT: usize = 30_000;
 
@@ -39,11 +45,33 @@ const CARGO_DENIED: &[&str] = &["publish", "install", "login", "owner", "yank"];
 
 pub struct Run {
     allowed: Vec<String>,
+    sandbox: Sandbox,
 }
 
 impl Default for Run {
     fn default() -> Self {
-        Run { allowed: ALLOWED.iter().map(|s| s.to_string()).collect() }
+        Run {
+            allowed: ALLOWED.iter().map(|s| s.to_string()).collect(),
+            sandbox: Sandbox::default(),
+        }
+    }
+}
+
+impl Run {
+    /// Run commands under a different environment policy.
+    ///
+    /// The Oracle spawns cargo too and holds its own [`Sandbox`]; see
+    /// [`Oracle::with_sandbox`](crate::oracle::Oracle::with_sandbox). The two
+    /// share a spawn path so their *mechanism* cannot diverge, but the policy
+    /// values are independent — setting one and not the other leaves the
+    /// verification ladder on the default.
+    pub fn with_sandbox(mut self, sandbox: Sandbox) -> Self {
+        self.sandbox = sandbox;
+        self
+    }
+
+    pub fn sandbox(&self) -> &Sandbox {
+        &self.sandbox
     }
 }
 
@@ -88,51 +116,52 @@ impl Tool for Run {
             return Ok(ToolOutput::error(reason));
         }
 
-        let child = tokio::process::Command::new(program)
-            .args(args)
-            .current_dir(ctx.root())
-            .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output();
-
-        // `cargo run` and `cargo test` are both on the allowlist, so this
-        // executes workspace code — which is entitled to loop forever. Every
-        // other subprocess in either harness is bounded; this one was not, and
-        // `serve` awaits dispatch inline on the stdin-reading thread, so a
-        // single hang wedged the server permanently against every later
-        // command, `shutdown` included.
-        let output = match tokio::time::timeout(COMMAND_TIMEOUT, child).await {
-            Err(_) => {
-                return Ok(ToolOutput::error(format!(
-                    "`{program}` timed out after {COMMAND_TIMEOUT:?} and was killed"
-                )))
-            }
-            Ok(Err(e)) => {
+        // Environment scrubbing, no stdin, the deadline and the tree kill all
+        // come from here. `cargo run` and `cargo test` are both on the
+        // allowlist, so this executes workspace code — which is entitled to
+        // loop forever. Every other subprocess in either harness is bounded;
+        // this one was not, and `serve` awaits dispatch inline on the
+        // stdin-reading thread, so a single hang wedged the server permanently
+        // against every later command, `shutdown` included.
+        let finished = match self
+            .sandbox
+            .run_bounded(program, args, ctx.root(), COMMAND_TIMEOUT)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
                 return Ok(ToolOutput::error(format!("failed to run `{program}`: {e}")))
             }
-            Ok(Ok(o)) => o,
         };
 
         let mut body = String::new();
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stdout.trim().is_empty() {
-            body.push_str(&stdout);
+        if !finished.stdout.trim().is_empty() {
+            body.push_str(&finished.stdout);
         }
-        if !stderr.trim().is_empty() {
+        if !finished.stderr.trim().is_empty() {
             if !body.is_empty() {
                 body.push('\n');
             }
-            body.push_str(&stderr);
+            body.push_str(&finished.stderr);
         }
         if body.trim().is_empty() {
             body.push_str("(no output)");
         }
 
-        let code = output.status.code().unwrap_or(-1);
-        let body = format!("exit {code}\n\n{}", cap(body));
+        if finished.timed_out {
+            // Whatever it managed to print before the deadline is kept: a build
+            // that hung after emitting three errors has told the agent
+            // something, and discarding it would send it back to guess.
+            return Ok(ToolOutput::error(format!(
+                "`{program}` timed out after {COMMAND_TIMEOUT:?}; it and everything \
+                 it started were killed\n\n{}",
+                cap(body)
+            )));
+        }
 
-        Ok(if output.status.success() {
+        let body = format!("exit {}\n\n{}", finished.code(), cap(body));
+
+        Ok(if finished.success() {
             ToolOutput::ok(body)
         } else {
             // A failing command is information, not a harness error: the engine

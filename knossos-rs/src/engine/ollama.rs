@@ -13,7 +13,7 @@
 //! calling, set it false, and the harness routes through the prompted-JSON
 //! shim in `prompt_fallback`.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,8 @@ use crate::engine::types::{
 };
 use crate::engine::Engine;
 
+/// Names this backend in [`EngineError`](crate::engine::EngineError).
+const PROVIDER: &str = "Ollama";
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 pub const DEFAULT_MODEL: &str = "qwen3-coder:30b";
 
@@ -98,12 +100,20 @@ impl Engine for OllamaEngine {
             .json(&body)
             .send()
             .await
-            .context("request to Ollama failed (is `ollama serve` running?)")?;
+            .map_err(|e| crate::engine::EngineError::Transport {
+                provider: PROVIDER,
+                detail: format!("request failed ({e}) — is `ollama serve` running?"),
+            })?;
 
         let status = resp.status();
         let text = resp.text().await.context("reading Ollama response body")?;
         if !status.is_success() {
-            bail!("Ollama returned {status}: {text}");
+            return Err(crate::engine::EngineError::Status {
+                provider: PROVIDER,
+                status: status.as_u16(),
+                body: text,
+            }
+            .into());
         }
 
         let wire: WireResponse = serde_json::from_str(&text)

@@ -427,6 +427,7 @@ class DaedalusAgent:
             "session/load": self.session_load,
             "session/prompt": self.session_prompt,
             "session/cancel": self.session_cancel,
+            "session/interject": self.session_interject,
             "session/set_mode": self.session_set_mode,
             "session/fork": self.session_fork,
             "session/list": self.session_list,
@@ -731,6 +732,40 @@ class DaedalusAgent:
         session = self.sessions.get(params.get("sessionId", ""))
         if session:
             session.cancel.set()
+
+    def session_interject(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Say something to a prompt that is already running.
+
+        Handled on the reading thread while `session/prompt` is still executing,
+        the same way `session/cancel` is -- a message that had to queue behind
+        the very turn it is meant to change would arrive too late to be worth
+        sending.
+
+        The difference from cancel is the point: this does not stop the run. The
+        text is delivered at the next step boundary, so the agent keeps
+        everything it has worked out so far and adjusts. See
+        `knossos.interject`.
+        """
+        session = self.sessions.get(params.get("sessionId", ""))
+        if session is None:
+            raise RpcError(INVALID_PARAMS,
+                           f"unknown session: {params.get('sessionId')}")
+
+        text = _prompt_text(params.get("prompt") or [])
+        if not text.strip():
+            text = str(params.get("text") or "")
+
+        # No Talos yet means no run to interrupt. Accepting it silently would
+        # leave the user believing the agent had been told.
+        if session.talos is None:
+            return {"accepted": False, "reason": "nothing is running"}
+
+        accepted = session.talos.interjections.push(text)
+        return {
+            "accepted": accepted,
+            **({} if accepted else
+               {"reason": "empty, or too many are already queued"}),
+        }
 
     def session_prompt(self, params: Dict[str, Any]) -> Dict[str, Any]:
         session = self.sessions.get(params.get("sessionId", ""))

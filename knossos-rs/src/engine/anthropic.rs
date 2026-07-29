@@ -3,7 +3,7 @@
 //! The reference implementation of the engine slot: native tool use, so no
 //! prompted-JSON shim is involved and tool calls round-trip exactly.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,9 @@ use crate::engine::types::{
 use crate::engine::Engine;
 
 const API_VERSION: &str = "2023-06-01";
+/// Names this backend in [`EngineError`](crate::engine::EngineError). Kept as
+/// the exact wording the old `bail!` used, so messages do not change.
+const PROVIDER: &str = "Anthropic API";
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 /// Most capable model in the current family. Sonnet is the cheaper swap for
 /// long agent loops — set `DAEDALUS_MODEL` to override.
@@ -73,12 +76,22 @@ impl Engine for AnthropicEngine {
             .json(&body)
             .send()
             .await
-            .context("request to Anthropic API failed")?;
+            .map_err(|e| crate::engine::EngineError::Transport {
+                provider: PROVIDER,
+                detail: format!("request failed: {e}"),
+            })?;
 
         let status = resp.status();
         let text = resp.text().await.context("reading Anthropic response body")?;
         if !status.is_success() {
-            bail!("Anthropic API returned {status}: {text}");
+            // Typed rather than `bail!`ed so the retry policy can read the
+            // status instead of the sentence — see `engine::error`.
+            return Err(crate::engine::EngineError::Status {
+                provider: PROVIDER,
+                status: status.as_u16(),
+                body: text,
+            }
+            .into());
         }
 
         let wire: WireResponse = serde_json::from_str(&text)

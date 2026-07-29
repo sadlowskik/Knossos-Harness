@@ -10,7 +10,15 @@
 //! 2. **No shell.** [`shell`] splits commands into program and arguments and
 //!    executes them directly. There is no shell interpreter, so `&&`, `|`,
 //!    backticks and redirection are inert, and the program name is checked
-//!    against an allowlist.
+//!    against an allowlist. What the resulting process can *see* is a separate
+//!    question, answered by [`sandbox`](crate::sandbox).
+//! 3. **Freshness.** Reads record a [`Stamp`] of what was on disk. A whole-file
+//!    write whose target changed since then is refused rather than applied, so
+//!    an edit made outside the harness — by the user, by a formatter, by a
+//!    rebase — is not silently overwritten by content the model composed from
+//!    a stale read. `edit_file` needs no such check: it re-reads at edit time
+//!    and requires its `old_string` to still match, which fails naturally when
+//!    the region it targeted has moved.
 //!
 //! Tools also report which files they changed. That is not bookkeeping: it is
 //! what lets Ariadne distinguish a step that did work from one that spun, and
@@ -24,6 +32,7 @@
 //! kept elsewhere would quietly classify the next writing tool as a read.
 
 pub mod fs;
+pub mod history;
 pub mod search;
 pub mod shell;
 
@@ -37,6 +46,7 @@ use async_trait::async_trait;
 use crate::diff::{diff_file, FileDiff};
 use crate::engine::ToolDef;
 
+pub use history::{Conflict, History, JournalEntry, Stamp};
 
 /// What a tool is allowed to touch.
 ///
@@ -50,6 +60,11 @@ pub struct ToolCtx {
     root: PathBuf,
     dry_run: bool,
     staged: Arc<Mutex<BTreeMap<PathBuf, String>>>,
+    /// Freshness stamps and the undo journal — what already happened, as
+    /// opposed to what is permitted, which is the rest of this type. Shared
+    /// with every clone of the context, so a front end holding one sees the
+    /// same history as the loop holding another. See [`history`].
+    history: History,
 }
 
 impl ToolCtx {
@@ -59,6 +74,7 @@ impl ToolCtx {
             root: root.into(),
             dry_run: false,
             staged: Arc::new(Mutex::new(BTreeMap::new())),
+            history: History::new(),
         }
     }
 
@@ -79,9 +95,14 @@ impl ToolCtx {
     /// Read a file, preferring staged content over what is on disk.
     pub fn read(&self, path: &Path) -> std::io::Result<String> {
         if let Some(staged) = self.staged.lock().unwrap().get(path) {
+            // Deliberately not stamped: this is the harness's own pending work,
+            // not an observation of disk, and recording it would make every
+            // later freshness check compare against the wrong thing.
             return Ok(staged.clone());
         }
-        std::fs::read_to_string(path)
+        let content = std::fs::read_to_string(path)?;
+        self.history.observed(path, &content);
+        Ok(content)
     }
 
     /// Write a file, or stage it when running dry.
@@ -93,10 +114,42 @@ impl ToolCtx {
                 .insert(path.to_path_buf(), content.to_string());
             return Ok(());
         }
+        self.history.record(path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, content)
+        std::fs::write(path, content)?;
+        // The harness's own write is not an external change. Without this, the
+        // second write to a file would report a conflict against the first.
+        self.history.wrote(path, content);
+        Ok(())
+    }
+
+    /// Mark a point the workspace can be rewound to. See [`History::checkpoint`].
+    pub fn checkpoint(&self, label: impl Into<String>) -> String {
+        self.history.checkpoint(label)
+    }
+
+    /// Restore every file to its state at `label`. See [`History::rewind`].
+    pub fn rewind(&self, label: &str) -> Result<Vec<PathBuf>> {
+        self.history.rewind(label)
+    }
+
+    /// Every recorded write, oldest first.
+    pub fn journal(&self) -> Vec<JournalEntry> {
+        self.history.entries()
+    }
+
+    /// Whether `path` still holds what the harness last read from it.
+    /// See [`History::conflict`].
+    pub fn conflict(&self, path: &Path) -> Option<Conflict> {
+        self.history.conflict(path)
+    }
+
+    /// Accept whatever is on disk now as the new baseline.
+    /// See [`History::accept_current`].
+    pub fn accept_current(&self, path: &Path) {
+        self.history.accept_current(path)
     }
 
     /// Staged (path, content) pairs. Empty unless running dry.
@@ -148,7 +201,9 @@ impl ToolCtx {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            self.history.record(&path);
             std::fs::write(&path, &merged)?;
+            self.history.wrote(&path, &merged);
             written.push(path.clone());
 
             // Fully accepted means nothing is left to review for this file.
@@ -172,7 +227,9 @@ impl ToolCtx {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            self.history.record(path);
             std::fs::write(path, content)?;
+            self.history.wrote(path, content);
             written.push(path.clone());
         }
         staged.clear();
@@ -295,14 +352,26 @@ pub trait Tool: Send + Sync {
 
 pub struct ToolRegistry {
     tools: Vec<Box<dyn Tool>>,
+    hooks: Vec<Box<dyn crate::hooks::Hook>>,
 }
 
 impl ToolRegistry {
     pub fn new(tools: Vec<Box<dyn Tool>>) -> Self {
-        ToolRegistry { tools }
+        ToolRegistry { tools, hooks: Vec::new() }
+    }
+
+    /// Add a policy hook. They run in the order they are added.
+    pub fn with_hook(mut self, hook: Box<dyn crate::hooks::Hook>) -> Self {
+        self.hooks.push(hook);
+        self
     }
 
     /// The base tool set: read, write, edit, list, search, run.
+    ///
+    /// Carries [`ProtectPaths`](crate::hooks::ProtectPaths) by default, because
+    /// the hole it closes — `write_file` into `.git/`, which the path jail
+    /// permits since `.git` is under the root — is present in every workspace
+    /// and is not something a caller should have to know to opt into.
     pub fn standard() -> Self {
         ToolRegistry::new(vec![
             Box::new(fs::ReadFile),
@@ -312,6 +381,7 @@ impl ToolRegistry {
             Box::new(search::Search),
             Box::new(shell::Run::default()),
         ])
+        .with_hook(Box::new(crate::hooks::ProtectPaths::default()))
     }
 
     /// The standard set plus `search_code`, backed by the Mnemosyne index.
@@ -350,16 +420,31 @@ impl ToolRegistry {
         input: &serde_json::Value,
         ctx: &ToolCtx,
     ) -> ToolOutput {
-        let Some(tool) = self.tools.iter().find(|t| t.name() == name) else {
-            return ToolOutput::error(format!(
-                "unknown tool `{name}`; available: {}",
-                self.names().join(", ")
-            ));
+        // One exit point, so `after` sees every call without exception. An
+        // early return for any outcome — a denial, an unknown name, a failing
+        // tool — would make the hook contract "every call except the ones we
+        // forgot", which is not a contract an audit hook can be built on.
+        let chained = crate::hooks::before_chain(&self.hooks, name, input);
+        let effective = chained.input.as_ref();
+
+        let out = match &chained.denial {
+            Some(reason) => ToolOutput::error(reason.clone()),
+            None => match self.tools.iter().find(|t| t.name() == name) {
+                None => ToolOutput::error(format!(
+                    "unknown tool `{name}`; available: {}",
+                    self.names().join(", ")
+                )),
+                Some(tool) => match tool.run(effective, ctx).await {
+                    Ok(out) => out,
+                    Err(e) => ToolOutput::error(format!("{name} failed: {e:#}")),
+                },
+            },
         };
-        match tool.run(input, ctx).await {
-            Ok(out) => out,
-            Err(e) => ToolOutput::error(format!("{name} failed: {e:#}")),
+
+        for hook in &self.hooks {
+            hook.after(name, effective, &out);
         }
+        out
     }
 }
 
@@ -374,6 +459,7 @@ pub(crate) fn req_str<'a>(input: &'a serde_json::Value, key: &str) -> Result<&'a
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn ctx() -> (tempfile::TempDir, ToolCtx) {
         let dir = tempfile::tempdir().unwrap();
@@ -416,6 +502,249 @@ mod tests {
         let (_d, c) = ctx();
         let p = c.resolve("src/deep/../main.rs").unwrap();
         assert_eq!(p, c.root().join("src").join("main.rs"));
+    }
+
+    /// The hole the default hook closes, checked through `dispatch` rather than
+    /// against the hook in isolation — the path jail admits `.git` because it
+    /// is under the root, so nothing else would stop this.
+    #[tokio::test]
+    async fn the_standard_registry_refuses_to_write_into_dot_git() {
+        let (_d, c) = ctx();
+        std::fs::create_dir_all(c.root().join(".git")).unwrap();
+
+        let reg = ToolRegistry::standard();
+        let out = reg
+            .dispatch(
+                "write_file",
+                &serde_json::json!({"path": ".git/config", "content": "[remote]\n"}),
+                &c,
+            )
+            .await;
+
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("protect-paths"), "{}", out.content);
+        assert!(!c.root().join(".git/config").exists(), "nothing may be written");
+    }
+
+    #[tokio::test]
+    async fn ordinary_writes_are_unaffected_by_the_default_hook() {
+        let (_d, c) = ctx();
+        let reg = ToolRegistry::standard();
+        let out = reg
+            .dispatch(
+                "write_file",
+                &serde_json::json!({"path": "src/main.rs", "content": "fn main() {}\n"}),
+                &c,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+    }
+
+    #[test]
+    fn rewinding_restores_content_a_write_replaced() {
+        let (_d, c) = ctx();
+        let f = c.root().join("a.rs");
+        std::fs::write(&f, "original\n").unwrap();
+
+        c.checkpoint("turn-1");
+        c.write(&f, "the agent's idea\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "the agent's idea\n");
+
+        let restored = c.rewind("turn-1").unwrap();
+        assert_eq!(restored, vec![f.clone()]);
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn rewinding_deletes_a_file_that_did_not_exist_before() {
+        // Restoring empty content instead would leave a file nobody asked for.
+        let (_d, c) = ctx();
+        let f = c.root().join("invented.rs");
+
+        c.checkpoint("turn-1");
+        c.write(&f, "pub fn nobody_wanted_this() {}\n").unwrap();
+        assert!(f.exists());
+
+        c.rewind("turn-1").unwrap();
+        assert!(!f.exists(), "a file created after the mark must not survive it");
+    }
+
+    #[test]
+    fn several_writes_to_one_path_rewind_to_the_oldest_state() {
+        // The reason replay is newest-first. Oldest-first would leave the file
+        // holding whatever the *second* write replaced.
+        let (_d, c) = ctx();
+        let f = c.root().join("a.rs");
+        std::fs::write(&f, "v0\n").unwrap();
+
+        c.checkpoint("turn-1");
+        c.write(&f, "v1\n").unwrap();
+        c.write(&f, "v2\n").unwrap();
+        c.write(&f, "v3\n").unwrap();
+
+        let restored = c.rewind("turn-1").unwrap();
+        assert_eq!(restored.len(), 1, "one path, reported once");
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "v0\n");
+    }
+
+    #[test]
+    fn a_checkpoint_only_rewinds_what_came_after_it() {
+        let (_d, c) = ctx();
+        let kept = c.root().join("kept.rs");
+        let undone = c.root().join("undone.rs");
+
+        c.write(&kept, "written before the mark\n").unwrap();
+        c.checkpoint("turn-2");
+        c.write(&undone, "written after\n").unwrap();
+
+        c.rewind("turn-2").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&kept).unwrap(),
+            "written before the mark\n",
+            "earlier work must survive"
+        );
+        assert!(!undone.exists());
+    }
+
+    #[test]
+    fn marks_taken_after_a_rewind_point_stop_being_valid() {
+        // They index into journal entries that no longer exist; keeping them
+        // would let a later rewind truncate an unrelated part of the journal.
+        let (_d, c) = ctx();
+        c.checkpoint("early");
+        c.write(&c.root().join("a.rs"), "one\n").unwrap();
+        c.checkpoint("late");
+        c.write(&c.root().join("b.rs"), "two\n").unwrap();
+
+        c.rewind("early").unwrap();
+        assert!(c.rewind("late").is_err(), "a stale mark must not be usable");
+    }
+
+    #[test]
+    fn rewinding_an_unknown_label_is_an_error_not_a_silent_no_op() {
+        let (_d, c) = ctx();
+        assert!(c.rewind("never-taken").is_err());
+    }
+
+    #[test]
+    fn a_dry_run_write_is_not_journalled() {
+        // Nothing reached disk, so there is nothing to undo; `discard_staged`
+        // already covers it, and a journal entry here would make a rewind
+        // delete a file the dry run never created.
+        let (_d, c) = ctx();
+        let c = c.dry_run();
+        c.checkpoint("turn-1");
+        c.write(&c.root().join("a.rs"), "staged only\n").unwrap();
+        assert!(c.journal().is_empty());
+    }
+
+    #[test]
+    fn applying_staged_changes_is_journalled_and_undoable() {
+        // The case the Python docstring calls out: staging protects a dry run,
+        // but once `apply` has written, only a journal can put it back.
+        let (_d, c) = ctx();
+        let f = c.root().join("a.rs");
+        std::fs::write(&f, "original\n").unwrap();
+
+        let c = c.dry_run();
+        c.checkpoint("before-apply");
+        c.write(&f, "proposed\n").unwrap();
+        c.apply_staged().unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "proposed\n");
+
+        c.rewind("before-apply").unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "original\n");
+    }
+
+    #[test]
+    fn a_rewound_file_can_be_written_again_without_a_stale_conflict() {
+        // rewind changes the file behind the freshness check's back; if it did
+        // not re-baseline, every write after an undo would be refused.
+        let (_d, c) = ctx();
+        let f = c.root().join("a.rs");
+        std::fs::write(&f, "original\n").unwrap();
+
+        c.checkpoint("turn-1");
+        c.write(&f, "attempt\n").unwrap();
+        c.rewind("turn-1").unwrap();
+
+        assert!(c.conflict(&f).is_none(), "the rewound state is the new baseline");
+    }
+
+    /// Counts what `after` was shown, so the contract can be checked rather
+    /// than asserted in a doc comment.
+    #[derive(Default)]
+    struct Counting {
+        seen: std::sync::Mutex<Vec<(String, bool)>>,
+    }
+
+    impl crate::hooks::Hook for std::sync::Arc<Counting> {
+        fn name(&self) -> &str {
+            "counting"
+        }
+        fn before(&self, _t: &str, input: &serde_json::Value) -> crate::hooks::Decision {
+            if input.get("path").and_then(|v| v.as_str()) == Some("denied.rs") {
+                return crate::hooks::Decision::Deny("no".into());
+            }
+            crate::hooks::Decision::Allow
+        }
+        fn after(&self, tool: &str, _i: &serde_json::Value, out: &ToolOutput) {
+            self.seen.lock().unwrap().push((tool.to_string(), out.is_error));
+        }
+    }
+
+    #[tokio::test]
+    async fn after_hooks_see_every_call_including_the_ones_that_failed() {
+        let (_d, c) = ctx();
+        let counter = std::sync::Arc::new(Counting::default());
+        let reg = ToolRegistry::standard().with_hook(Box::new(counter.clone()));
+
+        // 1: ordinary success.
+        reg.dispatch("write_file", &json!({"path": "ok.rs", "content": "x\n"}), &c).await;
+        // 2: denied by a hook before the tool ran.
+        reg.dispatch("write_file", &json!({"path": "denied.rs", "content": "x\n"}), &c).await;
+        // 3: a name no tool answers to.
+        reg.dispatch("no_such_tool", &json!({}), &c).await;
+        // 4: the tool ran and reported failure.
+        reg.dispatch("read_file", &json!({"path": "missing.rs"}), &c).await;
+
+        let seen = counter.seen.lock().unwrap().clone();
+        assert_eq!(
+            seen.len(),
+            4,
+            "an audit hook that misses a call is not an audit hook: {seen:?}"
+        );
+        assert_eq!(seen[0], ("write_file".into(), false));
+        assert_eq!(seen[1], ("write_file".into(), true), "the denial");
+        assert_eq!(seen[2], ("no_such_tool".into(), true), "the unknown name");
+        assert_eq!(seen[3], ("read_file".into(), true), "the tool's own failure");
+    }
+
+    #[tokio::test]
+    async fn after_hooks_are_shown_the_input_the_tool_actually_received() {
+        // Auditing the pre-rewrite value would describe a call that never
+        // happened.
+        struct Rewrite;
+        impl crate::hooks::Hook for Rewrite {
+            fn name(&self) -> &str {
+                "rewrite"
+            }
+            fn before(&self, _t: &str, _i: &serde_json::Value) -> crate::hooks::Decision {
+                crate::hooks::Decision::Rewrite(json!({"path": "rewritten.rs", "content": "x\n"}))
+            }
+        }
+
+        let (_d, c) = ctx();
+        let counter = std::sync::Arc::new(Counting::default());
+        let reg = ToolRegistry::new(vec![Box::new(fs::WriteFile)])
+            .with_hook(Box::new(Rewrite))
+            .with_hook(Box::new(counter.clone()));
+
+        reg.dispatch("write_file", &json!({"path": "original.rs", "content": "x\n"}), &c).await;
+
+        assert!(c.root().join("rewritten.rs").exists());
+        assert!(!c.root().join("original.rs").exists());
+        assert_eq!(counter.seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

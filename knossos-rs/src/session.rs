@@ -58,6 +58,15 @@ pub enum TraceEvent {
         step: usize,
         tokens: usize,
     },
+    /// The user said something to a run that was already going.
+    ///
+    /// Traced for the same reason as `ContextCompacted`: without it the agent
+    /// visibly changes course at some step and the trace gives no reason, which
+    /// is exactly the kind of thing a run is analysed to find out.
+    Interjected {
+        step: usize,
+        notes: Vec<String>,
+    },
     Halt {
         step: usize,
         reason: String,
