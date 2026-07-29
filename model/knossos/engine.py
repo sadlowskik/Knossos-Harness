@@ -474,6 +474,19 @@ PROVIDERS: Dict[str, Provider] = {
     "openrouter": Provider("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
                            "meta-llama/llama-3.3-70b-instruct:free",
                            "many models, one key; tight free limits"),
+    # Alibaba's own endpoint, not a reseller. Note `/compatible-mode/v1`: the
+    # plain `/api/v1` on the same host is the native DashScope protocol and will
+    # not answer OpenAI-shaped requests.
+    #
+    # `dashscope-intl` serves keys issued from the international console. A key
+    # from the mainland-China console needs `dashscope.aliyuncs.com` instead and
+    # will be rejected here -- pass --base-url rather than editing this entry,
+    # since which one is correct is a property of the account, not the provider.
+    "qwen": Provider("https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                     "DASHSCOPE_API_KEY", "qwen3.7-flash",
+                     "Qwen direct; qwen3.7-flash is cheap enough ($0.03/M in) "
+                     "to run the coding eval repeatedly, with 1M context. Also "
+                     "serves qwen3.7-plus and qwen3.7-max"),
     "mistral": Provider("https://api.mistral.ai/v1", "MISTRAL_API_KEY",
                         "mistral-small-latest"),
     "together": Provider("https://api.together.xyz/v1", "TOGETHER_API_KEY",
