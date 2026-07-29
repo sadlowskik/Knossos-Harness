@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolKind {
     Function,
@@ -44,7 +44,7 @@ impl SymbolKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
     Public,
@@ -53,7 +53,10 @@ pub enum Visibility {
 }
 
 /// One exact fact about the code. Never summarized, never paraphrased.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+///
+/// `Deserialize` is here for Argus, which persists its index so a rescan costs
+/// a hash per file rather than a parse.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Symbol {
     pub kind: SymbolKind,
     pub name: String,

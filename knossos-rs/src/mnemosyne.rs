@@ -265,7 +265,11 @@ pub fn tokenize(text: &str) -> Vec<String> {
 }
 
 /// `parseHTTPResponse` -> ["parse", "http", "response"]
-fn split_camel(s: &str) -> Vec<String> {
+///
+/// Shared with [`crate::argus`], which tokenizes on different rules but needs
+/// the same answer to the one genuinely fiddly question: where a camel-case
+/// word breaks when acronyms are involved.
+pub(crate) fn split_camel(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut parts = Vec::new();
     let mut current = String::new();

@@ -17,14 +17,17 @@
 //!
 //! Mappings that would only rename a standard pattern were left out.
 
+pub mod argus;
 pub mod ariadne;
 pub mod config;
 pub mod diff;
 pub mod engine;
+pub mod gate;
 pub mod hooks;
 pub mod interject;
 pub mod jsonrpc;
 pub mod lethe;
+pub mod lsp;
 pub mod mcp;
 pub mod metis;
 pub mod mnemosyne;
