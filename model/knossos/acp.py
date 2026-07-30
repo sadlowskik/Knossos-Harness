@@ -1177,7 +1177,7 @@ class DaedalusAgent:
         self._update(session, {
             "sessionUpdate": "agent_message_chunk",
             "messageId": message_id,
-            "content": {"type": "text", "text": f"\n\n{outcome.summary}"},
+            "content": {"type": "text", "text": f"\n\n{_headline(outcome)}"},
         })
 
         if session.cancel.is_set():
@@ -1186,12 +1186,19 @@ class DaedalusAgent:
         # than letting the editor render an unfinished task as complete.
         if outcome.succeeded:
             return {"stopReason": "end_turn"}
-        # Why it did not finish matters. `refusal` reads as "the agent declined",
-        # which is wrong and unactionable when the real cause was a reply cut off
-        # at the token limit -- the case the retrieval path has always reported
-        # correctly and this one did not.
+        # Why it did not finish matters, and `refusal` is only right when the
+        # agent actually declined. Reporting it for "ran out of steps" or "the
+        # linter objected" is a lie the user cannot act on -- observed on a run
+        # that wrote correct, passing code and reported `refusal` because a
+        # style tier failed.
         engine_reason = self._stop_reason()
-        return {"stopReason": "refusal" if engine_reason == "end_turn" else engine_reason}
+        if engine_reason != "end_turn":
+            # The engine has a real reason of its own: truncation, a refusal.
+            return {"stopReason": engine_reason}
+        # The engine finished cleanly; the executor did not reach a verified
+        # state. `max_turn_requests` is ACP's "ran out of road", which is what
+        # both exhausting the step budget and stalling actually are.
+        return {"stopReason": "max_turn_requests"}
 
     def _run_retrieval(self, session: Session, prompt: str) -> List[Retrieved]:
         """Retrieve, and narrate it to the editor as a visible tool call."""
@@ -1329,6 +1336,21 @@ class DaedalusAgent:
                     fast_path=lambda method: method in self.FAST_PATH)
         self.peer = peer
         return peer
+
+
+def _headline(outcome: Any) -> str:
+    """The summary minus anything the editor has already been shown.
+
+    `Outcome.summary` ends with "Last message: ..." so a scripted caller that
+    prints only the summary still sees the model's closing words. Over ACP that
+    text was already streamed chunk by chunk, and repeating it makes the panel
+    show the same paragraph twice -- which reads as the agent restating itself
+    rather than as a status line. Observed on a live run whose reply carried
+    three stacked summaries.
+    """
+    summary = getattr(outcome, "summary", "") or ""
+    head, sep, _tail = summary.partition("Last message:")
+    return head.strip() if sep else summary.strip()
 
 
 def _prompt_text(blocks: Any) -> str:

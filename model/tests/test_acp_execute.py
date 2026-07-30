@@ -1385,14 +1385,20 @@ def test_a_truncated_reply_is_reported_as_max_tokens_not_refusal(workspace):
     assert result["stopReason"] == "max_tokens"
 
 
-def test_an_unfinished_run_without_a_reason_still_says_refusal(workspace):
+def test_an_unfinished_run_reports_running_out_of_road(workspace):
+    """Not `refusal` -- the agent did not decline, it ran out of steps.
+
+    Reporting a refusal sends the user looking for a policy problem that does
+    not exist. Observed on a real run that produced correct, passing code and
+    said `refusal` because a style tier objected.
+    """
     agent = DaedalusAgent(engine=ScriptedEngine(["", "", ""]),
                           execute=True, gate=False, max_steps=3, target_steps=2)
     agent.peer = Recorder()
 
     _, result = drive(agent, workspace, "do something")
 
-    assert result["stopReason"] == "refusal"
+    assert result["stopReason"] == "max_turn_requests"
 
 
 def test_a_do_nothing_turn_does_not_report_success(workspace):
@@ -1442,3 +1448,33 @@ def test_retrieval_mode_is_unaffected(workspace):
     assert result["stopReason"] == "end_turn"
     assert "agent_message_chunk" in agent.peer.kinds()
     assert agent.sessions[list(agent.sessions)[0]].talos is None
+
+
+def test_the_closing_status_does_not_repeat_what_was_already_streamed():
+    """The panel showed the model's last paragraph twice.
+
+    `Outcome.summary` carries "Last message: ..." so a scripted caller printing
+    only the summary still sees it. Over ACP that text arrived chunk by chunk
+    already, so echoing it in the status line reads as the agent restating
+    itself.
+    """
+    from knossos.acp import _headline
+
+    class Unfinished:
+        summary = ("Stopped: step budget of 12 exhausted. Verification: failed "
+                   "at ruff. Last message: I have created durations.py and it "
+                   "is ready for testing.")
+
+    headline = _headline(Unfinished())
+    assert "step budget" in headline
+    assert "failed at ruff" in headline
+    assert "ready for testing" not in headline, "already streamed once"
+
+
+def test_a_summary_without_a_last_message_is_untouched():
+    from knossos.acp import _headline
+
+    class Done:
+        summary = "Completed and verified -- passed 3 tiers."
+
+    assert _headline(Done()) == "Completed and verified -- passed 3 tiers."
