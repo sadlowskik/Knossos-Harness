@@ -1390,3 +1390,73 @@ async fn an_empty_reply_is_not_recorded_as_a_message() {
 
     assert!(h.trace_events().iter().all(|e| e["event"] != "agent_message"));
 }
+
+// ------------------------------------------------------------- cancellation
+
+/// Cancelling stops the next engine call rather than letting the turn run out.
+///
+/// The budget here is 5 with only one scripted reply: without the check the
+/// loop would ask for a second turn and the mock would error. Finishing cleanly
+/// is the evidence that no further request went out.
+#[tokio::test]
+async fn a_cancelled_turn_stops_at_the_next_step_boundary() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("working on it")], 5, false);
+    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let plan = Plan { steps: vec!["do the thing".into()] };
+    let outcome = talos.run("test task", &plan).await.unwrap();
+
+    assert_eq!(outcome.halt, Halt::Cancelled);
+    assert_eq!(outcome.steps_used, 0, "cancelled before the first request");
+}
+
+/// A cancellation applies to one turn, not to the session.
+///
+/// Latching would mean the next thing the user asked for died on arrival, with
+/// no obvious cause — the flag was set minutes earlier for something else.
+#[tokio::test]
+async fn cancelling_one_turn_does_not_poison_the_next() {
+    let h = Harness::new("passing");
+    // The cancelled turn consumes none of these; the resumed one may use its
+    // whole budget, since a reply that changes nothing gets pushed back on.
+    let mut talos = h.talos(
+        vec![
+            text_response("second turn ran"),
+            text_response("still nothing"),
+            text_response("done"),
+        ],
+        3,
+        false,
+    );
+    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let plan = Plan { steps: vec!["do the thing".into()] };
+    assert_eq!(talos.run("first", &plan).await.unwrap().halt, Halt::Cancelled);
+
+    // The flag cleared itself, so this turn reaches the engine.
+    let second = talos.resume("carry on").await.unwrap();
+    assert_ne!(second.halt, Halt::Cancelled, "the flag latched into the next turn");
+    assert!(second.steps_used >= 1);
+}
+
+/// A cancelled run is nobody's fault, and must not read as a failure.
+#[tokio::test]
+async fn cancelling_is_not_reported_as_a_failure() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("x")], 3, false);
+    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let plan = Plan { steps: vec!["do the thing".into()] };
+    let outcome = talos.run("test task", &plan).await.unwrap();
+
+    assert!(!outcome.succeeded(), "cancelled is not success either");
+    assert!(outcome.summary.starts_with("Cancelled"), "{}", outcome.summary);
+    let halts: Vec<_> = h
+        .trace_events()
+        .into_iter()
+        .filter(|e| e["event"] == "halt")
+        .collect();
+    assert_eq!(halts.len(), 1, "exactly one halt event, not a duplicate");
+    assert_eq!(halts[0]["reason"], "cancelled");
+}

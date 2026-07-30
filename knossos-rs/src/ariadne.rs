@@ -36,6 +36,13 @@ pub enum Halt {
     Stuck,
     /// Hit the ceiling. Mirrors the forced halt at the final loop.
     BudgetExhausted,
+    /// The caller asked for the turn to stop.
+    ///
+    /// Not a judgement about progress, which is why Ariadne never returns it —
+    /// it comes from outside the loop entirely. Distinct from every other halt
+    /// because it is the one that is nobody's fault: a cancelled run must not
+    /// look like a failed one in a trace or a front end.
+    Cancelled,
 }
 
 impl Halt {
@@ -49,6 +56,7 @@ impl Halt {
             Halt::Done => "done",
             Halt::Stuck => "stuck",
             Halt::BudgetExhausted => "budget_exhausted",
+            Halt::Cancelled => "cancelled",
         }
     }
 }

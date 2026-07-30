@@ -16,6 +16,8 @@
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 
@@ -146,6 +148,17 @@ pub struct Talos {
     /// Clone the handle out with [`Talos::interjections`] before starting a
     /// run; pushing to it afterwards steers the loop without ending it.
     pub interjections: crate::interject::Interjections,
+    /// Raised to stop the current turn at the next step boundary.
+    ///
+    /// A boundary rather than immediately: a step is a model call, its tool
+    /// calls, and the verification of what they changed. Tearing out of the
+    /// middle would leave the workspace half-edited with no verdict on it,
+    /// which is worse than the extra few seconds — the point of stopping is to
+    /// regain control, not to create a mess someone else has to reason about.
+    ///
+    /// Held by `Arc` because whoever cancels is by definition not the thread
+    /// inside `drive`.
+    pub cancel: Arc<AtomicBool>,
     /// Proactive repository context, and the gate that decides whether it
     /// belongs in the prompt at all.
     ///
@@ -194,6 +207,7 @@ impl Talos {
             lethe: crate::lethe::Lethe::default(),
             approver: None,
             interjections: crate::interject::Interjections::new(),
+            cancel: Arc::new(AtomicBool::new(false)),
             retrieval: None,
             messages: Vec::new(),
             changed: BTreeSet::new(),
@@ -456,6 +470,15 @@ impl Talos {
         let mut recent: VecDeque<String> = VecDeque::with_capacity(FUTILE_WINDOW);
 
         for step in 1..=self.ariadne.max_steps {
+            // Checked before the engine call rather than after, so cancelling
+            // stops the next request going out instead of paying for a turn
+            // whose answer is already unwanted.
+            // Cleared as it is read, so a cancellation stops exactly one turn
+            // rather than latching and killing the next thing the user asks for.
+            if self.cancel.swap(false, Ordering::SeqCst) {
+                return Ok(self.finish(Halt::Cancelled, step - 1, last_verdict, &last_text));
+            }
+
             if let Some(note) = self.ariadne.pressure(step) {
                 self.messages.push(Message::user_text(note));
             }
@@ -743,6 +766,14 @@ impl Talos {
                 "Stopped: step budget of {} exhausted. Verification: {verdict_line}. \
                  Last message: {last_text}",
                 self.ariadne.max_steps
+            ),
+            // Says what was kept, not just that it stopped. A cancelled turn
+            // may have already edited files, and the person who cancelled needs
+            // to know that before deciding whether to accept or undo.
+            Halt::Cancelled => format!(
+                "Cancelled; {} file(s) already changed. Verification: {verdict_line}. \
+                 Last message: {last_text}",
+                self.changed.len(),
             ),
             Halt::Continue => "still running".to_string(),
         };
