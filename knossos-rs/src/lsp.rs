@@ -541,6 +541,15 @@ impl LspClient {
             if let Some(settled) = outcome.take() {
                 return settled;
             }
+            // The pipe bounds the wait, not just the clock. A request that
+            // races the reader's exit is registered *after* the reader has
+            // finished stranding everything, so nothing will ever answer it —
+            // without this it blocks for the full timeout, which on the default
+            // is 30 seconds of nothing on a server that is already gone.
+            if !self.ready.load(Ordering::SeqCst) {
+                self.pending.lock().expect("pending mutex").remove(&id);
+                return Err("language server closed the connection".into());
+            }
             if Instant::now() >= deadline {
                 self.pending.lock().expect("pending mutex").remove(&id);
                 return Err(format!("{method} timed out after {:?}", self.timeout));
@@ -815,10 +824,45 @@ mod tests {
 
         stream.shutdown(Shutdown::Both).expect("shutdown");
 
-        // Returns empty rather than blocking to the timeout.
+        // Returns empty rather than blocking to the timeout. The margin is
+        // deliberately far below the client's 15s: this raced the reader's exit
+        // and used to wait the whole timeout roughly half the time, because
+        // nothing re-checked the pipe once the wait had started.
         let started = Instant::now();
         assert!(client.references(&dir.path().join("x.rs"), 1, 1, false).is_empty());
-        assert!(started.elapsed() < Duration::from_secs(10), "it waited for the timeout");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "waited {:?} for a server that was already gone",
+            started.elapsed(),
+        );
+    }
+
+    /// The same race from the other side: the reader has certainly finished
+    /// before the request is made, so the pending slot is registered with
+    /// nothing left alive to strand it.
+    #[test]
+    fn a_request_made_after_the_server_died_fails_immediately() {
+        let dir = TempDir::new().expect("tempdir");
+        let server = FakeServer::new();
+        let stream = TcpStream::connect(server.addr).expect("connect");
+        let client = LspClient::over(
+            "fake",
+            Box::new(BufReader::new(stream.try_clone().expect("clone"))),
+            Box::new(stream.try_clone().expect("clone")),
+            dir.path(),
+            Duration::from_secs(15),
+        )
+        .expect("handshake");
+
+        stream.shutdown(Shutdown::Both).expect("shutdown");
+        while client.available() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let started = Instant::now();
+        let err = client.request("workspace/symbol", json!({"query": ""})).expect_err("no server");
+        assert!(err.contains("closed the connection"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     }
 
     // ---------------------------------------------------------------- queries

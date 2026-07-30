@@ -1,4 +1,4 @@
-﻿"""The ACP server -- Daedalus as an agent any compatible editor can spawn.
+"""The ACP server -- Daedalus as an agent any compatible editor can spawn.
 
 The Agent Client Protocol (Zed Industries, Aug 2025) is what Claude Code, Gemini
 CLI and Codex use to appear inside Zed's agent panel; JetBrains adopted it across

@@ -35,6 +35,21 @@ pub enum TraceEvent {
         index: usize,
         description: String,
     },
+    /// Whether repository context was injected for this turn, and the signals
+    /// that decided it.
+    ///
+    /// Logged even when nothing is injected. A skip is the harder case to
+    /// debug — the model simply answers without the code it needed, and
+    /// nothing in the trace would otherwise say why.
+    ContextConsidered {
+        query: String,
+        injected: bool,
+        confidence: f64,
+        reasons: Vec<String>,
+        /// Slices actually injected, and their total size in characters.
+        slices: usize,
+        chars: usize,
+    },
     /// Exactly what was sent to the engine, and exactly what came back.
     ///
     /// This is the difference between a trace you can *read* and a trace you

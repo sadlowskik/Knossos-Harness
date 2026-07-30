@@ -40,6 +40,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -235,7 +236,9 @@ impl McpClient {
             }
         };
 
-        eprintln!("[mcp] {}: {} tool(s)", server.name, specs.len());
+        // Deliberately silent. What connected and what it offers is returned,
+        // not printed: a library that announces its own results forces the
+        // caller either to duplicate them or to stay quiet about its own.
         Ok(Arc::new(McpClient {
             server,
             handle,
@@ -418,6 +421,48 @@ impl Tool for McpTool {
     }
 }
 
+/// Read server declarations from a config file.
+///
+/// ACP would deliver these in `session/new`, but this harness has no ACP layer,
+/// so a file is where they come from. Three shapes are accepted, because the
+/// same information is written all three ways in the wild and rejecting two of
+/// them would only produce a config that looks right and connects nothing:
+///
+/// ```json
+/// {"mcpServers": {"github": {"command": "npx", "args": ["-y", "server-github"]}}}
+/// {"mcpServers": [{"name": "github", "command": "npx"}]}
+/// [{"name": "github", "command": "npx"}]
+/// ```
+///
+/// The map form is the common one and its key is the server name, so the name is
+/// injected from the key. Entries are returned unvalidated —
+/// [`McpServer::from_acp`] is what judges them, and [`connect_all`] reports the
+/// ones it rejects rather than failing the load.
+pub fn declarations_from(path: &Path) -> Result<Vec<Value>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let parsed: Value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing {}", path.display()))?;
+
+    let declared = parsed.get("mcpServers").unwrap_or(&parsed);
+    Ok(match declared {
+        Value::Array(entries) => entries.clone(),
+        Value::Object(map) => map
+            .iter()
+            .map(|(name, entry)| {
+                let mut entry = entry.clone();
+                // An explicit `name` inside the entry wins; without one the key
+                // is the only thing that names the server.
+                if let Value::Object(fields) = &mut entry {
+                    fields.entry("name").or_insert_with(|| json!(name));
+                }
+                entry
+            })
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
 /// Connect every declared server. Returns the clients and the failures.
 ///
 /// One bad server must not take the session with it: the agent keeps its local
@@ -436,10 +481,7 @@ pub fn connect_all(raw_servers: &[Value]) -> (Vec<Arc<McpClient>>, Vec<String>) 
         let name = server.name.clone();
         match McpClient::connect(server) {
             Ok(client) => clients.push(client),
-            Err(err) => {
-                eprintln!("[mcp] {name} failed to start: {err}");
-                errors.push(format!("{name}: {err}"));
-            }
+            Err(err) => errors.push(format!("{name}: {err}")),
         }
     }
 
@@ -727,6 +769,83 @@ mod tests {
     fn connecting_nothing_is_not_an_error() {
         let (clients, errors) = connect_all(&[]);
         assert!(clients.is_empty() && errors.is_empty());
+    }
+
+    // ------------------------------------------------------- declarations
+
+    fn write_config(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("mcp.json");
+        std::fs::write(&path, body).expect("write");
+        (dir, path)
+    }
+
+    /// The map form is what most hand-written configs look like, and its key is
+    /// the only thing naming the server.
+    #[test]
+    fn a_mapping_of_servers_takes_its_names_from_the_keys() {
+        let (_dir, path) = write_config(
+            r#"{"mcpServers": {"github": {"command": "npx", "args": ["-y", "srv"]}}}"#,
+        );
+        let declared = declarations_from(&path).expect("load");
+
+        let server = McpServer::from_acp(&declared[0]).expect("usable");
+        assert_eq!(server.name, "github");
+        assert_eq!(server.args, ["-y", "srv"]);
+    }
+
+    #[test]
+    fn a_name_written_inside_the_entry_beats_the_key() {
+        let (_dir, path) =
+            write_config(r#"{"mcpServers": {"gh": {"name": "github", "command": "npx"}}}"#);
+        let declared = declarations_from(&path).expect("load");
+
+        assert_eq!(McpServer::from_acp(&declared[0]).expect("usable").name, "github");
+    }
+
+    #[test]
+    fn the_acp_list_form_is_accepted_too() {
+        let (_dir, path) =
+            write_config(r#"{"mcpServers": [{"name": "github", "command": "npx"}]}"#);
+        let declared = declarations_from(&path).expect("load");
+
+        assert_eq!(McpServer::from_acp(&declared[0]).expect("usable").name, "github");
+    }
+
+    #[test]
+    fn a_bare_list_needs_no_wrapper_key() {
+        let (_dir, path) = write_config(r#"[{"name": "github", "command": "npx"}]"#);
+        assert_eq!(declarations_from(&path).expect("load").len(), 1);
+    }
+
+    /// Malformed JSON names the file. A config that silently connects nothing
+    /// is the failure this whole path is trying to avoid.
+    #[test]
+    fn a_broken_config_says_which_file_it_was() {
+        let (_dir, path) = write_config("{not json");
+        let err = declarations_from(&path).expect_err("must not load");
+        assert!(format!("{err:#}").contains("mcp.json"), "{err:#}");
+    }
+
+    #[test]
+    fn an_empty_config_declares_nothing_rather_than_failing() {
+        let (_dir, path) = write_config(r#"{"mcpServers": {}}"#);
+        assert!(declarations_from(&path).expect("load").is_empty());
+    }
+
+    /// Entries are not validated on the way in; `connect_all` is what judges
+    /// them, so a single bad entry cannot stop the good ones being read.
+    #[test]
+    fn a_useless_entry_survives_loading_and_is_rejected_later() {
+        let (_dir, path) = write_config(
+            r#"{"mcpServers": {"ok": {"command": "srv"}, "bad": {"args": []}}}"#,
+        );
+        let declared = declarations_from(&path).expect("load");
+        assert_eq!(declared.len(), 2);
+
+        let usable: Vec<_> = declared.iter().filter_map(McpServer::from_acp).collect();
+        assert_eq!(usable.len(), 1);
+        assert_eq!(usable[0].name, "ok");
     }
 
     /// Closing twice, and closing a dropped client, must both be safe — `Drop`

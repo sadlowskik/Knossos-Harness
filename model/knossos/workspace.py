@@ -1,4 +1,4 @@
-﻿"""The workspace: everything an executor is allowed to touch, and nothing else.
+"""The workspace: everything an executor is allowed to touch, and nothing else.
 
 Argus only ever *reads*, so until now the harness has needed no such boundary.
 Talos will write, and the moment it does, two properties have to be structural

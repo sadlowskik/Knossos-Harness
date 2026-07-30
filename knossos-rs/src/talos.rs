@@ -146,6 +146,15 @@ pub struct Talos {
     /// Clone the handle out with [`Talos::interjections`] before starting a
     /// run; pushing to it afterwards steers the loop without ending it.
     pub interjections: crate::interject::Interjections,
+    /// Proactive repository context, and the gate that decides whether it
+    /// belongs in the prompt at all.
+    ///
+    /// Distinct from the `search_code` tool, which is retrieval the *model*
+    /// asks for. This is retrieval the harness offers unasked, which is exactly
+    /// why it is gated: a model that did not ask for context cannot be assumed
+    /// to want it, and injecting it into a general question measurably makes
+    /// small models worse. `None` disables the whole path.
+    pub retrieval: Option<crate::gate::RetrievalGate>,
 
     // --- session state, persisted across `run`/`resume` ---
     /// The running conversation. Survives between turns.
@@ -185,6 +194,7 @@ impl Talos {
             lethe: crate::lethe::Lethe::default(),
             approver: None,
             interjections: crate::interject::Interjections::new(),
+            retrieval: None,
             messages: Vec::new(),
             changed: BTreeSet::new(),
             task: String::new(),
@@ -210,17 +220,82 @@ impl Outcome {
 }
 
 impl Talos {
+    /// Attach proactive retrieval. Without it the harness offers no unasked
+    /// context and the `search_code` tool remains the only way in.
+    pub fn with_retrieval(mut self, gate: crate::gate::RetrievalGate) -> Self {
+        self.retrieval = Some(gate);
+        self
+    }
+
+    /// How much retrieved source may be injected, in characters.
+    ///
+    /// Deliberately small next to the context window. This is a head start, not
+    /// a substitute for the tools: the model can still read any file it wants,
+    /// and a large injection buys a worse trade than it looks — it displaces
+    /// conversation Lethe would otherwise have kept, to supply code that may not
+    /// be the code that mattered.
+    const CONTEXT_BUDGET: usize = 6_000;
+    /// How far to follow the import graph out from a seed file.
+    const CONTEXT_HOPS: usize = 1;
+
+    /// Repository context for `query`, when the gate says it belongs.
+    ///
+    /// The decision is logged either way, because a wrong *skip* is the harder
+    /// failure to see: the model just answers without the code it needed, and
+    /// nothing else in the trace would say why.
+    fn repository_context(&self, query: &str) -> Option<String> {
+        let gate = self.retrieval.as_ref()?;
+        let decision = gate.decide(query, None);
+
+        let context = decision
+            .inject
+            .then(|| gate.argus().context(query, Self::CONTEXT_BUDGET, Self::CONTEXT_HOPS))
+            .filter(|c| !c.hits.is_empty());
+
+        self.session.log(&TraceEvent::ContextConsidered {
+            query: query.to_string(),
+            injected: context.is_some(),
+            confidence: decision.confidence,
+            reasons: decision.reasons,
+            slices: context.as_ref().map_or(0, |c| c.hits.len()),
+            chars: context.as_ref().map_or(0, |c| c.text.len()),
+        });
+
+        context.map(|c| c.text)
+    }
+
+    /// Wrap retrieved source so it cannot be mistaken for part of the task.
+    ///
+    /// The framing is load-bearing. Unlabelled code in the prompt reads as
+    /// something to act on, and the measured failure this whole path guards
+    /// against is exactly that: a model handed repository excerpts started
+    /// describing the repository instead of doing what was asked.
+    fn frame_context(context: &str) -> String {
+        format!(
+            "\n\nExisting code retrieved automatically because it looked relevant. \
+             It is background, not part of the task, and it may be incomplete — \
+             read the files directly if you need more:\n\n{context}"
+        )
+    }
+
     /// Start a fresh task, discarding any previous conversation.
     pub async fn run(&mut self, task: &str, plan: &Plan) -> Result<Outcome> {
         self.session.log(&TraceEvent::PlanProduced { steps: plan.steps.clone() });
 
         self.task = task.to_string();
         self.changed.clear();
-        self.messages = vec![Message::user_text(format!(
-            "Task: {task}\n\nPlan:\n{}\n\nWork through it. When everything is complete, reply \
-             with a short summary and no tool calls — verification runs automatically.",
-            plan.render()
-        ))];
+
+        // Composed before the closing instruction rather than after it, so what
+        // the model is being asked to do stays the last thing it reads.
+        let mut prompt = format!("Task: {task}\n\nPlan:\n{}", plan.render());
+        if let Some(context) = self.repository_context(task) {
+            prompt.push_str(&Self::frame_context(&context));
+        }
+        prompt.push_str(
+            "\n\nWork through it. When everything is complete, reply with a short summary \
+             and no tool calls — verification runs automatically.",
+        );
+        self.messages = vec![Message::user_text(prompt)];
 
         self.mark_turn();
         self.drive().await
@@ -235,7 +310,14 @@ impl Talos {
             let plan = Plan { steps: vec![instruction.to_string()] };
             return self.run(instruction, &plan).await;
         }
-        self.messages.push(Message::user_text(instruction.to_string()));
+        // Gated per turn, not once per session: the conversation may have moved
+        // to a different part of the tree, and the turn that needs context is
+        // rarely the one that opened the session.
+        let mut prompt = instruction.to_string();
+        if let Some(context) = self.repository_context(instruction) {
+            prompt.push_str(&Self::frame_context(&context));
+        }
+        self.messages.push(Message::user_text(prompt));
         self.mark_turn();
         self.drive().await
     }

@@ -6,8 +6,10 @@
 
 use std::path::{Path, PathBuf};
 
+use knossos::argus::Argus;
 use knossos::ariadne::{Ariadne, Halt};
 use knossos::engine::mock::{text_response, tool_call, MockEngine};
+use knossos::gate::RetrievalGate;
 use knossos::hooks::Hook;
 use knossos::interject::Interjections;
 use knossos::metis::Plan;
@@ -1245,4 +1247,111 @@ async fn no_sequence_of_real_work_is_ever_called_stuck() {
         let (halt, _) = drive(&word).await;
         assert_ne!(halt, Halt::Stuck, "{word} did real work every step");
     }
+}
+
+// ------------------------------------------------------ proactive retrieval
+//
+// Context the harness offers unasked, as opposed to the `search_code` tool the
+// model asks for. The gate is what makes offering it safe, so both directions
+// are pinned: the task that should get code, and the question that should not.
+
+impl Harness {
+    /// A Talos that offers repository context unasked.
+    ///
+    /// One step per turn: these pin the shape of the first prompt, and a longer
+    /// budget only buys more engine calls to script.
+    fn talos_with_retrieval(&self, scripted: Vec<knossos::engine::Response>) -> Talos {
+        let mut argus = Argus::new(&self.root);
+        argus.scan();
+        self.talos(scripted, 1, false)
+            .with_retrieval(RetrievalGate::new(std::sync::Arc::new(argus)))
+    }
+}
+
+/// The `ContextConsidered` record for a run, which must exist either way — a
+/// wrong skip is invisible without it.
+fn context_event(h: &Harness) -> serde_json::Value {
+    h.trace_events()
+        .into_iter()
+        .find(|e| e["event"] == "context_considered")
+        .expect("every gated turn records its decision")
+}
+
+#[tokio::test]
+async fn a_task_naming_repository_code_is_given_it_unasked() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos_with_retrieval(vec![text_response("done")]);
+    let plan = Plan { steps: vec!["look at the adder".into()] };
+
+    talos.run("fix the rounding in Adder::add", &plan).await.unwrap();
+
+    let first = talos.messages[0].text();
+    assert!(first.contains("retrieved automatically"), "no context block:\n{first}");
+    assert!(first.contains("Adder"), "the named type was not retrieved:\n{first}");
+    // The instruction has to stay last, or the injected code becomes the most
+    // recent thing the model read and starts looking like the request.
+    assert!(
+        first.trim_end().ends_with("verification runs automatically."),
+        "context displaced the instruction:\n{first}",
+    );
+    assert_eq!(context_event(&h)["injected"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn a_general_question_is_not_given_repository_context() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos_with_retrieval(vec![text_response("done")]);
+    let plan = Plan { steps: vec!["explain".into()] };
+
+    talos.run("what is a mixture-of-experts layer, in general?", &plan).await.unwrap();
+
+    let first = talos.messages[0].text();
+    assert!(!first.contains("retrieved automatically"), "context was forced in:\n{first}");
+    let event = context_event(&h);
+    assert_eq!(event["injected"], serde_json::json!(false));
+    assert!(
+        event["reasons"].as_array().is_some_and(|r| !r.is_empty()),
+        "a skip with no stated reason cannot be argued with: {event}",
+    );
+}
+
+/// A second turn is gated on its own words, not on the ones that opened the
+/// session — the conversation may have moved to a different part of the tree.
+#[tokio::test]
+async fn a_resumed_turn_is_gated_on_its_own_instruction() {
+    let h = Harness::new("passing");
+    let mut talos =
+        h.talos_with_retrieval(vec![text_response("done"), text_response("done again")]);
+    let plan = Plan { steps: vec!["start".into()] };
+
+    talos.run("what is attention, conceptually?", &plan).await.unwrap();
+    let before = talos.messages.len();
+    talos.resume("now change Adder::add to saturate").await.unwrap();
+
+    let resumed = talos.messages[before].text();
+    assert!(resumed.contains("retrieved automatically"), "second turn got nothing:\n{resumed}");
+    assert!(resumed.starts_with("now change Adder::add"), "the instruction moved:\n{resumed}");
+}
+
+/// Without a gate attached nothing changes — no injection, and no decision to
+/// record. The proactive path is opt-in and must stay invisible when it is off.
+#[tokio::test]
+async fn retrieval_left_unattached_changes_nothing() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("done")], 1, false);
+    let plan = Plan { steps: vec!["do the thing".into()] };
+
+    talos.run("fix the rounding in Adder::add", &plan).await.unwrap();
+
+    let first = talos.messages[0].text();
+    assert_eq!(
+        first,
+        "Task: fix the rounding in Adder::add\n\nPlan:\n1. do the thing\n\nWork through it. \
+         When everything is complete, reply with a short summary and no tool calls — \
+         verification runs automatically.",
+    );
+    assert!(
+        h.trace_events().iter().all(|e| e["event"] != "context_considered"),
+        "a disabled gate must not report decisions it never made",
+    );
 }

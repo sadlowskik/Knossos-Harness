@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use knossos::argus::Argus;
 use knossos::ariadne::Ariadne;
 use knossos::config::{Config, EngineKind};
 use knossos::engine::{self, Message, Request};
+use knossos::gate::RetrievalGate;
+use knossos::mcp;
 use knossos::mnemosyne::Mnemosyne;
 use knossos::oracle::Oracle;
 use knossos::scribe::SymbolIndex;
@@ -65,6 +68,15 @@ struct LoopArgs {
     /// Skip Oracle tier 4 (model judgement against the constitution).
     #[arg(long)]
     no_judge: bool,
+    /// Do not offer repository context unasked.
+    ///
+    /// The `search_code` tool still works; this only turns off the proactive
+    /// path, which costs an index build at startup and a gate decision per turn.
+    #[arg(long)]
+    no_context: bool,
+    /// MCP server declarations. Defaults to `.daedalus/mcp.json`, if present.
+    #[arg(long)]
+    mcp_config: Option<PathBuf>,
     /// Record the full prompt and completion at every engine call.
     ///
     /// Turns the trace from an audit log into training data: each step gains
@@ -260,11 +272,30 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
         session = session.collecting();
     }
 
+    // Everything that has something to announce runs before anything is
+    // announced, so the block below stays contiguous rather than interleaving
+    // with whatever a side-car decided to say while starting.
+    let mut registry = ToolRegistry::with_retrieval(retrieval.clone());
+    let mcp_report = connect_mcp(&mut registry, &root, opts.mcp_config.as_deref());
+
+    let gate = (!opts.no_context).then(|| {
+        let mut argus = Argus::new(&root);
+        let report = argus.scan();
+        (RetrievalGate::new(std::sync::Arc::new(argus)), report)
+    });
+
     eprintln!("engine       {engine_name}");
     eprintln!("workspace    {}", root.display());
     eprintln!("constitution {}", themis.source());
     eprintln!("symbols      {} across {} files", idx.symbol_count(), idx.file_count());
     eprintln!("retrieval    {} chunks indexed", retrieval.chunk_count());
+    match &gate {
+        Some((_, report)) => eprintln!("context      {report}"),
+        None => eprintln!("context      off (--no-context)"),
+    }
+    for line in &mcp_report {
+        eprintln!("mcp          {line}");
+    }
     eprintln!("budget       {} target / {} max", opts.target_steps, opts.max_steps);
     if opts.dry_run {
         eprintln!("mode         DRY RUN — nothing is written to disk");
@@ -276,9 +307,9 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
         ctx = ctx.dry_run();
     }
 
-    let talos = Talos::new(
+    let mut talos = Talos::new(
         eng,
-        ToolRegistry::with_retrieval(retrieval),
+        registry,
         ctx,
         Oracle::new(&root),
         idx,
@@ -288,8 +319,56 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
         cfg.max_tokens,
         !opts.no_judge,
     );
+    if let Some((gate, _)) = gate {
+        talos = talos.with_retrieval(gate);
+    }
 
     Ok((talos, trace_path))
+}
+
+/// Connect declared MCP servers and register what they offer.
+///
+/// Every failure here is reported and survived. A side-car that will not start
+/// must not stop the harness from opening: an editor missing a feature is a far
+/// better outcome than one that will not launch.
+fn connect_mcp(
+    registry: &mut ToolRegistry,
+    root: &std::path::Path,
+    configured: Option<&std::path::Path>,
+) -> Vec<String> {
+    let path = configured
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join(".daedalus").join("mcp.json"));
+    if !path.exists() {
+        // Silence when nobody asked for MCP; an explicit path that is missing is
+        // a mistake worth naming.
+        return match configured {
+            Some(_) => vec![format!("no such file: {}", path.display())],
+            None => Vec::new(),
+        };
+    }
+
+    let declared = match mcp::declarations_from(&path) {
+        Ok(declared) => declared,
+        Err(err) => return vec![format!("{err:#}")],
+    };
+
+    let (clients, errors) = mcp::connect_all(&declared);
+    let mut report = errors;
+    for client in &clients {
+        // A duplicate name would shadow silently, which is the exact bug the
+        // server-label prefix exists to prevent — so say so rather than let the
+        // second definition disappear.
+        let taken: Vec<String> = registry.names().iter().map(|n| n.to_string()).collect();
+        let (fresh, clashing): (Vec<_>, Vec<_>) =
+            client.tools().into_iter().partition(|t| !taken.iter().any(|n| n == t.name()));
+        for tool in &clashing {
+            report.push(format!("{} already exists; skipped", tool.name()));
+        }
+        report.push(format!("{} — {} tool(s)", client.name(), fresh.len()));
+        registry.extend(fresh);
+    }
+    report
 }
 
 async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {

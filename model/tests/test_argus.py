@@ -361,3 +361,26 @@ def test_definitions_field_is_populated_for_rust(rust_repo):
     defs = rust_repo.files["lib.rs"].defs
     assert defs.get("router", 0) > 0
     assert defs.get("balance", 0) > 0
+
+
+def test_a_byte_order_mark_does_not_make_a_file_unindexable(tmp_path):
+    """A BOM is legal UTF-8 and Windows editors write them.
+
+    `ast.parse` rejects U+FEFF at position 0, so without utf-8-sig decoding the
+    file parses as nothing: no symbols, no `defs`, no ranking contribution --
+    and no error anyone sees. This repo's own acp.py, oracle.py and
+    workspace.py were silently unindexable for exactly this reason.
+    """
+    source = "class Router:\n    def forward(self, x):\n        return x\n"
+    (tmp_path / "bom.py").write_bytes(b"\xef\xbb\xbf" + source.encode("utf-8"))
+    (tmp_path / "plain.py").write_text(source, encoding="utf-8")
+
+    argus = Argus(tmp_path)
+    argus.scan()
+
+    bom = argus.files["bom.py"]
+    assert bom.parse_error is None, f"BOM broke parsing: {bom.parse_error}"
+    assert bom.exact is True
+    assert {s.name for s in bom.symbols} == {"Router", "forward"}
+    # And it contributes to ranking exactly like the plain file.
+    assert bom.defs == argus.files["plain.py"].defs

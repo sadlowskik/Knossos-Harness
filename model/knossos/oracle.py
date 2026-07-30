@@ -1,4 +1,4 @@
-﻿"""Oracle: tiered verification.
+"""Oracle: tiered verification.
 
 Two rules, and both are load-bearing.
 

@@ -28,7 +28,7 @@
 //! for, and why it outweighs a bare symbol match.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use regex::Regex;
 
@@ -121,14 +121,23 @@ static WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").expect("word pattern"));
 
 /// Should this query get repository context?
-pub struct RetrievalGate<'a> {
-    argus: &'a Argus,
+///
+/// Holds its [`Argus`] by [`Arc`] rather than borrowing it, because the real
+/// consumer is long-lived: the executor decides once per turn and the name index
+/// below costs a pass over every symbol in the repository to build. A borrowing
+/// gate would have to be rebuilt at each call site that owns the index, which
+/// throws that cache away every turn.
+pub struct RetrievalGate {
+    argus: Arc<Argus>,
     threshold: f64,
     /// Lowercased name fragment -> files defining it. Built once, on first use.
-    index: std::cell::OnceCell<BTreeMap<String, BTreeSet<String>>>,
+    ///
+    /// `OnceLock` rather than `OnceCell` so the gate stays `Sync` and can sit in
+    /// a struct held across an await.
+    index: OnceLock<BTreeMap<String, BTreeSet<String>>>,
 }
 
-impl<'a> RetrievalGate<'a> {
+impl RetrievalGate {
     /// The gate STARTS above the threshold: injecting is the default and
     /// skipping must be argued for.
     ///
@@ -153,16 +162,16 @@ impl<'a> RetrievalGate<'a> {
     /// not a name, and cannot make a question repo-specific.
     const COMMON_FRACTION: f64 = 0.25;
 
-    pub fn new(argus: &'a Argus) -> Self {
+    pub fn new(argus: Arc<Argus>) -> Self {
         Self::with_threshold(argus, 0.5)
     }
 
-    pub fn with_threshold(argus: &'a Argus, threshold: f64) -> Self {
-        RetrievalGate { argus, threshold, index: std::cell::OnceCell::new() }
+    pub fn with_threshold(argus: Arc<Argus>, threshold: f64) -> Self {
+        RetrievalGate { argus, threshold, index: OnceLock::new() }
     }
 
-    pub fn argus(&self) -> &'a Argus {
-        self.argus
+    pub fn argus(&self) -> &Argus {
+        &self.argus
     }
 
     /// Lowercased name fragment -> files it is defined in.
@@ -344,7 +353,7 @@ mod tests {
     use tempfile::TempDir;
 
     /// A repo with one distinctive name and one thoroughly generic one.
-    fn fixture() -> (TempDir, Argus) {
+    fn fixture() -> (TempDir, Arc<Argus>) {
         let dir = TempDir::new().expect("tempdir");
         let root = dir.path();
         fs::write(
@@ -386,7 +395,7 @@ mod tests {
 
         let mut argus = Argus::new(root);
         argus.scan();
-        (dir, argus)
+        (dir, Arc::new(argus))
     }
 
     // --------------------------------------------------------------- defaults
@@ -394,7 +403,7 @@ mod tests {
     #[test]
     fn injecting_is_the_default() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("how is the halting probability computed here", None);
         assert!(d.inject, "{d}");
     }
@@ -402,7 +411,7 @@ mod tests {
     #[test]
     fn a_bare_question_still_injects() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         assert!(gate.decide("what does forward do", None).inject);
     }
 
@@ -411,7 +420,7 @@ mod tests {
     #[test]
     fn generality_phrasing_skips() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         for query in [
             "what problem does rotary positional embedding solve, in general?",
             "how does KV caching speed up inference, typically?",
@@ -426,7 +435,7 @@ mod tests {
     #[test]
     fn indefinite_framing_skips() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("in a mixture-of-experts layer, what is expert collapse?", None);
         assert!(!d.inject, "{d}");
     }
@@ -436,7 +445,7 @@ mod tests {
     #[test]
     fn an_anchor_overrides_generality() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("which file handles quantization, in general terms?", None);
         assert!(d.inject, "{d}");
     }
@@ -444,7 +453,7 @@ mod tests {
     #[test]
     fn a_filename_overrides_generality() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("what does moe.rs do, generally?", None);
         assert!(d.inject, "{d}");
     }
@@ -452,7 +461,7 @@ mod tests {
     #[test]
     fn a_proper_name_overrides_generality() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("how does MnemosyneBank work, in general?", None);
         assert!(d.inject, "{d}");
     }
@@ -465,7 +474,7 @@ mod tests {
     #[test]
     fn a_sentence_initial_capital_is_not_a_proper_name() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let d = gate.decide("Router the concept of expert collapse, in general?", None);
         assert!(!d.inject, "{d}");
     }
@@ -476,7 +485,7 @@ mod tests {
     #[test]
     fn test_function_names_do_not_become_repo_vocabulary() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let index = gate.name_index();
         for word in ["gradient", "clipping", "stabilise", "collapse", "training"] {
             assert!(!index.contains_key(word), "{word} leaked into the index");
@@ -486,7 +495,7 @@ mod tests {
     #[test]
     fn a_distinctive_name_is_recognised() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         assert!(gate.name_index().contains_key("mnemosyne"));
         assert!(!gate.distinctive_hits("how does Mnemosyne compress a segment").is_empty());
     }
@@ -494,7 +503,7 @@ mod tests {
     #[test]
     fn short_tokens_are_never_distinctive() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         assert!(gate.distinctive_hits("what is x").is_empty());
     }
 
@@ -504,7 +513,7 @@ mod tests {
     #[test]
     fn every_decision_explains_itself() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         for query in ["which file defines the router", "what is attention, in general?"] {
             let d = gate.decide(query, None);
             assert!(!d.reasons.is_empty(), "{query}");
@@ -518,8 +527,8 @@ mod tests {
     fn threshold_is_adjustable() {
         let (_dir, argus) = fixture();
         let query = "how is the halting probability computed here";
-        assert!(RetrievalGate::with_threshold(&argus, 0.0).decide(query, None).inject);
-        assert!(!RetrievalGate::with_threshold(&argus, 1.01).decide(query, None).inject);
+        assert!(RetrievalGate::with_threshold(Arc::clone(&argus),0.0).decide(query, None).inject);
+        assert!(!RetrievalGate::with_threshold(Arc::clone(&argus),1.01).decide(query, None).inject);
     }
 
     /// Passing hits should not change the ruling for a query that already
@@ -527,7 +536,7 @@ mod tests {
     #[test]
     fn supplied_hits_stand_in_for_a_second_scoring_pass() {
         let (_dir, argus) = fixture();
-        let gate = RetrievalGate::new(&argus);
+        let gate = RetrievalGate::new(Arc::clone(&argus));
         let query = "how does MnemosyneBank store a gist";
         let hits = argus.retrieve(query, 2000, 0);
         assert_eq!(

@@ -40,6 +40,7 @@ Language support:
 from __future__ import annotations
 
 import ast
+import codecs
 import fnmatch
 import hashlib
 import json
@@ -322,7 +323,14 @@ class Argus:
                 report.unchanged += 1
                 continue
 
-            text = raw.decode("utf-8", errors="replace")
+            # utf-8-sig strips a byte-order mark. A BOM is legal in UTF-8 and
+            # editors on Windows write them, but `ast.parse` rejects U+FEFF at
+            # position 0 -- so without this a BOM makes a file silently
+            # unindexable, and retrieval goes blind on it with no error anyone
+            # sees. Observed on this repo's own acp.py, oracle.py and
+            # workspace.py.
+            encoding = "utf-8-sig" if raw.startswith(codecs.BOM_UTF8) else "utf-8"
+            text = raw.decode(encoding, errors="replace")
             record = self._parse(rel, text, sha)
             self.files[rel] = record
             report.parsed += 1

@@ -395,6 +395,15 @@ impl ToolRegistry {
         registry
     }
 
+    /// Add tools discovered at runtime — an MCP server's, typically.
+    ///
+    /// Takes them already boxed rather than one generic tool at a time, because
+    /// the caller has a heterogeneous set from one connection and splitting it
+    /// up would only make the collision check below harder to do once.
+    pub fn extend(&mut self, tools: impl IntoIterator<Item = Box<dyn Tool>>) {
+        self.tools.extend(tools);
+    }
+
     pub fn defs(&self) -> Vec<ToolDef> {
         self.tools.iter().map(|t| t.def()).collect()
     }
