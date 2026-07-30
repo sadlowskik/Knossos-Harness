@@ -23,6 +23,15 @@ pub struct Config {
     /// Set false for a local model whose tool calling is unreliable; the
     /// harness then uses the prompted-JSON shim.
     pub ollama_native_tools: bool,
+    /// Context window asked of Ollama. `None` accepts the model's own default,
+    /// which is 4096 and silently truncates.
+    ///
+    /// This is the real ceiling on a turn: the prompt and everything generated
+    /// must fit inside it together, so raising `max_tokens` past what the
+    /// context leaves free buys nothing. Raising *this* costs VRAM, because the
+    /// KV cache grows with it — which is the one place the GPU actually limits
+    /// you rather than a number in a config.
+    pub ollama_num_ctx: Option<u32>,
     pub workspace: PathBuf,
     /// Ariadne's hard ceiling — the forced halt.
     pub max_steps: usize,
@@ -39,6 +48,7 @@ impl Default for Config {
             anthropic_base_url: env_or("ANTHROPIC_BASE_URL", anthropic::DEFAULT_BASE_URL),
             ollama_base_url: ollama_host().unwrap_or_else(|| ollama::DEFAULT_BASE_URL.to_string()),
             ollama_native_tools: true,
+            ollama_num_ctx: Some(ollama::DEFAULT_NUM_CTX),
             workspace: PathBuf::from("."),
             // Matches `Ariadne::default()` and Python's `acp.py` default. Raised
             // from 12 on measurement; `target_steps` stays where it was so
@@ -90,7 +100,9 @@ impl Config {
                     .model
                     .clone()
                     .unwrap_or_else(|| env_or("DAEDALUS_MODEL", ollama::DEFAULT_MODEL));
-                let mut e = ollama::OllamaEngine::new(model).with_base_url(&self.ollama_base_url);
+                let mut e = ollama::OllamaEngine::new(model)
+                    .with_base_url(&self.ollama_base_url)
+                    .with_num_ctx(self.ollama_num_ctx);
                 if !self.ollama_native_tools {
                     e = e.without_native_tools();
                 }

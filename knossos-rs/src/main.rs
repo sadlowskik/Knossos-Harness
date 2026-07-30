@@ -1,10 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use knossos::argus::Argus;
 use knossos::ariadne::Ariadne;
+use knossos::acp;
 use knossos::config::{Config, EngineKind};
 use knossos::delegate;
 use knossos::engine::{self, Message, Request};
@@ -87,6 +89,15 @@ struct LoopArgs {
     /// than as "it thought too long".
     #[arg(long, default_value = "8192")]
     max_tokens: u32,
+    /// Context window for a local model, in tokens.
+    ///
+    /// The ceiling `--max-tokens` lives inside: prompt and completion share it.
+    /// Ollama's own default is 4096 whatever the model declares, which is why
+    /// this defaults to something usable instead. Raising it costs VRAM, since
+    /// the KV cache scales with it — so this is the knob where your GPU, rather
+    /// than a configuration value, is what actually stops you.
+    #[arg(long, default_value_t = knossos::engine::ollama::DEFAULT_NUM_CTX)]
+    num_ctx: u32,
     /// Let the agent hand scoped subtasks to child agents.
     ///
     /// Off by default because it spends engine turns: a caller measuring the
@@ -143,6 +154,16 @@ enum Command {
         opts: LoopArgs,
     },
 
+    /// Speak the Agent Client Protocol on stdio, for Zed and other ACP editors.
+    ///
+    /// Not meant to be driven by hand. Point an editor's agent configuration at
+    /// this — the workspace comes from the editor in `session/new`, so
+    /// `--workspace` is ignored here.
+    Acp {
+        #[command(flatten)]
+        opts: LoopArgs,
+    },
+
     /// Long-lived NDJSON server for editor front ends.
     ///
     /// Commands in on stdin, events out on stdout, one JSON object per line.
@@ -172,6 +193,12 @@ async fn main() -> Result<()> {
             }
             _ => Config::default().max_tokens,
         },
+        ollama_num_ctx: match &cli.command {
+            Command::Task { opts, .. } | Command::Repl { opts, .. } | Command::Serve { opts } => {
+                Some(opts.num_ctx)
+            }
+            _ => Config::default().ollama_num_ctx,
+        },
         ..Config::default()
     };
 
@@ -183,6 +210,7 @@ async fn main() -> Result<()> {
         Command::Task { ref task, ref opts } => run_task(&cfg, task, opts).await,
         Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
         Command::Serve { ref opts } => run_serve(&cfg, opts).await,
+        Command::Acp { ref opts } => run_acp(&cfg, opts).await,
     }
 }
 
@@ -358,6 +386,81 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     }
 
     Ok((talos, trace_path))
+}
+
+/// Speak ACP on stdio until the editor goes away.
+///
+/// Nothing is printed. stdout is the protocol channel, so every announcement
+/// the other commands make goes to stderr here — an editor shows it as agent
+/// logs, and a stray line on stdout would corrupt the stream.
+async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
+    eprintln!(
+        "daedalus acp — {:?}/{} — waiting for an editor",
+        cfg.engine,
+        cfg.model.as_deref().unwrap_or("default"),
+    );
+
+    let cfg = cfg.clone();
+    let opts = opts.clone();
+    let build: Arc<acp::BuildAgent> = Arc::new(move |root: &Path, cancel, approver| {
+        // The editor names the workspace, so everything is built per session
+        // rather than once at startup.
+        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let idx = SymbolIndex::build(&root)?;
+        let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
+        let trace = root.join(".daedalus").join(format!("acp-{}.jsonl", std::process::id()));
+
+        let mut registry = ToolRegistry::with_retrieval(retrieval);
+        connect_mcp(&mut registry, &root, opts.mcp_config.as_deref());
+        if opts.delegate {
+            registry.extend([Box::new(delegate::Delegate::new(
+                child_factory(cfg.clone(), root.clone(), trace.clone()),
+                opts.max_steps,
+            )) as Box<dyn knossos::tools::Tool>]);
+        }
+
+        let mut talos = Talos::new(
+            cfg.build_engine()?,
+            registry,
+            ToolCtx::new(&root),
+            Oracle::new(&root),
+            idx,
+            Themis::load(&root),
+            Ariadne::new(opts.max_steps, opts.target_steps),
+            Session::new(&root, "acp").with_trace(&trace)?,
+            cfg.max_tokens,
+            !opts.no_judge,
+        );
+        talos.cancel = cancel;
+        talos.approver = Some(approver);
+        if !opts.no_context {
+            let mut argus = Argus::new(&root);
+            argus.scan();
+            talos = talos.with_retrieval(RetrievalGate::new(std::sync::Arc::new(argus)));
+        }
+        Ok(talos)
+    });
+
+    let rx = Box::new(std::io::BufReader::new(std::io::stdin()));
+    let mut peer = knossos::jsonrpc::Peer::new(rx, Box::new(std::io::stdout()))
+        .with_fast_path(acp::is_fast_path);
+    // Captured on this thread, which has the runtime. The peer's worker does
+    // not, and is what will block on each turn.
+    let agent = Arc::new(acp::Agent::new(
+        peer.handle(),
+        build,
+        tokio::runtime::Handle::current(),
+    ));
+
+    // On its own thread: `Peer::wait` joins the reader, which parks on stdin
+    // for the life of the process, and a runtime worker held that long is one
+    // the rest of the process never gets back.
+    tokio::task::spawn_blocking(move || {
+        peer.start(move |method: &str, params, _| agent.handle(method, params));
+        peer.wait();
+    })
+    .await?;
+    Ok(())
 }
 
 /// Build the closure that spawns child agents.

@@ -17,6 +17,7 @@
 //!
 //! Mappings that would only rename a standard pattern were left out.
 
+pub mod acp;
 pub mod argus;
 pub mod ariadne;
 pub mod config;
