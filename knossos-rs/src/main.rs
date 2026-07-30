@@ -98,6 +98,16 @@ struct LoopArgs {
     /// than a configuration value, is what actually stops you.
     #[arg(long, default_value_t = knossos::engine::ollama::DEFAULT_NUM_CTX)]
     num_ctx: u32,
+    /// Tell a reasoning model to answer without reasoning first.
+    ///
+    /// Reasoning is generated before the answer and billed as output, so it is
+    /// paid for on every step. Much of what it buys — choosing an approach,
+    /// checking the result — this harness already does with a plan you can read
+    /// and a verifier that compiles the code. Worth measuring rather than
+    /// assuming: `coding_eval` is what settles whether the quality is worth the
+    /// wall-clock.
+    #[arg(long)]
+    no_think: bool,
     /// Let the agent hand scoped subtasks to child agents.
     ///
     /// Off by default because it spends engine turns: a caller measuring the
@@ -188,16 +198,27 @@ async fn main() -> Result<()> {
         model: cli.model.clone(),
         workspace: cli.workspace.clone(),
         max_tokens: match &cli.command {
-            Command::Task { opts, .. } | Command::Repl { opts, .. } | Command::Serve { opts } => {
-                opts.max_tokens
-            }
+            Command::Task { opts, .. }
+            | Command::Repl { opts, .. }
+            | Command::Serve { opts }
+            | Command::Acp { opts } => opts.max_tokens,
             _ => Config::default().max_tokens,
         },
         ollama_num_ctx: match &cli.command {
-            Command::Task { opts, .. } | Command::Repl { opts, .. } | Command::Serve { opts } => {
-                Some(opts.num_ctx)
-            }
+            Command::Task { opts, .. }
+            | Command::Repl { opts, .. }
+            | Command::Serve { opts }
+            | Command::Acp { opts } => Some(opts.num_ctx),
             _ => Config::default().ollama_num_ctx,
+        },
+        // `None` rather than `Some(true)` when the flag is absent, so the
+        // model's own default stands instead of being overridden to match it.
+        ollama_think: match &cli.command {
+            Command::Task { opts, .. }
+            | Command::Repl { opts, .. }
+            | Command::Serve { opts }
+            | Command::Acp { opts } => opts.no_think.then_some(false),
+            _ => Config::default().ollama_think,
         },
         ..Config::default()
     };

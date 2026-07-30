@@ -42,6 +42,7 @@ pub struct OllamaEngine {
     name: String,
     native_tools: bool,
     num_ctx: Option<u32>,
+    think: Option<bool>,
 }
 
 impl OllamaEngine {
@@ -54,7 +55,21 @@ impl OllamaEngine {
             base_url: DEFAULT_BASE_URL.to_string(),
             native_tools: true,
             num_ctx: Some(DEFAULT_NUM_CTX),
+            think: None,
         }
+    }
+
+    /// Ask a reasoning model to answer without reasoning first.
+    ///
+    /// `None` leaves the model's own default. `Some(false)` is worth measuring
+    /// in a harness: reasoning is generated *before* the answer and billed as
+    /// output, and much of what it does — decide an approach, check the work —
+    /// this harness already does with a plan it can inspect and a verifier that
+    /// actually compiles the result. Paying twice for that is a choice rather
+    /// than a given, which is why it is a flag and not a default.
+    pub fn with_think(mut self, think: Option<bool>) -> Self {
+        self.think = think;
+        self
     }
 
     /// Set the context window, or `None` to accept whatever the model declares.
@@ -109,6 +124,7 @@ impl Engine for OllamaEngine {
                 num_predict: req.max_tokens,
                 num_ctx: self.num_ctx,
             },
+            think: self.think,
         };
 
         let resp = self
@@ -199,6 +215,10 @@ struct WireRequest<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<WireTool<'a>>,
     options: WireOptions,
+    /// Top-level, not an option: Ollama treats reasoning as a mode rather than
+    /// a sampling parameter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -424,6 +444,27 @@ mod tests {
         let unset = WireOptions { temperature: 0.0, num_predict: 10, num_ctx: None };
         let v = serde_json::to_value(&unset).expect("serialise");
         assert!(v.get("num_ctx").is_none(), "unset must mean absent, not null");
+    }
+
+    /// Absent must mean absent. Sending `think: true` to match a model whose
+    /// default is already to reason would override a setting rather than leave
+    /// it, and there is no way back from that at the call site.
+    #[test]
+    fn reasoning_is_only_mentioned_when_a_caller_asked() {
+        let engine = OllamaEngine::new("m");
+        assert_eq!(engine.think, None);
+        assert_eq!(OllamaEngine::new("m").with_think(Some(false)).think, Some(false));
+
+        let wire = serde_json::to_string(&WireRequest {
+            model: "m",
+            messages: vec![],
+            stream: false,
+            tools: vec![],
+            options: WireOptions { temperature: 0.0, num_predict: 1, num_ctx: None },
+            think: None,
+        })
+        .expect("serialise");
+        assert!(!wire.contains("think"), "an unset think field must not reach the wire: {wire}");
     }
 
     #[test]
