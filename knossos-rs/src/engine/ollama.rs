@@ -27,12 +27,21 @@ const PROVIDER: &str = "Ollama";
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 pub const DEFAULT_MODEL: &str = "qwen3-coder:30b";
 
+/// Context window requested of Ollama when the caller states no preference.
+///
+/// Ollama's own default is 4096, which is far below what a harness prompt needs
+/// once the constitution, the symbol index and retrieved context are in it — and
+/// the overflow is discarded silently. 32k matches the `-32k` model variants
+/// that were previously being built by hand to work around exactly this.
+pub const DEFAULT_NUM_CTX: u32 = 32_768;
+
 pub struct OllamaEngine {
     client: reqwest::Client,
     model: String,
     base_url: String,
     name: String,
     native_tools: bool,
+    num_ctx: Option<u32>,
 }
 
 impl OllamaEngine {
@@ -44,7 +53,14 @@ impl OllamaEngine {
             model,
             base_url: DEFAULT_BASE_URL.to_string(),
             native_tools: true,
+            num_ctx: Some(DEFAULT_NUM_CTX),
         }
+    }
+
+    /// Set the context window, or `None` to accept whatever the model declares.
+    pub fn with_num_ctx(mut self, num_ctx: Option<u32>) -> Self {
+        self.num_ctx = num_ctx;
+        self
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
@@ -91,6 +107,7 @@ impl Engine for OllamaEngine {
             options: WireOptions {
                 temperature: req.temperature,
                 num_predict: req.max_tokens,
+                num_ctx: self.num_ctx,
             },
         };
 
@@ -122,6 +139,16 @@ impl Engine for OllamaEngine {
         let mut content = Vec::new();
         if !wire.message.content.trim().is_empty() {
             content.push(Content::text(wire.message.content));
+        } else if wire.message.tool_calls.is_empty() {
+            // Nothing to say and nothing to do, but it may still have thought.
+            // Reasoning is not an answer and is never used *alongside* one — it
+            // would pollute the conversation replayed to the model next turn.
+            // As the sole fallback it is strictly better than an empty turn: the
+            // user sees what the model was doing instead of a blank reply, and
+            // Ariadne sees a step rather than silence.
+            if let Some(thinking) = wire.message.thinking.filter(|t| !t.trim().is_empty()) {
+                content.push(Content::text(thinking));
+            }
         }
         // Ollama tool calls carry no id, so the harness assigns one.
         for (i, call) in wire.message.tool_calls.into_iter().enumerate() {
@@ -178,6 +205,15 @@ struct WireRequest<'a> {
 struct WireOptions {
     temperature: f32,
     num_predict: u32,
+    /// Context window. Omitted leaves Ollama's own default, which is 4096
+    /// regardless of what the model supports.
+    ///
+    /// That default is a silent failure, not a loud one: the prompt is truncated
+    /// from the left, so the constitution and the symbol index disappear first
+    /// and the model answers a question it was never fully asked. A 262k-context
+    /// model behaves like a 4k one and nothing in the response says so.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_ctx: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -229,6 +265,15 @@ struct WireResponse {
 struct WireResponseMessage {
     #[serde(default)]
     content: String,
+    /// Reasoning, which newer Ollama returns *separately* from the answer.
+    ///
+    /// A thinking model can finish a turn having filled this and left `content`
+    /// empty. Read only `content` and that turn looks like the model said
+    /// nothing at all — which is what a front end renders as "no response was
+    /// returned", and what the loop would otherwise score as a step that did no
+    /// work.
+    #[serde(default)]
+    thinking: Option<String>,
     #[serde(default)]
     tool_calls: Vec<WireToolCall>,
 }
@@ -317,5 +362,74 @@ mod tests {
         assert_eq!(wire[0].role, "assistant");
         assert_eq!(wire[0].tool_calls.len(), 1);
         assert_eq!(wire[0].tool_calls[0].function.name, "read");
+    }
+
+    /// Decode a response body the way `complete` does, minus the HTTP.
+    fn decode(body: &str) -> Vec<Content> {
+        let wire: WireResponse = serde_json::from_str(body).expect("valid body");
+        let mut content = Vec::new();
+        if !wire.message.content.trim().is_empty() {
+            content.push(Content::text(wire.message.content));
+        } else if wire.message.tool_calls.is_empty() {
+            if let Some(t) = wire.message.thinking.filter(|t| !t.trim().is_empty()) {
+                content.push(Content::text(t));
+            }
+        }
+        content
+    }
+
+    /// The failure this was written for: a thinking model that fills `thinking`
+    /// and leaves `content` empty reads as having said nothing at all.
+    #[test]
+    fn a_reply_that_is_only_thinking_is_not_an_empty_turn() {
+        let out = decode(
+            r#"{"message":{"role":"assistant","content":"",
+                "thinking":"weighing two approaches"}}"#,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].as_text(), Some("weighing two approaches"));
+    }
+
+    /// Reasoning never rides along with an answer: it would be replayed to the
+    /// model next turn as though it had said it out loud.
+    #[test]
+    fn thinking_is_dropped_when_there_is_a_real_answer() {
+        let out = decode(
+            r#"{"message":{"role":"assistant","content":"the answer",
+                "thinking":"scratchpad"}}"#,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].as_text(), Some("the answer"));
+    }
+
+    /// A turn that is entirely tool calls is doing work, not going silent, so
+    /// its reasoning must not be turned into prose.
+    #[test]
+    fn thinking_is_dropped_when_the_model_called_a_tool() {
+        let out = decode(
+            r#"{"message":{"role":"assistant","content":"","thinking":"I should read it",
+                "tool_calls":[{"function":{"name":"read_file","arguments":{}}}]}}"#,
+        );
+        assert!(out.is_empty(), "reasoning must not become the assistant's prose");
+    }
+
+    /// Omitting `num_ctx` hands Ollama its own 4096 default, which truncates the
+    /// prompt from the left and says nothing about having done so.
+    #[test]
+    fn a_request_states_its_context_window() {
+        let opts = WireOptions { temperature: 0.0, num_predict: 10, num_ctx: Some(32_768) };
+        let v = serde_json::to_value(&opts).expect("serialise");
+        assert_eq!(v["num_ctx"], 32_768);
+
+        let unset = WireOptions { temperature: 0.0, num_predict: 10, num_ctx: None };
+        let v = serde_json::to_value(&unset).expect("serialise");
+        assert!(v.get("num_ctx").is_none(), "unset must mean absent, not null");
+    }
+
+    #[test]
+    fn the_default_engine_asks_for_more_than_ollamas_4k() {
+        assert_eq!(OllamaEngine::new("m").num_ctx, Some(DEFAULT_NUM_CTX));
+        const { assert!(DEFAULT_NUM_CTX > 4096) };
+        assert_eq!(OllamaEngine::new("m").with_num_ctx(None).num_ctx, None);
     }
 }
