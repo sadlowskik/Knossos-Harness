@@ -1355,3 +1355,38 @@ async fn retrieval_left_unattached_changes_nothing() {
         "a disabled gate must not report decisions it never made",
     );
 }
+
+/// The trace records what the model *said*, not only what it did.
+///
+/// Tool calls were logged from the start; the prose around them was not, unless
+/// the run was collecting whole exchanges. A reader could see every edit and
+/// still not know what the agent claimed it was doing.
+#[tokio::test]
+async fn the_trace_records_what_the_model_said() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("Looks fine to me.")], 1, false);
+    let plan = Plan { steps: vec!["do the thing".into()] };
+
+    talos.run("test task", &plan).await.unwrap();
+
+    let said: Vec<String> = h
+        .trace_events()
+        .into_iter()
+        .filter(|e| e["event"] == "agent_message")
+        .filter_map(|e| e["text"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(said, ["Looks fine to me."]);
+}
+
+/// An empty reply is not a message. A model that answers with tool calls only
+/// would otherwise produce a stream of blank bubbles in a front end.
+#[tokio::test]
+async fn an_empty_reply_is_not_recorded_as_a_message() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![text_response("   ")], 1, false);
+    let plan = Plan { steps: vec!["do the thing".into()] };
+
+    talos.run("test task", &plan).await.unwrap();
+
+    assert!(h.trace_events().iter().all(|e| e["event"] != "agent_message"));
+}

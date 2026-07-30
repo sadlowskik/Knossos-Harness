@@ -12,6 +12,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use serde::Serialize;
@@ -34,6 +35,17 @@ pub enum TraceEvent {
     StepStarted {
         index: usize,
         description: String,
+    },
+    /// What the model actually said, per step.
+    ///
+    /// The trace recorded every tool call but never the prose around them, so a
+    /// reader could see what the agent *did* and not what it claimed to be
+    /// doing. [`Exchange`](Self::Exchange) carries it, but only when collecting,
+    /// and at the cost of the whole conversation per step. This is the cheap
+    /// half, and it is what a front end renders as the agent's reply.
+    AgentMessage {
+        step: usize,
+        text: String,
     },
     /// Whether repository context was injected for this turn, and the signals
     /// that decided it.
@@ -126,6 +138,13 @@ pub struct Session {
     /// wants live progress needs no second mechanism — it reads the same
     /// lines the log file gets.
     stream_stdout: bool,
+    /// Hand each event to a caller-supplied sink as well.
+    ///
+    /// Exists because [`stream_stdout`](Self::streaming) is not universal: under
+    /// ACP, stdout *is* the protocol channel, so a progress line written there
+    /// corrupts the stream and the editor drops the connection. A front end that
+    /// owns stdout needs the events without them being printed.
+    sink: Option<Arc<EventSink>>,
     /// Record the full request and response at every engine call.
     ///
     /// Turns the trace from an audit log into a training corpus. Costs a great
@@ -139,6 +158,9 @@ pub struct Session {
 /// [`TraceEvent::Exchange`] is not. It carries the entire prompt, which is
 /// training data rather than progress; pushing tens of thousands of tokens per
 /// step at a UI would drown every other event and stall whoever is reading.
+/// Where live events go besides the trace file. See [`Session::with_sink`].
+pub type EventSink = dyn Fn(&TraceEvent) + Send + Sync;
+
 fn streamable(event: &TraceEvent) -> bool {
     !matches!(event, TraceEvent::Exchange { .. })
 }
@@ -151,8 +173,18 @@ impl Session {
             messages: Vec::new(),
             trace_path: None,
             stream_stdout: false,
+            sink: None,
             collect_exchanges: false,
         }
+    }
+
+    /// Send every streamable event to `sink` as well as the trace file.
+    ///
+    /// The sink runs on whatever thread logged the event and inside the run, so
+    /// it must not block: queue the event and return.
+    pub fn with_sink(mut self, sink: Arc<EventSink>) -> Self {
+        self.sink = Some(sink);
+        self
     }
 
     /// Record the full prompt and completion at every engine call.
@@ -203,7 +235,14 @@ impl Session {
     /// Append one event. Trace failures are reported but never abort a run —
     /// losing the record is bad, losing the work is worse.
     pub fn log(&self, event: &TraceEvent) {
-        let to_stdout = self.stream_stdout && streamable(event);
+        let live = streamable(event);
+        if live {
+            if let Some(sink) = &self.sink {
+                sink(event);
+            }
+        }
+
+        let to_stdout = self.stream_stdout && live;
         if self.trace_path.is_none() && !to_stdout {
             return;
         }
@@ -275,6 +314,77 @@ mod tests {
 
         let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["event"], "halt");
+    }
+
+    /// Collect what a sink is handed, for the tests below.
+    fn recording() -> (Arc<EventSink>, Arc<std::sync::Mutex<Vec<String>>>) {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let into = Arc::clone(&seen);
+        let sink: Arc<EventSink> = Arc::new(move |event: &TraceEvent| {
+            let tag = serde_json::to_value(event)
+                .ok()
+                .and_then(|v| v["event"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            into.lock().expect("seen").push(tag);
+        });
+        (sink, seen)
+    }
+
+    /// A sink fires with no trace file configured.
+    ///
+    /// `log` returns early when there is nowhere to write, and the sink call has
+    /// to happen before that check — under ACP the sink is the *only* consumer,
+    /// so getting this order wrong makes the editor go silent while the run
+    /// proceeds invisibly.
+    #[test]
+    fn a_sink_receives_events_with_no_trace_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sink, seen) = recording();
+        let s = Session::new(dir.path(), "mock").with_sink(sink);
+
+        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+
+        assert_eq!(*seen.lock().unwrap(), ["agent_message"]);
+    }
+
+    /// The sink is fed alongside the trace, not instead of it.
+    #[test]
+    fn a_sink_does_not_displace_the_trace_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("trace.jsonl");
+        let (sink, seen) = recording();
+        let s = Session::new(dir.path(), "mock").with_trace(&trace).unwrap().with_sink(sink);
+
+        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+
+        assert_eq!(*seen.lock().unwrap(), ["agent_message"]);
+        assert!(std::fs::read_to_string(&trace).unwrap().contains("agent_message"));
+    }
+
+    /// `Exchange` carries the whole conversation. It belongs in the trace and
+    /// nowhere near a live consumer — the same reason it is kept off stdout.
+    #[test]
+    fn a_sink_is_spared_the_exchange_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sink, seen) = recording();
+        let s = Session::new(dir.path(), "mock").with_sink(sink);
+
+        s.log(&TraceEvent::Exchange {
+            step: 1,
+            request: crate::engine::Request::new("sys", vec![]),
+            response: crate::engine::Response {
+                content: Vec::new(),
+                stop_reason: crate::engine::StopReason::EndTurn,
+                usage: crate::engine::Usage::default(),
+            },
+        });
+        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["agent_message"],
+            "the whole conversation must not reach a live consumer",
+        );
     }
 
     #[test]

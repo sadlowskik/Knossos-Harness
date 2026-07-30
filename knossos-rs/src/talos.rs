@@ -516,6 +516,8 @@ impl Talos {
             let reply_text = resp.text();
             if !reply_text.trim().is_empty() {
                 last_text = reply_text.clone();
+                self.session
+                    .log(&TraceEvent::AgentMessage { step, text: reply_text.clone() });
             }
 
             // Own the calls so `resp` is not borrowed across the awaits below.
