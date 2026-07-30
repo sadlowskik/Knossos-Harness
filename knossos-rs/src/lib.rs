@@ -20,6 +20,7 @@
 pub mod argus;
 pub mod ariadne;
 pub mod config;
+pub mod delegate;
 pub mod diff;
 pub mod engine;
 pub mod gate;

@@ -384,6 +384,23 @@ impl ToolRegistry {
         .with_hook(Box::new(crate::hooks::ProtectPaths::default()))
     }
 
+    /// Everything that only reads: no writing, no editing, no commands.
+    ///
+    /// For an agent whose value depends on not having a stake in the work — a
+    /// reviewer that can edit will fix what it finds and report success, which
+    /// is the one thing an independent review was for. Withholding the tools is
+    /// the control; a prompt asking it not to write is not.
+    ///
+    /// `run` is excluded even though plenty of commands are harmless, because
+    /// the registry cannot tell `cargo check` from `cargo fmt --write`.
+    pub fn read_only() -> Self {
+        ToolRegistry::new(vec![
+            Box::new(fs::ReadFile),
+            Box::new(fs::ListDir),
+            Box::new(search::Search),
+        ])
+    }
+
     /// The standard set plus `search_code`, backed by the Mnemosyne index.
     ///
     /// Retrieval is additive rather than a replacement: `search` stays for when

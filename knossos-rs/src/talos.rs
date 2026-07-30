@@ -148,6 +148,13 @@ pub struct Talos {
     /// Clone the handle out with [`Talos::interjections`] before starting a
     /// run; pushing to it afterwards steers the loop without ending it.
     pub interjections: crate::interject::Interjections,
+    /// The system role this agent plays, composed with the constitution.
+    ///
+    /// Defaults to [`EXECUTOR_ROLE`]. A child agent overrides it, which is what
+    /// makes a subagent *specialised* rather than merely separate — though the
+    /// role only states the intent, and what it can actually do is decided by
+    /// the registry it was given.
+    pub role: String,
     /// Raised to stop the current turn at the next step boundary.
     ///
     /// A boundary rather than immediately: a step is a model call, its tool
@@ -207,6 +214,7 @@ impl Talos {
             lethe: crate::lethe::Lethe::default(),
             approver: None,
             interjections: crate::interject::Interjections::new(),
+            role: EXECUTOR_ROLE.to_string(),
             cancel: Arc::new(AtomicBool::new(false)),
             retrieval: None,
             messages: Vec::new(),
@@ -234,6 +242,12 @@ impl Outcome {
 }
 
 impl Talos {
+    /// Play a different role than the default executor.
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = role.into();
+        self
+    }
+
     /// Attach proactive retrieval. Without it the harness offers no unasked
     /// context and the `search_code` tool remains the only way in.
     pub fn with_retrieval(mut self, gate: crate::gate::RetrievalGate) -> Self {
@@ -515,7 +529,7 @@ impl Talos {
             }
 
             let req = Request::new(
-                self.themis.system_prompt(EXECUTOR_ROLE, Some(&self.scribe)),
+                self.themis.system_prompt(&self.role, Some(&self.scribe)),
                 self.messages.clone(),
             )
             .with_tools(self.tools.defs())

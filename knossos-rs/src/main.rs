@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use knossos::argus::Argus;
 use knossos::ariadne::Ariadne;
 use knossos::config::{Config, EngineKind};
+use knossos::delegate;
 use knossos::engine::{self, Message, Request};
 use knossos::gate::RetrievalGate;
 use knossos::mcp;
@@ -77,6 +78,23 @@ struct LoopArgs {
     /// MCP server declarations. Defaults to `.daedalus/mcp.json`, if present.
     #[arg(long)]
     mcp_config: Option<PathBuf>,
+    /// Output-token ceiling per engine turn.
+    ///
+    /// Worth raising for a reasoning model: thinking is generated before the
+    /// answer and counts against the same budget, so a ceiling that looks
+    /// generous can be spent entirely on reasoning and truncate the reply
+    /// mid-sentence — which the front end reports as an output limit rather
+    /// than as "it thought too long".
+    #[arg(long, default_value = "8192")]
+    max_tokens: u32,
+    /// Let the agent hand scoped subtasks to child agents.
+    ///
+    /// Off by default because it spends engine turns: a caller measuring the
+    /// loop needs to be able to compare with and without. The win is context,
+    /// not speed — a child's reading is discarded when it finishes, so the
+    /// parent pays for a paragraph instead of ten files it will never reread.
+    #[arg(long)]
+    delegate: bool,
     /// Record the full prompt and completion at every engine call.
     ///
     /// Turns the trace from an audit log into training data: each step gains
@@ -140,10 +158,20 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
 
+    // Folded into the config rather than passed alongside it, because
+    // `cfg.max_tokens` is what every call site already reads — planning, the
+    // executor, the judge and any child agent. Threading a second value would
+    // mean finding all of them and getting one wrong.
     let cfg = Config {
         engine: cli.engine,
         model: cli.model.clone(),
         workspace: cli.workspace.clone(),
+        max_tokens: match &cli.command {
+            Command::Task { opts, .. } | Command::Repl { opts, .. } | Command::Serve { opts } => {
+                opts.max_tokens
+            }
+            _ => Config::default().max_tokens,
+        },
         ..Config::default()
     };
 
@@ -277,6 +305,12 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     // with whatever a side-car decided to say while starting.
     let mut registry = ToolRegistry::with_retrieval(retrieval.clone());
     let mcp_report = connect_mcp(&mut registry, &root, opts.mcp_config.as_deref());
+    if opts.delegate {
+        registry.extend([Box::new(delegate::Delegate::new(
+            child_factory(cfg.clone(), root.clone(), trace_path.clone()),
+            opts.max_steps,
+        )) as Box<dyn knossos::tools::Tool>]);
+    }
 
     let gate = (!opts.no_context).then(|| {
         let mut argus = Argus::new(&root);
@@ -324,6 +358,53 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     }
 
     Ok((talos, trace_path))
+}
+
+/// Build the closure that spawns child agents.
+///
+/// This is where a role becomes a capability. `reviewer` and `investigator` get
+/// a registry with no writing tools at all — not a prompt asking them not to
+/// write, an inability to. A reviewer that can edit will fix what it finds and
+/// report success, which destroys the only thing an independent reviewer was
+/// for; asking politely is not a control.
+///
+/// A child never gets the delegate tool, so `MAX_DEPTH` is enforced by
+/// construction rather than by a check the child could reach.
+fn child_factory(
+    cfg: Config,
+    root: PathBuf,
+    trace: PathBuf,
+) -> std::sync::Arc<delegate::SpawnChild> {
+    std::sync::Arc::new(move |req: delegate::ChildRequest| {
+        let engine = cfg.build_engine()?;
+        let can_write = req.role.name == "general";
+        let tools = if can_write {
+            ToolRegistry::standard()
+        } else {
+            ToolRegistry::read_only()
+        };
+
+        Ok(Talos::new(
+            engine,
+            tools,
+            req.ctx,
+            // Shares the parent's baseline decision, but not its baseline: a
+            // child verifies the same workspace, so re-running the ladder to
+            // establish what was already broken would cost the same again.
+            Oracle::new(&root).without_baseline(),
+            SymbolIndex::build(&root)?,
+            Themis::load(&root),
+            Ariadne::new(req.max_steps, req.max_steps.div_ceil(2)),
+            // The same trace file: a child's steps belong in the record of the
+            // run that caused them, not in a file nobody knows to open.
+            Session::new(&root, "child").with_trace(&trace)?,
+            cfg.max_tokens,
+            // Tier 4 costs an engine turn, and the parent judges the whole task
+            // once the child's work is folded into it.
+            false,
+        )
+        .with_role(req.role.prompt.clone()))
+    })
 }
 
 /// Connect declared MCP servers and register what they offer.
