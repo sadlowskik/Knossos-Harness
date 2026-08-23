@@ -18,7 +18,10 @@ fn truncate(s: String, note: &str) -> String {
     while !s.is_char_boundary(cut) {
         cut -= 1;
     }
-    format!("{}\n\n[truncated at {MAX_OUTPUT} bytes — {note}]", &s[..cut])
+    format!(
+        "{}\n\n[truncated at {MAX_OUTPUT} bytes — {note}]",
+        &s[..cut]
+    )
 }
 
 pub struct ReadFile;
@@ -54,10 +57,19 @@ impl Tool for ReadFile {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let text = match ctx.read(&path) {
             Ok(t) => t,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot read {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
-        let offset = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
+        let offset = input
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1) as usize;
         let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
         let numbered: String = text
@@ -162,7 +174,12 @@ impl Tool for EditFile {
 
         let text = match ctx.read(&path) {
             Ok(t) => t,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot read {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
         // Uniqueness is enforced rather than assumed: a silent multi-replace is
@@ -174,7 +191,11 @@ impl Tool for EditFile {
             ))),
             1 => {
                 ctx.write(&path, &text.replacen(old, new, 1))?;
-                let verb = if ctx.is_dry_run() { "staged edit to" } else { "edited" };
+                let verb = if ctx.is_dry_run() {
+                    "staged edit to"
+                } else {
+                    "edited"
+                };
                 Ok(ToolOutput::ok(format!("{verb} {}", ctx.display(&path))).changed(path))
             }
             n => Ok(ToolOutput::error(format!(
@@ -214,7 +235,12 @@ impl Tool for ListDir {
 
         let mut entries = match tokio::fs::read_dir(&path).await {
             Ok(e) => e,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot list {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot list {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
         let mut names = Vec::new();
@@ -228,7 +254,10 @@ impl Tool for ListDir {
         if names.is_empty() {
             return Ok(ToolOutput::ok(format!("{} is empty", ctx.display(&path))));
         }
-        Ok(ToolOutput::ok(truncate(names.join("\n"), "narrow the path")))
+        Ok(ToolOutput::ok(truncate(
+            names.join("\n"),
+            "narrow the path",
+        )))
     }
 }
 
@@ -261,11 +290,17 @@ mod tests {
     async fn edit_refuses_ambiguous_matches() {
         let (_d, c) = ctx();
         WriteFile
-            .run(&json!({"path": "d.rs", "content": "let x = 1;\nlet x = 1;\n"}), &c)
+            .run(
+                &json!({"path": "d.rs", "content": "let x = 1;\nlet x = 1;\n"}),
+                &c,
+            )
             .await
             .unwrap();
         let e = EditFile
-            .run(&json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}), &c)
+            .run(
+                &json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(e.is_error);
@@ -280,7 +315,10 @@ mod tests {
             .await
             .unwrap();
         let e = EditFile
-            .run(&json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}), &c)
+            .run(
+                &json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(!e.is_error, "{}", e.content);
@@ -316,21 +354,33 @@ mod tests {
         let c = c.dry_run();
 
         EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
 
         let read = ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
-        assert!(read.content.contains("let x = 2;"), "read must see the staged edit");
+        assert!(
+            read.content.contains("let x = 2;"),
+            "read must see the staged edit"
+        );
 
         // A second edit chains off the first.
         let second = EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 2;", "new_string": "let x = 3;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 2;", "new_string": "let x = 3;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(!second.is_error, "{}", second.content);
 
-        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "let x = 1;\n");
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "let x = 1;\n"
+        );
     }
 
     #[tokio::test]
@@ -411,7 +461,10 @@ mod tests {
         assert!(!after.contains("FIFTEEN"));
 
         // The file stays staged, since part of it is still unreviewed.
-        assert!(!c.diffs().is_empty(), "remaining hunk should still be pending");
+        assert!(
+            !c.diffs().is_empty(),
+            "remaining hunk should still be pending"
+        );
     }
 
     #[tokio::test]
@@ -428,7 +481,10 @@ mod tests {
         let ids: Vec<usize> = c.diffs()[0].hunks.iter().map(|h| h.id).collect();
         c.apply_hunks(&[("a.rs".to_string(), ids)]).unwrap();
 
-        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "beta\n");
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "beta\n"
+        );
         assert!(c.diffs().is_empty(), "fully accepted files leave staging");
     }
 
@@ -466,7 +522,10 @@ mod tests {
         std::fs::write(c.root().join("a.rs"), "fn one() {}\nfn theirs() {}\n").unwrap();
 
         let w = WriteFile
-            .run(&json!({"path": "a.rs", "content": "fn one() {}\nfn mine() {}\n"}), &c)
+            .run(
+                &json!({"path": "a.rs", "content": "fn one() {}\nfn mine() {}\n"}),
+                &c,
+            )
             .await
             .unwrap();
 
@@ -501,7 +560,10 @@ mod tests {
                 .unwrap();
             assert!(!w.is_error, "{}", w.content);
         }
-        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "three\n");
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "three\n"
+        );
     }
 
     #[tokio::test]
@@ -531,7 +593,10 @@ mod tests {
         std::fs::write(c.root().join("a.rs"), "let x = 99;\n").unwrap();
 
         let e = EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(e.is_error);
@@ -547,10 +612,17 @@ mod tests {
         std::fs::write(c.root().join("a.rs"), "let x = 1;\nlet y = 2;\n").unwrap();
         ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
 
-        std::fs::write(c.root().join("a.rs"), "let x = 1;\nlet y = 2;\nlet z = 3;\n").unwrap();
+        std::fs::write(
+            c.root().join("a.rs"),
+            "let x = 1;\nlet y = 2;\nlet z = 3;\n",
+        )
+        .unwrap();
 
         let e = EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 7;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 7;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(!e.is_error, "{}", e.content);

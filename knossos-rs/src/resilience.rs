@@ -1,9 +1,11 @@
 //! Surviving an engine that is having a bad minute.
 //!
-//! Neither backend retries. [`anthropic`](crate::engine::anthropic) and
-//! [`ollama`](crate::engine::ollama) both `bail!` on any non-success status,
-//! `engine::complete` propagates it, and `Talos::drive` takes it with `?` — so a
-//! single 429 ends a run that may be twenty steps deep, and the trace records a
+//! The backends themselves do not retry transients. [`anthropic`](crate::engine::anthropic)
+//! and [`ollama`](crate::engine::ollama) return a typed error on any non-success
+//! status; the OpenAI-compat adapter degrades a 400 in place and then does the
+//! same. `engine::complete` propagates it, and `Talos::drive` takes it with `?`
+//! — so a single 429 ends a run that may be twenty steps deep, and the trace
+//! records a
 //! failure that is not about the model, the harness, or the task.
 //!
 //! That failure is already being paid for downstream: the Python side
@@ -212,6 +214,14 @@ impl Engine for Resilient {
     fn supports_native_tools(&self) -> bool {
         self.inner.supports_native_tools()
     }
+
+    fn restore_limits(&self) -> bool {
+        self.inner.restore_limits()
+    }
+
+    fn context_window(&self) -> Option<u32> {
+        self.inner.context_window()
+    }
 }
 
 #[cfg(test)]
@@ -268,7 +278,11 @@ mod tests {
         }
 
         fn always(failure: Failure) -> Self {
-            Flaky { failures: usize::MAX, calls: AtomicUsize::new(0), failure }
+            Flaky {
+                failures: usize::MAX,
+                calls: AtomicUsize::new(0),
+                failure,
+            }
         }
 
         fn calls(&self) -> usize {
@@ -373,7 +387,10 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(!e.is_open(), "the cooldown has passed");
-        assert!(e.complete(&req()).await.is_ok(), "the trial call should succeed");
+        assert!(
+            e.complete(&req()).await.is_ok(),
+            "the trial call should succeed"
+        );
     }
 
     #[tokio::test]

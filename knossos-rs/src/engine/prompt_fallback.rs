@@ -37,8 +37,7 @@ pub fn augment_system(system: &str, tools: &[ToolDef]) -> String {
             "\n## {}\n{}\n\nInput schema:\n```json\n{}\n```\n",
             t.name,
             t.description,
-            serde_json::to_string_pretty(&t.input_schema)
-                .unwrap_or_else(|_| "{}".to_string())
+            serde_json::to_string_pretty(&t.input_schema).unwrap_or_else(|_| "{}".to_string())
         ));
     }
     out.push_str(PROTOCOL);
@@ -115,7 +114,11 @@ fn parse_call(body: &str, counter: &mut usize) -> Option<Content> {
     let value: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
     let obj = value.as_object()?;
     let name = obj.get("tool")?.as_str()?.to_string();
-    let input = obj.get("input").cloned().unwrap_or(serde_json::json!({}));
+    let input = obj
+        .get("input")
+        .or_else(|| obj.get("args"))
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
     let id = format!("call_{}", *counter);
     *counter += 1;
     Some(Content::ToolUse { id, name, input })
@@ -136,13 +139,22 @@ mod tests {
 
     #[test]
     fn extracts_a_fenced_tool_call() {
-        let mut r = resp("Let me look.\n```json\n{\"tool\": \"read\", \"input\": {\"path\": \"a.rs\"}}\n```");
+        let mut r = resp(
+            "Let me look.\n```json\n{\"tool\": \"read\", \"input\": {\"path\": \"a.rs\"}}\n```",
+        );
         extract_tool_calls(&mut r);
         assert_eq!(r.stop_reason, StopReason::ToolUse);
         let calls = r.tool_uses();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].1, "read");
         assert_eq!(calls[0].2["path"], "a.rs");
+    }
+
+    #[test]
+    fn a_legacy_args_key_is_still_accepted() {
+        let mut r = resp("```json\n{\"tool\": \"read\", \"args\": {\"path\": \"a.rs\"}}\n```");
+        extract_tool_calls(&mut r);
+        assert_eq!(r.tool_uses()[0].2["path"], "a.rs");
     }
 
     #[test]

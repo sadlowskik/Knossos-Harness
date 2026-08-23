@@ -125,6 +125,8 @@ class CodingCase:
     tier: str = "core"
     #: What this case is really testing about the harness.
     note: str = ""
+    #: `edit` (default), `edit_preserve`, `no_op`, or `clarify`.
+    expected_action: str = "edit"
 
     def __post_init__(self) -> None:
         """Enforce the held-out invariants on *every* construction path.
@@ -154,6 +156,12 @@ class CodingCase:
             raise ValueError(
                 f"case {self.id!r}: `held_out_pass` without `held_out` files -- "
                 f"these node ids would score a silent zero and read as overfit")
+        if self.expected_action not in {"edit", "edit_preserve", "no_op", "clarify"}:
+            raise ValueError(
+                f"case {self.id!r}: unknown expected_action {self.expected_action!r}")
+        if self.expected_action == "edit" and not self.fail_to_pass:
+            raise ValueError(
+                f"case {self.id!r}: edit cases need at least one fail_to_pass node")
 
     @property
     def test_files(self) -> List[str]:
@@ -204,8 +212,10 @@ def load_cases(path: str | Path) -> List[CodingCase]:
         where = f"{path}[{index}]"
         if not isinstance(entry, dict):
             raise ValueError(f"{where}: expected an object")
-        missing = [key for key in ("id", "prompt", "files", "fail_to_pass")
+        missing = [key for key in ("id", "prompt", "files")
                    if not entry.get(key)]
+        if "fail_to_pass" not in entry:
+            missing.append("fail_to_pass")
         if missing:
             raise ValueError(f"{where}: missing {', '.join(missing)}")
         if not isinstance(entry["files"], dict):
@@ -238,7 +248,8 @@ def load_cases(path: str | Path) -> List[CodingCase]:
             held_out_pass=[str(n) for n in entry.get("held_out_pass", [])],
             kind=str(entry.get("kind", "bugfix")),
             tier=str(entry.get("tier", "core")),
-            note=str(entry.get("note", ""))))
+            note=str(entry.get("note", "")),
+            expected_action=str(entry.get("expected_action", "edit"))))
 
     duplicates = {c.id for c in cases if [x.id for x in cases].count(c.id) > 1}
     if duplicates:
@@ -297,6 +308,7 @@ class CaseResult:
     throttle_waits: int = 0
     throttled_seconds: float = 0.0
     changed_files: List[str] = field(default_factory=list)
+    action_passed: bool = True
     seconds: float = 0.0
     error: str = ""
     #: What this case cost, when the provider reported it.
@@ -1173,7 +1185,20 @@ def run_tests(root: Path, node_ids: Sequence[str]) -> Dict[str, bool]:
     return {node: _pytest(root, [node]) for node in node_ids}
 
 
-def grade(case: CodingCase, root: Path, tampered: bool) -> Dict[str, Any]:
+def _action_verdict(expected_action: str, changed_files: Sequence[str],
+                    agent_response: Optional[str]) -> bool:
+    """Check the requested behavior independently of the test outcome."""
+    if expected_action == "no_op":
+        return not changed_files
+    if expected_action == "edit_preserve":
+        return bool(changed_files)
+    if expected_action == "clarify":
+        return not changed_files and bool(agent_response and "?" in agent_response)
+    return expected_action == "edit"
+
+
+def grade(case: CodingCase, root: Path, tampered: bool,
+          agent_response: Optional[str] = None) -> Dict[str, Any]:
     """Run both expectation sets and decide. Assumes tests are restored."""
     fixed = run_tests(root, case.fail_to_pass)
     kept = run_tests(root, case.pass_to_pass)
@@ -1182,6 +1207,14 @@ def grade(case: CodingCase, root: Path, tampered: bool) -> Dict[str, Any]:
     n_fixed = sum(fixed.values())
     n_kept = sum(kept.values())
     n_held = sum(held.values())
+    changed_files = [
+        rel for rel, original in case.files.items()
+        if not rel.startswith("tests/") and (
+            not (root / rel).is_file()
+            or (root / rel).read_text(encoding="utf-8") != original)
+    ]
+    action_passed = _action_verdict(
+        case.expected_action, changed_files, agent_response)
     return {
         "fixed": n_fixed,
         "fixed_total": len(case.fail_to_pass),
@@ -1196,10 +1229,14 @@ def grade(case: CodingCase, root: Path, tampered: bool) -> Dict[str, Any]:
         #
         # Cases with no held-out tests are unaffected: an empty set sums to zero
         # against a length of zero, which is True.
-        "passed": (n_fixed == len(case.fail_to_pass)
+        "passed": (not tampered
+                   and action_passed
+                   and n_fixed == len(case.fail_to_pass)
                    and n_kept == len(case.pass_to_pass)
                    and n_held == len(case.held_out_pass)),
         "tamper": tampered,
+        "changed_files": changed_files,
+        "action_passed": action_passed,
     }
 
 
@@ -1236,6 +1273,7 @@ def run_case(case: CodingCase, make_agent: AgentFactory, root: Path,
     started = time.perf_counter()
 
     events: List[Dict[str, Any]] = []
+    agent_response: Optional[str] = None
     try:
         agent = make_agent(root)
         # Snapshotted before the run and differenced after, so the counters are
@@ -1245,6 +1283,7 @@ def run_case(case: CodingCase, make_agent: AgentFactory, root: Path,
         before = _degradation(agent)
         outcome = agent.run(case.prompt, on_event=_recorder(events)) \
             if _takes_events(agent) else agent.run(case.prompt)
+        agent_response = str(getattr(outcome, "summary", "") or "") or None
         result.halt = getattr(getattr(outcome, "halt", None), "value", "") or ""
         result.harness_said_done = bool(getattr(outcome, "succeeded", False))
         result.steps_used = int(getattr(outcome, "steps_used", 0) or 0)
@@ -1287,12 +1326,18 @@ def run_case(case: CodingCase, make_agent: AgentFactory, root: Path,
         result.tools_used = sum(1 for e in events if e.get("kind") == "tool")
 
     tampered = restore_tests(case, root)
-    verdict = grade(case, root, tampered)
+    if not agent_response:
+        agent_response = next(
+            (str(e.get("text")) for e in reversed(events)
+             if e.get("kind") == "text" and e.get("text")), None)
+    verdict = grade(case, root, tampered, agent_response)
     result.passed = verdict["passed"]
     result.fixed = verdict["fixed"]
     result.kept = verdict["kept"]
     result.held = verdict["held"]
     result.tamper = verdict["tamper"]
+    result.changed_files = verdict["changed_files"]
+    result.action_passed = verdict["action_passed"]
     result.seconds = time.perf_counter() - started
     # Set here so a single-attempt run already carries it; `run_best_of`
     # overwrites it with the *first* sample's outcome when it keeps a later one.

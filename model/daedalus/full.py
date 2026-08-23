@@ -251,7 +251,8 @@ class DaedalusFullAdaptive(nn.Module):
 
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None,
                 lambda_prior: float = 0.2, beta: float = 0.01, alpha: float = 0.01,
-                doc_ids: Optional[torch.Tensor] = None, mtp_weight: float = 0.0):
+                doc_ids: Optional[torch.Tensor] = None, mtp_weight: float = 0.0,
+                return_step_logits: bool = True):
         e = self.tok_emb(idx)
         x = e
         aux = x.new_zeros(())
@@ -265,6 +266,7 @@ class DaedalusFullAdaptive(nn.Module):
         final = self.stages[-1]
         still = torch.ones(idx.shape, device=idx.device)
         p_list, logits_list = [], []
+        exp_logits = None
         for n in range(1, self.max_loops + 1):
             # The final core's loop is unrolled here rather than delegated to
             # RecurrentMoECore.forward, so the per-step offset and injection gate
@@ -278,11 +280,16 @@ class DaedalusFullAdaptive(nn.Module):
                     scores, scores.topk(blk.moe.top_k, -1)[1], blk.moe.n_experts)[0]
             lam = (torch.sigmoid(self.halt(x)).squeeze(-1) if n < self.max_loops
                    else torch.ones(idx.shape, device=idx.device))
-            p_list.append(still * lam)
+            prob = still * lam
+            p_list.append(prob)
             still = still * (1 - lam)
-            logits_list.append(self.lm_head(self.ln_f(x)))
+            step_logits = self.lm_head(self.ln_f(x))
+            exp_logits = (step_logits * prob.unsqueeze(-1) if exp_logits is None
+                          else exp_logits + step_logits * prob.unsqueeze(-1))
+            if targets is not None or return_step_logits:
+                logits_list.append(step_logits)
         p = torch.stack(p_list, 0)
-        logits = torch.stack(logits_list, 0)
+        logits = torch.stack(logits_list, 0) if logits_list else None
         # Accumulate the halting-weighted mixture one step at a time rather than
         # as `(p.unsqueeze(-1) * logits).sum(0)`. That expression materialises a
         # second (steps, B, T, vocab) tensor -- and because `p` is fp32 while
@@ -291,14 +298,12 @@ class DaedalusFullAdaptive(nn.Module):
         # B=16, T=1024, vocab=16384 that single temporary is 4 GiB, which is
         # what caps the batch size on a 16GB card. Accumulating peaks at one
         # (B, T, vocab) term instead of `steps` of them.
-        exp_logits = logits[0] * p[0].unsqueeze(-1)
-        for s in range(1, logits.shape[0]):
-            exp_logits = exp_logits + logits[s] * p[s].unsqueeze(-1)
         # `step_logits` is kept so Echo (loop self-distillation) can use step R as a
         # teacher for step k without a second forward pass.
         extras = {"aux": aux, "p": p, "step_logits": logits}
         loss = None
         if targets is not None:
+            assert logits is not None
             pond, l_rec, l_kl = ponder_loss(p, logits, targets, lambda_prior, beta)
             loss = pond + alpha * aux
             extras.update(l_rec=l_rec, l_kl=l_kl)

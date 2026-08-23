@@ -32,7 +32,10 @@ impl Themis {
     pub fn load(root: &Path) -> Self {
         let path = root.join("constitution.md");
         match std::fs::read_to_string(&path) {
-            Ok(text) => Themis { principles: text, source: path.display().to_string() },
+            Ok(text) => Themis {
+                principles: text,
+                source: path.display().to_string(),
+            },
             Err(_) => Themis {
                 principles: DEFAULT.to_string(),
                 source: "built-in default".to_string(),
@@ -43,7 +46,10 @@ impl Themis {
     /// Build from literal text rather than a file. Used by tests and by
     /// callers that carry their own constitution.
     pub fn from_text(text: impl Into<String>) -> Self {
-        Themis { principles: text.into(), source: "inline".to_string() }
+        Themis {
+            principles: text.into(),
+            source: "inline".to_string(),
+        }
     }
 
     pub fn principles(&self) -> &str {
@@ -110,8 +116,11 @@ mod tests {
     #[test]
     fn a_workspace_constitution_overrides_the_default() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("constitution.md"), "# Local\n\nOnly rule: be brief.")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("constitution.md"),
+            "# Local\n\nOnly rule: be brief.",
+        )
+        .unwrap();
         let t = Themis::load(dir.path());
         assert!(t.principles().contains("be brief"));
         assert!(!t.principles().contains("Verify, do not assert"));
@@ -122,7 +131,10 @@ mod tests {
         let t = Themis::from_text("RULE ONE");
         for role in [PLANNER_ROLE, EXECUTOR_ROLE, JUDGE_ROLE] {
             let p = t.system_prompt(role, None);
-            assert!(p.contains("RULE ONE"), "constitution missing from a role prompt");
+            assert!(
+                p.contains("RULE ONE"),
+                "constitution missing from a role prompt"
+            );
             assert!(p.contains(role));
         }
     }
@@ -131,8 +143,11 @@ mod tests {
     fn symbol_index_is_included_verbatim() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        std::fs::write(dir.path().join("src/lib.rs"), "pub fn exact_name() -> u32 { 1 }\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "pub fn exact_name() -> u32 { 1 }\n",
+        )
+        .unwrap();
         let idx = SymbolIndex::build(dir.path()).unwrap();
 
         let p = Themis::from_text("x").system_prompt(EXECUTOR_ROLE, Some(&idx));

@@ -12,16 +12,32 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use serde::Serialize;
 
 use crate::engine::Message;
 
+pub const TRACE_SCHEMA_VERSION: &str = "daedalus-trace/v2";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TraceEvent {
+    /// Reproducibility facts for an evaluation trajectory. Kept separate from
+    /// `TaskStarted` so ordinary interactive traces stay compact.
+    ExperimentMetadata {
+        arm: String,
+        case_id: String,
+        expected_action: String,
+        provider: String,
+        model: String,
+        harness_commit: String,
+        suite_digest: String,
+        max_steps: usize,
+        max_output_tokens: u32,
+        started_at: String,
+    },
     TaskStarted {
         task: String,
         engine: String,
@@ -44,6 +60,12 @@ pub enum TraceEvent {
     /// and at the cost of the whole conversation per step. This is the cheap
     /// half, and it is what a front end renders as the agent's reply.
     AgentMessage {
+        step: usize,
+        text: String,
+    },
+    /// Reasoning the model produced while generating. Editors render it
+    /// collapsed; it is not a tool call and must not be parsed as one.
+    Thought {
         step: usize,
         text: String,
     },
@@ -83,6 +105,18 @@ pub enum TraceEvent {
         request: crate::engine::Request,
         response: crate::engine::Response,
     },
+    /// Linear-size training record. The first event (and any reset after
+    /// compaction) carries system/tools plus the complete current messages;
+    /// later events carry only messages appended since the preceding request.
+    ExchangeDelta {
+        step: usize,
+        reset: bool,
+        system: Option<String>,
+        tools: Option<Vec<crate::engine::ToolDef>>,
+        messages_start: usize,
+        messages: Vec<Message>,
+        response: crate::engine::Response,
+    },
     ToolCall {
         step: usize,
         tool: String,
@@ -120,9 +154,35 @@ pub enum TraceEvent {
         reason: String,
         detail: String,
     },
+    /// A failed or futile call, persisted so the next prompt (and the next
+    /// process) can refuse to retry it. Distinct from [`Self::ToolCall`]
+    /// because that event is per-dispatch and this one is what recall reads.
+    Hypothesis {
+        step: usize,
+        signature: String,
+        detail: String,
+    },
+    /// First `Stuck` of a drive: the loop continues rather than finishing.
+    Redirected {
+        step: usize,
+        attempt: String,
+        forbidden: Vec<String>,
+    },
     TaskFinished {
         steps_used: usize,
         outcome: String,
+    },
+    /// Orthogonal labels for corpus selection. A provider failure, an
+    /// unverifiable grader, and an incorrect patch must never collapse into
+    /// the same `failed` bucket.
+    EvaluationFinished {
+        case_id: String,
+        grader_pass: bool,
+        verifier_pass: bool,
+        halt_reason: String,
+        provider_status: String,
+        infrastructure_status: String,
+        tamper: bool,
     },
 }
 
@@ -151,6 +211,8 @@ pub struct Session {
     /// deal of disk, so it is off unless a caller asks — see
     /// [`TraceEvent::Exchange`].
     collect_exchanges: bool,
+    run_id: String,
+    exchange_cursor: Mutex<usize>,
 }
 
 /// Whether an event is fit to send down a front end's progress channel.
@@ -162,7 +224,10 @@ pub struct Session {
 pub type EventSink = dyn Fn(&TraceEvent) + Send + Sync;
 
 fn streamable(event: &TraceEvent) -> bool {
-    !matches!(event, TraceEvent::Exchange { .. })
+    !matches!(
+        event,
+        TraceEvent::Exchange { .. } | TraceEvent::ExchangeDelta { .. }
+    )
 }
 
 impl Session {
@@ -175,6 +240,12 @@ impl Session {
             stream_stdout: false,
             sink: None,
             collect_exchanges: false,
+            run_id: format!(
+                "{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ),
+            exchange_cursor: Mutex::new(0),
         }
     }
 
@@ -228,6 +299,40 @@ impl Session {
         self.trace_path.as_deref()
     }
 
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Record one engine exchange without repeating the entire prefix on every
+    /// turn. Consumers reconstruct the request by appending `messages` at
+    /// `messages_start`; `reset` starts a new prefix after compaction.
+    pub fn log_exchange(
+        &self,
+        step: usize,
+        request: &crate::engine::Request,
+        response: &crate::engine::Response,
+    ) {
+        if !self.collects_exchanges() {
+            return;
+        }
+        let mut cursor = self
+            .exchange_cursor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let reset = *cursor == 0 || request.messages.len() < *cursor;
+        let start = if reset { 0 } else { *cursor };
+        self.log(&TraceEvent::ExchangeDelta {
+            step,
+            reset,
+            system: reset.then(|| request.system.clone()),
+            tools: reset.then(|| request.tools.clone()),
+            messages_start: start,
+            messages: request.messages[start..].to_vec(),
+            response: response.clone(),
+        });
+        *cursor = request.messages.len();
+    }
+
     pub fn push(&mut self, m: Message) {
         self.messages.push(m);
     }
@@ -248,6 +353,8 @@ impl Session {
         }
         let line = match serde_json::to_string(&Envelope {
             at: chrono::Utc::now().to_rfc3339(),
+            schema_version: TRACE_SCHEMA_VERSION,
+            run_id: &self.run_id,
             event,
         }) {
             Ok(l) => l,
@@ -282,6 +389,8 @@ impl Session {
 #[derive(Serialize)]
 struct Envelope<'a> {
     at: String,
+    schema_version: &'static str,
+    run_id: &'a str,
     #[serde(flatten)]
     event: &'a TraceEvent,
 }
@@ -296,7 +405,10 @@ mod tests {
         let trace = dir.path().join("nested").join("trace.jsonl");
         let s = Session::new(dir.path(), "mock").with_trace(&trace).unwrap();
 
-        s.log(&TraceEvent::StepStarted { index: 0, description: "first".into() });
+        s.log(&TraceEvent::StepStarted {
+            index: 0,
+            description: "first".into(),
+        });
         s.log(&TraceEvent::Halt {
             step: 1,
             reason: "done".into(),
@@ -342,7 +454,10 @@ mod tests {
         let (sink, seen) = recording();
         let s = Session::new(dir.path(), "mock").with_sink(sink);
 
-        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+        s.log(&TraceEvent::AgentMessage {
+            step: 1,
+            text: "hello".into(),
+        });
 
         assert_eq!(*seen.lock().unwrap(), ["agent_message"]);
     }
@@ -353,12 +468,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let trace = dir.path().join("trace.jsonl");
         let (sink, seen) = recording();
-        let s = Session::new(dir.path(), "mock").with_trace(&trace).unwrap().with_sink(sink);
+        let s = Session::new(dir.path(), "mock")
+            .with_trace(&trace)
+            .unwrap()
+            .with_sink(sink);
 
-        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+        s.log(&TraceEvent::AgentMessage {
+            step: 1,
+            text: "hello".into(),
+        });
 
         assert_eq!(*seen.lock().unwrap(), ["agent_message"]);
-        assert!(std::fs::read_to_string(&trace).unwrap().contains("agent_message"));
+        assert!(std::fs::read_to_string(&trace)
+            .unwrap()
+            .contains("agent_message"));
     }
 
     /// `Exchange` carries the whole conversation. It belongs in the trace and
@@ -378,7 +501,10 @@ mod tests {
                 usage: crate::engine::Usage::default(),
             },
         });
-        s.log(&TraceEvent::AgentMessage { step: 1, text: "hello".into() });
+        s.log(&TraceEvent::AgentMessage {
+            step: 1,
+            text: "hello".into(),
+        });
 
         assert_eq!(
             *seen.lock().unwrap(),
@@ -390,7 +516,10 @@ mod tests {
     #[test]
     fn a_session_without_a_trace_path_is_silent() {
         let s = Session::new(".", "mock");
-        s.log(&TraceEvent::StepStarted { index: 0, description: "x".into() });
+        s.log(&TraceEvent::StepStarted {
+            index: 0,
+            description: "x".into(),
+        });
         assert!(s.trace_path().is_none());
     }
 }

@@ -39,6 +39,10 @@ pub enum EngineError {
         provider: &'static str,
         detail: String,
     },
+
+    /// A local quota stopped the call before it reached the provider.
+    #[error("local {kind} budget exhausted: {detail}")]
+    Budget { kind: &'static str, detail: String },
 }
 
 impl EngineError {
@@ -54,9 +58,8 @@ impl EngineError {
     pub fn is_transient(&self) -> bool {
         match self {
             EngineError::Transport { .. } => true,
-            EngineError::Status { status, .. } => {
-                !matches!(status, 400 | 401 | 403 | 404 | 422)
-            }
+            EngineError::Budget { .. } => false,
+            EngineError::Status { status, .. } => !matches!(status, 400 | 401 | 403 | 404 | 422),
         }
     }
 
@@ -64,7 +67,7 @@ impl EngineError {
     pub fn status(&self) -> Option<u16> {
         match self {
             EngineError::Status { status, .. } => Some(*status),
-            EngineError::Transport { .. } => None,
+            EngineError::Transport { .. } | EngineError::Budget { .. } => None,
         }
     }
 }
@@ -74,7 +77,11 @@ mod tests {
     use super::*;
 
     fn status(code: u16) -> EngineError {
-        EngineError::Status { provider: "Test API", status: code, body: "b".into() }
+        EngineError::Status {
+            provider: "Test API",
+            status: code,
+            body: "b".into(),
+        }
     }
 
     #[test]
@@ -97,7 +104,10 @@ mod tests {
     #[test]
     fn a_request_that_never_arrived_is_always_worth_retrying() {
         // `ollama serve` starting a second later is the ordinary case.
-        let e = EngineError::Transport { provider: "Ollama", detail: "refused".into() };
+        let e = EngineError::Transport {
+            provider: "Ollama",
+            detail: "refused".into(),
+        };
         assert!(e.is_transient());
         assert_eq!(e.status(), None);
     }

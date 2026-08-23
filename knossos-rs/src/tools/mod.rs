@@ -31,10 +31,12 @@
 //! does not compile until the question is answered, whereas a list of names
 //! kept elsewhere would quietly classify the next writing tool as a read.
 
+pub mod ask;
 pub mod fs;
 pub mod history;
 pub mod search;
 pub mod shell;
+pub mod verify;
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -65,6 +67,8 @@ pub struct ToolCtx {
     /// with every clone of the context, so a front end holding one sees the
     /// same history as the loop holding another. See [`history`].
     history: History,
+    /// Editor fs/terminal/elicitation, when the ACP client advertised them.
+    client: Option<std::sync::Arc<crate::client_io::ClientIo>>,
 }
 
 impl ToolCtx {
@@ -75,7 +79,31 @@ impl ToolCtx {
             dry_run: false,
             staged: Arc::new(Mutex::new(BTreeMap::new())),
             history: History::new(),
+            client: None,
         }
+    }
+
+    pub fn with_client(mut self, io: std::sync::Arc<crate::client_io::ClientIo>) -> Self {
+        self.client = Some(io);
+        self
+    }
+
+    pub fn set_client(&mut self, io: std::sync::Arc<crate::client_io::ClientIo>) {
+        self.client = Some(io);
+    }
+
+    pub fn ask_user(&self, question: &str, choices: &[String]) -> Option<String> {
+        self.client.as_ref().and_then(|c| c.ask(question, choices))
+    }
+
+    pub fn run_in_editor(
+        &self,
+        argv: &[String],
+        timeout: std::time::Duration,
+    ) -> Option<(i32, String)> {
+        self.client
+            .as_ref()
+            .and_then(|c| c.run_terminal(self.root(), argv, timeout))
     }
 
     /// Stage writes in memory instead of applying them.
@@ -86,6 +114,11 @@ impl ToolCtx {
 
     pub fn is_dry_run(&self) -> bool {
         self.dry_run
+    }
+
+    /// Flip staging after construction (ACP `session/set_mode`).
+    pub fn set_dry_run(&mut self, dry_run: bool) {
+        self.dry_run = dry_run;
     }
 
     pub fn root(&self) -> &Path {
@@ -99,6 +132,12 @@ impl ToolCtx {
             // not an observation of disk, and recording it would make every
             // later freshness check compare against the wrong thing.
             return Ok(staged.clone());
+        }
+        if let Some(io) = &self.client {
+            if let Some(content) = io.read_text(path) {
+                self.history.observed(path, &content);
+                return Ok(content);
+            }
         }
         let content = std::fs::read_to_string(path)?;
         self.history.observed(path, &content);
@@ -115,6 +154,12 @@ impl ToolCtx {
             return Ok(());
         }
         self.history.record(path);
+        if let Some(io) = &self.client {
+            if io.write_text(path, content) {
+                self.history.wrote(path, content);
+                return Ok(());
+            }
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -284,7 +329,10 @@ impl ToolCtx {
 
     /// Render a path for display, relative to the root where possible.
     pub fn display(&self, p: &Path) -> String {
-        p.strip_prefix(&self.root).unwrap_or(p).display().to_string()
+        p.strip_prefix(&self.root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
     }
 }
 
@@ -314,11 +362,19 @@ pub struct ToolOutput {
 
 impl ToolOutput {
     pub fn ok(content: impl Into<String>) -> Self {
-        ToolOutput { content: content.into(), is_error: false, changed: Vec::new() }
+        ToolOutput {
+            content: content.into(),
+            is_error: false,
+            changed: Vec::new(),
+        }
     }
 
     pub fn error(content: impl Into<String>) -> Self {
-        ToolOutput { content: content.into(), is_error: true, changed: Vec::new() }
+        ToolOutput {
+            content: content.into(),
+            is_error: true,
+            changed: Vec::new(),
+        }
     }
 
     pub fn changed(mut self, path: PathBuf) -> Self {
@@ -357,7 +413,10 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new(tools: Vec<Box<dyn Tool>>) -> Self {
-        ToolRegistry { tools, hooks: Vec::new() }
+        ToolRegistry {
+            tools,
+            hooks: Vec::new(),
+        }
     }
 
     /// Add a policy hook. They run in the order they are added.
@@ -379,6 +438,8 @@ impl ToolRegistry {
             Box::new(fs::EditFile),
             Box::new(fs::ListDir),
             Box::new(search::Search),
+            Box::new(ask::AskUser),
+            Box::new(verify::Verify),
             Box::new(shell::Run::default()),
         ])
         .with_hook(Box::new(crate::hooks::ProtectPaths::default()))
@@ -408,7 +469,9 @@ impl ToolRegistry {
     /// not yet know what to grep for.
     pub fn with_retrieval(index: std::sync::Arc<crate::mnemosyne::Mnemosyne>) -> Self {
         let mut registry = ToolRegistry::standard();
-        registry.tools.push(Box::new(search::SearchCode::new(index)));
+        registry
+            .tools
+            .push(Box::new(search::SearchCode::new(index)));
         registry
     }
 
@@ -434,7 +497,10 @@ impl ToolRegistry {
     /// An unknown name is not consequential: `dispatch` turns it into an error
     /// output, and an error is not work done.
     pub fn is_consequential(&self, name: &str) -> bool {
-        self.tools.iter().any(|t| t.name() == name && t.consequential())
+        let name = if name == "run_command" { "run" } else { name };
+        self.tools
+            .iter()
+            .any(|t| t.name() == name && t.consequential())
     }
 
     /// Run a tool by name. An unknown name or a failing tool becomes an error
@@ -450,6 +516,9 @@ impl ToolRegistry {
         // early return for any outcome — a denial, an unknown name, a failing
         // tool — would make the hook contract "every call except the ones we
         // forgot", which is not a contract an audit hook can be built on.
+        // Python's `run_command` is this harness's `run`. Accept the old name
+        // so a scripted conformance suite does not have to fork.
+        let name = if name == "run_command" { "run" } else { name };
         let chained = crate::hooks::before_chain(&self.hooks, name, input);
         let effective = chained.input.as_ref();
 
@@ -512,7 +581,11 @@ mod tests {
     #[test]
     fn rejects_absolute_paths_outside_root() {
         let (_d, c) = ctx();
-        let outside = if cfg!(windows) { "C:\\Windows\\System32\\drivers\\etc\\hosts" } else { "/etc/passwd" };
+        let outside = if cfg!(windows) {
+            "C:\\Windows\\System32\\drivers\\etc\\hosts"
+        } else {
+            "/etc/passwd"
+        };
         assert!(c.resolve(outside).is_err());
     }
 
@@ -549,7 +622,28 @@ mod tests {
 
         assert!(out.is_error, "{}", out.content);
         assert!(out.content.contains("protect-paths"), "{}", out.content);
-        assert!(!c.root().join(".git/config").exists(), "nothing may be written");
+        assert!(
+            !c.root().join(".git/config").exists(),
+            "nothing may be written"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_standard_registry_refuses_to_write_into_dot_knossos() {
+        let (_d, c) = ctx();
+        std::fs::create_dir_all(c.root().join(".knossos")).unwrap();
+
+        let reg = ToolRegistry::standard();
+        let out = reg
+            .dispatch(
+                "write_file",
+                &serde_json::json!({"path": ".knossos/episodes.jsonl", "content": "{}\n"}),
+                &c,
+            )
+            .await;
+
+        assert!(out.is_error, "{}", out.content);
+        assert!(!c.root().join(".knossos").join("episodes.jsonl").exists());
     }
 
     #[tokio::test]
@@ -592,7 +686,10 @@ mod tests {
         assert!(f.exists());
 
         c.rewind("turn-1").unwrap();
-        assert!(!f.exists(), "a file created after the mark must not survive it");
+        assert!(
+            !f.exists(),
+            "a file created after the mark must not survive it"
+        );
     }
 
     #[test]
@@ -694,7 +791,10 @@ mod tests {
         c.write(&f, "attempt\n").unwrap();
         c.rewind("turn-1").unwrap();
 
-        assert!(c.conflict(&f).is_none(), "the rewound state is the new baseline");
+        assert!(
+            c.conflict(&f).is_none(),
+            "the rewound state is the new baseline"
+        );
     }
 
     /// Counts what `after` was shown, so the contract can be checked rather
@@ -715,7 +815,10 @@ mod tests {
             crate::hooks::Decision::Allow
         }
         fn after(&self, tool: &str, _i: &serde_json::Value, out: &ToolOutput) {
-            self.seen.lock().unwrap().push((tool.to_string(), out.is_error));
+            self.seen
+                .lock()
+                .unwrap()
+                .push((tool.to_string(), out.is_error));
         }
     }
 
@@ -726,13 +829,24 @@ mod tests {
         let reg = ToolRegistry::standard().with_hook(Box::new(counter.clone()));
 
         // 1: ordinary success.
-        reg.dispatch("write_file", &json!({"path": "ok.rs", "content": "x\n"}), &c).await;
+        reg.dispatch(
+            "write_file",
+            &json!({"path": "ok.rs", "content": "x\n"}),
+            &c,
+        )
+        .await;
         // 2: denied by a hook before the tool ran.
-        reg.dispatch("write_file", &json!({"path": "denied.rs", "content": "x\n"}), &c).await;
+        reg.dispatch(
+            "write_file",
+            &json!({"path": "denied.rs", "content": "x\n"}),
+            &c,
+        )
+        .await;
         // 3: a name no tool answers to.
         reg.dispatch("no_such_tool", &json!({}), &c).await;
         // 4: the tool ran and reported failure.
-        reg.dispatch("read_file", &json!({"path": "missing.rs"}), &c).await;
+        reg.dispatch("read_file", &json!({"path": "missing.rs"}), &c)
+            .await;
 
         let seen = counter.seen.lock().unwrap().clone();
         assert_eq!(
@@ -743,7 +857,11 @@ mod tests {
         assert_eq!(seen[0], ("write_file".into(), false));
         assert_eq!(seen[1], ("write_file".into(), true), "the denial");
         assert_eq!(seen[2], ("no_such_tool".into(), true), "the unknown name");
-        assert_eq!(seen[3], ("read_file".into(), true), "the tool's own failure");
+        assert_eq!(
+            seen[3],
+            ("read_file".into(), true),
+            "the tool's own failure"
+        );
     }
 
     #[tokio::test]
@@ -766,7 +884,12 @@ mod tests {
             .with_hook(Box::new(Rewrite))
             .with_hook(Box::new(counter.clone()));
 
-        reg.dispatch("write_file", &json!({"path": "original.rs", "content": "x\n"}), &c).await;
+        reg.dispatch(
+            "write_file",
+            &json!({"path": "original.rs", "content": "x\n"}),
+            &c,
+        )
+        .await;
 
         assert!(c.root().join("rewritten.rs").exists());
         assert!(!c.root().join("original.rs").exists());

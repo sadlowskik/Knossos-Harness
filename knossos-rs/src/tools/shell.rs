@@ -33,11 +33,20 @@ const MAX_OUTPUT: usize = 30_000;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Programs the agent may invoke.
-const ALLOWED: &[&str] = &["cargo", "rustc", "rustfmt", "git"];
+const ALLOWED: &[&str] = &[
+    "cargo", "rustc", "rustfmt", "git", "python", "python3", "pytest",
+];
 
 /// `git` subcommands that cannot modify the repository or reach the network.
 const GIT_READONLY: &[&str] = &[
-    "status", "diff", "log", "show", "ls-files", "blame", "rev-parse", "branch",
+    "status",
+    "diff",
+    "log",
+    "show",
+    "ls-files",
+    "blame",
+    "rev-parse",
+    "branch",
 ];
 
 /// `cargo` subcommands that publish or install outside the workspace.
@@ -82,7 +91,7 @@ impl Tool for Run {
     }
 
     fn description(&self) -> &str {
-        "Run a build or inspection command in the workspace. Allowed programs: cargo, rustc, rustfmt, git (read-only subcommands). No shell is used, so operators like && and | do not work."
+        "Run a build or test command in the workspace. Allowed programs: cargo, rustc, rustfmt, git (read-only subcommands), python, python3, and pytest. No shell is used, so operators like && and | do not work."
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -116,6 +125,19 @@ impl Tool for Run {
             return Ok(ToolOutput::error(reason));
         }
 
+        if let Some((code, body)) = ctx.run_in_editor(&argv, COMMAND_TIMEOUT) {
+            let body = cap(body);
+            return Ok(if code == 0 {
+                ToolOutput::ok(format!("exit {code}\n\n{body}"))
+            } else {
+                ToolOutput {
+                    content: format!("exit {code}\n\n{body}"),
+                    is_error: true,
+                    changed: Vec::new(),
+                }
+            });
+        }
+
         // Environment scrubbing, no stdin, the deadline and the tree kill all
         // come from here. `cargo run` and `cargo test` are both on the
         // allowlist, so this executes workspace code — which is entitled to
@@ -123,15 +145,14 @@ impl Tool for Run {
         // this one was not, and `serve` awaits dispatch inline on the
         // stdin-reading thread, so a single hang wedged the server permanently
         // against every later command, `shutdown` included.
+        let (exec_program, exec_args) = resolve_python_command(program, args);
         let finished = match self
             .sandbox
-            .run_bounded(program, args, ctx.root(), COMMAND_TIMEOUT)
+            .run_bounded(&exec_program, &exec_args, ctx.root(), COMMAND_TIMEOUT)
             .await
         {
             Ok(f) => f,
-            Err(e) => {
-                return Ok(ToolOutput::error(format!("failed to run `{program}`: {e}")))
-            }
+            Err(e) => return Ok(ToolOutput::error(format!("failed to run `{program}`: {e}"))),
         };
 
         let mut body = String::new();
@@ -166,9 +187,33 @@ impl Tool for Run {
         } else {
             // A failing command is information, not a harness error: the engine
             // should see the compiler output and react to it.
-            ToolOutput { content: body, is_error: true, changed: Vec::new() }
+            ToolOutput {
+                content: body,
+                is_error: true,
+                changed: Vec::new(),
+            }
         })
     }
+}
+
+fn resolve_python_command(program: &str, args: &[String]) -> (String, Vec<String>) {
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let base = basename
+        .strip_suffix(".exe")
+        .unwrap_or(basename)
+        .to_ascii_lowercase();
+    if matches!(base.as_str(), "python" | "python3") {
+        let (resolved, mut prefix) = crate::scribe::python::python_command();
+        prefix.extend_from_slice(args);
+        return (resolved, prefix);
+    }
+    if base == "pytest" {
+        let (resolved, mut prefix) = crate::scribe::python::python_command();
+        prefix.extend(["-m".to_string(), "pytest".to_string()]);
+        prefix.extend_from_slice(args);
+        return (resolved, prefix);
+    }
+    (program.to_string(), args.to_vec())
 }
 
 impl Run {
@@ -183,7 +228,10 @@ impl Run {
             ));
         }
 
-        let sub = args.iter().find(|a| !a.starts_with('-')).map(String::as_str);
+        let sub = args
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .map(String::as_str);
         match (base, sub) {
             ("git", Some(s)) if !GIT_READONLY.contains(&s) => Err(format!(
                 "git {s} is not allowed; read-only subcommands only ({})",
@@ -246,7 +294,10 @@ mod tests {
 
     #[test]
     fn tokenizer_keeps_quoted_arguments_together() {
-        assert_eq!(tokenize(r#"cargo test "my test name""#), vec!["cargo", "test", "my test name"]);
+        assert_eq!(
+            tokenize(r#"cargo test "my test name""#),
+            vec!["cargo", "test", "my test name"]
+        );
     }
 
     #[test]
@@ -277,7 +328,46 @@ mod tests {
     fn cargo_publish_is_denied() {
         let r = Run::default();
         assert!(r.check("cargo", &["publish".into()]).is_err());
-        assert!(r.check("cargo", &["--offline".into(), "check".into()]).is_ok());
+        assert!(r
+            .check("cargo", &["--offline".into(), "check".into()])
+            .is_ok());
+    }
+
+    #[test]
+    fn python_aliases_use_the_verified_interpreter() {
+        let args = vec!["-m".into(), "pytest".into(), "-q".into()];
+        let (program, resolved) = resolve_python_command(r"C:\\tools\\python.exe", &args);
+        let (expected_program, expected_prefix) = crate::scribe::python::python_command();
+
+        assert_eq!(program, expected_program);
+        assert_eq!(
+            &resolved[..expected_prefix.len()],
+            expected_prefix.as_slice()
+        );
+        assert_eq!(&resolved[expected_prefix.len()..], args.as_slice());
+    }
+
+    #[test]
+    fn pytest_alias_is_rewritten_as_a_python_module() {
+        let args = vec!["-q".into()];
+        let (program, resolved) = resolve_python_command("pytest", &args);
+        let (expected_program, expected_prefix) = crate::scribe::python::python_command();
+
+        assert_eq!(program, expected_program);
+        assert_eq!(
+            &resolved[..expected_prefix.len()],
+            expected_prefix.as_slice()
+        );
+        assert_eq!(&resolved[expected_prefix.len()..], ["-m", "pytest", "-q"]);
+    }
+
+    #[test]
+    fn non_python_commands_are_unchanged() {
+        let args = vec!["test".into(), "--offline".into()];
+        assert_eq!(
+            resolve_python_command("cargo", &args),
+            ("cargo".into(), args)
+        );
     }
 
     #[tokio::test]
@@ -289,5 +379,17 @@ mod tests {
             .unwrap();
         assert!(out.is_error);
         assert!(out.content.contains("not on the allowlist"));
+    }
+
+    #[tokio::test]
+    async fn python_alias_runs_inside_the_scrubbed_sandbox() {
+        let (_d, c) = ctx();
+        let out = Run::default()
+            .run(&json!({"command": "python --version"}), &c)
+            .await
+            .unwrap();
+
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.to_ascii_lowercase().contains("python"));
     }
 }

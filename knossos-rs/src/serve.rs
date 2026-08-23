@@ -23,17 +23,25 @@ use crate::talos::{Outcome, Talos};
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
     /// Start a fresh task, discarding the previous conversation.
-    Task { text: String },
+    Task {
+        text: String,
+    },
     /// Continue the existing conversation.
-    Resume { text: String },
+    Resume {
+        text: String,
+    },
     /// Plan without executing.
-    Plan { text: String },
+    Plan {
+        text: String,
+    },
     /// Current staged changes, with full proposed content.
     Diffs,
     /// Write staged changes to disk.
     Apply,
     /// Write only the selected hunks, leaving the rest staged.
-    ApplyHunks { selection: Vec<HunkSelection> },
+    ApplyHunks {
+        selection: Vec<HunkSelection>,
+    },
     /// Throw staged changes away.
     Discard,
     /// Run the verification ladder now.
@@ -78,14 +86,19 @@ pub enum Command {
     ///
     /// Sending this with no task running is harmless: it waits, and the next
     /// task begins by reading it.
-    Interject { text: String },
+    Interject {
+        text: String,
+    },
     /// Answer to a `permission_request`. **Routed, never dispatched.**
     ///
     /// This is the one command that must be handled while another command is
     /// still running, so it is intercepted by the reader task and completes the
     /// waiting request directly. If it went through the dispatch loop it could
     /// never arrive: that loop is inside `talos.run`, waiting for this.
-    Permission { id: u64, allow: bool },
+    Permission {
+        id: u64,
+        allow: bool,
+    },
     Shutdown,
 }
 
@@ -235,9 +248,9 @@ pub async fn write_events<W: Write + Send + 'static>(
 }
 
 /// Requests waiting for the front end to answer, by id.
-type Pending = std::sync::Arc<std::sync::Mutex<
-    std::collections::HashMap<u64, tokio::sync::oneshot::Sender<bool>>,
->>;
+type Pending = std::sync::Arc<
+    std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<bool>>>,
+>;
 
 /// Puts a consequential call to the front end and waits for the answer.
 struct FrontEndApprover {
@@ -428,7 +441,9 @@ pub async fn run(
         // A failing command must not kill the server: the conversation and any
         // staged work would go with it.
         if let Err(e) = dispatch(&mut talos, command, max_tokens, &events).await {
-            events.send(Event::Error { message: format!("{e:#}") });
+            events.send(Event::Error {
+                message: format!("{e:#}"),
+            });
         }
         events.send(Event::Idle);
     }
@@ -453,7 +468,9 @@ async fn dispatch(
                 max_tokens,
             )
             .await?;
-            events.send(Event::Plan { steps: plan.steps.clone() });
+            events.send(Event::Plan {
+                steps: plan.steps.clone(),
+            });
             let outcome = talos.run(&text, &plan).await?;
             finish_turn(talos, &outcome, events);
         }
@@ -480,10 +497,8 @@ async fn dispatch(
             });
         }
         Command::ApplyHunks { selection } => {
-            let pairs: Vec<(String, Vec<usize>)> = selection
-                .into_iter()
-                .map(|s| (s.path, s.hunks))
-                .collect();
+            let pairs: Vec<(String, Vec<usize>)> =
+                selection.into_iter().map(|s| (s.path, s.hunks)).collect();
             let written = talos.apply_hunks(&pairs)?;
             events.send(Event::Applied {
                 files: written.iter().map(|p| rel(talos, p)).collect(),
@@ -549,7 +564,9 @@ async fn dispatch(
             }
             // "No turn has run yet" is a legitimate answer, not a session-ending
             // fault, so it reports like any other refused command.
-            Err(e) => events.send(Event::Error { message: format!("{e:#}") }),
+            Err(e) => events.send(Event::Error {
+                message: format!("{e:#}"),
+            }),
         },
         // Both are intercepted before they get here: `Shutdown` by the loop,
         // `Permission` by the router. Reaching either would mean a reply was
@@ -658,8 +675,11 @@ mod tests {
 
     #[test]
     fn events_serialize_with_a_discriminating_tag() {
-        let e = Event::Applied { files: vec!["src/lib.rs".into()] };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
+        let e = Event::Applied {
+            files: vec!["src/lib.rs".into()],
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
         assert_eq!(v["event"], "applied");
         assert_eq!(v["files"][0], "src/lib.rs");
 
@@ -685,7 +705,8 @@ mod tests {
                 removed: 0,
             }],
         };
-        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(v["content"], "pub fn a() {}\n");
         assert_eq!(v["existed"], true);
     }

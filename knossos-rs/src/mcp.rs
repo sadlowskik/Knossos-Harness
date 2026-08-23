@@ -84,7 +84,9 @@ impl McpServer {
             }
             Some(Value::Array(entries)) => {
                 for entry in entries {
-                    let Some(key) = entry.get("name").and_then(Value::as_str) else { continue };
+                    let Some(key) = entry.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
                     if key.is_empty() {
                         continue;
                     }
@@ -101,7 +103,12 @@ impl McpServer {
             .map(|a| a.iter().map(stringify).collect())
             .unwrap_or_default();
 
-        Some(McpServer { name: name.to_string(), command: command.to_string(), args, env })
+        Some(McpServer {
+            name: name.to_string(),
+            command: command.to_string(),
+            args,
+            env,
+        })
     }
 }
 
@@ -218,12 +225,8 @@ impl McpClient {
             // Some servers wait for this before answering anything else.
             handle.notify("notifications/initialized", Some(json!({})));
 
-            let listed = handle.request_with(
-                "tools/list",
-                Some(json!({})),
-                Some(CONNECT_TIMEOUT),
-                None,
-            )?;
+            let listed =
+                handle.request_with("tools/list", Some(json!({})), Some(CONNECT_TIMEOUT), None)?;
             Ok(parse_tools(&server.name, &listed))
         })();
 
@@ -258,7 +261,10 @@ impl McpClient {
         self.specs
             .iter()
             .map(|spec| {
-                Box::new(McpTool { client: Arc::clone(self), spec: spec.clone() }) as Box<dyn Tool>
+                Box::new(McpTool {
+                    client: Arc::clone(self),
+                    spec: spec.clone(),
+                }) as Box<dyn Tool>
             })
             .collect()
     }
@@ -350,20 +356,28 @@ fn parse_tools(server_name: &str, listed: &Value) -> Vec<RemoteSpec> {
 /// content]` can ask for something else, while an engine told nothing assumes
 /// the call returned empty.
 fn render(content: Option<&Value>) -> String {
-    let Some(content) = content else { return String::new() };
+    let Some(content) = content else {
+        return String::new();
+    };
     match content {
         Value::Null => String::new(),
         Value::String(s) => s.clone(),
         Value::Array(blocks) => {
             let parts: Vec<String> = blocks.iter().map(render_block).collect();
-            parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n")
+            parts
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
         }
         block => render_block(block),
     }
 }
 
 fn render_block(block: &Value) -> String {
-    let Some(obj) = block.as_object() else { return stringify(block) };
+    let Some(obj) = block.as_object() else {
+        return stringify(block);
+    };
     match obj.get("type").and_then(Value::as_str) {
         Some("text") => obj.get("text").map(stringify).unwrap_or_default(),
         Some("resource") => {
@@ -439,10 +453,10 @@ impl Tool for McpTool {
 /// [`McpServer::from_acp`] is what judges them, and [`connect_all`] reports the
 /// ones it rejects rather than failing the load.
 pub fn declarations_from(path: &Path) -> Result<Vec<Value>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
-    let parsed: Value = serde_json::from_str(&text)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
 
     let declared = parsed.get("mcpServers").unwrap_or(&parsed);
     Ok(match declared {
@@ -509,13 +523,18 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
             let addr = listener.local_addr().expect("addr");
             let calls = Arc::new(Mutex::new(Vec::new()));
-            let server = FakeServer { addr, calls: Arc::clone(&calls) };
+            let server = FakeServer {
+                addr,
+                calls: Arc::clone(&calls),
+            };
 
             std::thread::spawn(move || {
                 let (stream, _) = listener.accept().expect("accept");
                 let mut out = stream.try_clone().expect("clone");
                 for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                    let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
+                    let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
                     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
                     let Some(id) = msg.get("id") else { continue };
 
@@ -525,8 +544,10 @@ mod tests {
                         "tools/call" => {
                             let params = msg.get("params").cloned().unwrap_or(Value::Null);
                             calls.lock().expect("calls").push(params.clone());
-                            let name =
-                                params.get("name").and_then(Value::as_str).unwrap_or_default();
+                            let name = params
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
                             if name == "explode" {
                                 json!({"content": [{"type": "text", "text": "kaboom"}],
                                        "isError": true})
@@ -550,7 +571,10 @@ mod tests {
             let stream = TcpStream::connect(self.addr).expect("connect");
             let rx = Box::new(BufReader::new(stream.try_clone().expect("clone")));
             McpClient::over(
-                McpServer { name: name.into(), ..Default::default() },
+                McpServer {
+                    name: name.into(),
+                    ..Default::default()
+                },
                 rx,
                 Box::new(stream),
             )
@@ -597,7 +621,10 @@ mod tests {
             json!({"name": "x", "command": ""}),
             json!("not an object"),
         ] {
-            assert!(McpServer::from_acp(&raw).is_none(), "{raw} should be rejected");
+            assert!(
+                McpServer::from_acp(&raw).is_none(),
+                "{raw} should be rejected"
+            );
         }
     }
 
@@ -610,9 +637,16 @@ mod tests {
         let tools = client.tools();
 
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name(), "github.create_issue", "the server label must prefix it");
+        assert_eq!(
+            tools[0].name(),
+            "github.create_issue",
+            "the server label must prefix it"
+        );
         assert_eq!(tools[0].description(), "Open an issue");
-        assert_eq!(tools[0].schema()["properties"]["title"]["type"], json!("string"));
+        assert_eq!(
+            tools[0].schema()["properties"]["title"]["type"],
+            json!("string")
+        );
     }
 
     /// Two servers may both offer `search`; shadowing one would be invisible.
@@ -633,7 +667,10 @@ mod tests {
         let tools = client.tools();
 
         assert_eq!(tools[0].description(), "ping via net");
-        assert_eq!(tools[0].schema(), json!({"type": "object", "properties": {}}));
+        assert_eq!(
+            tools[0].schema(),
+            json!({"type": "object", "properties": {}})
+        );
     }
 
     #[test]
@@ -668,7 +705,10 @@ mod tests {
         assert_eq!(out.content, "done");
 
         let calls = server.calls.lock().expect("calls");
-        assert_eq!(calls[0], json!({"name": "create_issue", "arguments": {"title": "bug"}}));
+        assert_eq!(
+            calls[0],
+            json!({"name": "create_issue", "arguments": {"title": "bug"}})
+        );
     }
 
     #[test]
@@ -708,7 +748,10 @@ mod tests {
 
         let dir = tempfile::TempDir::new().expect("tempdir");
         let ctx = ToolCtx::new(dir.path());
-        let out = tools[0].run(&json!({"title": "bug"}), &ctx).await.expect("run");
+        let out = tools[0]
+            .run(&json!({"title": "bug"}), &ctx)
+            .await
+            .expect("run");
 
         assert_eq!(out.content, "done");
         assert!(!out.is_error);
@@ -762,7 +805,11 @@ mod tests {
         assert!(clients.is_empty());
         assert_eq!(errors.len(), 2);
         assert!(errors[0].starts_with("ghost:"), "{:?}", errors);
-        assert!(errors[1].contains("unusable mcpServers entry"), "{:?}", errors);
+        assert!(
+            errors[1].contains("unusable mcpServers entry"),
+            "{:?}",
+            errors
+        );
     }
 
     #[test]
@@ -800,7 +847,10 @@ mod tests {
             write_config(r#"{"mcpServers": {"gh": {"name": "github", "command": "npx"}}}"#);
         let declared = declarations_from(&path).expect("load");
 
-        assert_eq!(McpServer::from_acp(&declared[0]).expect("usable").name, "github");
+        assert_eq!(
+            McpServer::from_acp(&declared[0]).expect("usable").name,
+            "github"
+        );
     }
 
     #[test]
@@ -809,7 +859,10 @@ mod tests {
             write_config(r#"{"mcpServers": [{"name": "github", "command": "npx"}]}"#);
         let declared = declarations_from(&path).expect("load");
 
-        assert_eq!(McpServer::from_acp(&declared[0]).expect("usable").name, "github");
+        assert_eq!(
+            McpServer::from_acp(&declared[0]).expect("usable").name,
+            "github"
+        );
     }
 
     #[test]
@@ -837,9 +890,8 @@ mod tests {
     /// them, so a single bad entry cannot stop the good ones being read.
     #[test]
     fn a_useless_entry_survives_loading_and_is_rejected_later() {
-        let (_dir, path) = write_config(
-            r#"{"mcpServers": {"ok": {"command": "srv"}, "bad": {"args": []}}}"#,
-        );
+        let (_dir, path) =
+            write_config(r#"{"mcpServers": {"ok": {"command": "srv"}, "bad": {"args": []}}}"#);
         let declared = declarations_from(&path).expect("load");
         assert_eq!(declared.len(), 2);
 

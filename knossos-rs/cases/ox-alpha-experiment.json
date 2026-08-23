@@ -1,0 +1,90 @@
+{
+  "schema": "knossos-experiment/v1",
+  "name": "ox-alpha-agentic-v1",
+  "purpose": "Measure model quality separately from harness effects and retain training-quality traces.",
+  "provider": "openrouter",
+  "model": {
+    "requested_alias": "ox-alpha",
+    "resolved_id": "stealth/ox-alpha",
+    "resolution_rule": "Resolve from OpenRouter's live model catalogue immediately before the run; never silently substitute another model."
+  },
+  "suite": {
+    "path_base": "repository_root",
+    "canary_cases": "knossos-rs/cases/core.json",
+    "full_cases": "model/fixtures/hard_suite.json",
+    "behavior_cases": "model/fixtures/agentic_behavior_suite.json",
+    "split_salt": "ox-alpha-agentic-v1",
+    "sealed_holdout": true
+  },
+  "controls": {
+    "concurrency": 1,
+    "max_requests": 96,
+    "max_total_tokens": 196608,
+    "max_steps": 8,
+    "target_steps": 4,
+    "max_output_tokens": 2048,
+    "temperature": 0.0,
+    "collect_exchanges": true,
+    "judge": false,
+    "checkpoint": "reports/ox-alpha/checkpoint.json",
+    "resume": true,
+    "stop_on": ["401", "402", "403", "unknown_model", "repeated_429", "provider_timeout", "budget_exhausted"]
+  },
+  "arms": [
+    {
+      "id": "knossos-full",
+      "description": "Full Rust harness with proactive repository context.",
+      "flags": []
+    },
+    {
+      "id": "knossos-no-context",
+      "description": "Same harness and tools, but proactive repository context disabled.",
+      "flags": ["--no-context"]
+    },
+    {
+      "id": "knossos-no-memory",
+      "description": "Same recorded responses with durable episode recall and writes disabled.",
+      "flags": ["--no-memory"]
+    },
+    {
+      "id": "knossos-no-compaction",
+      "description": "Same recorded responses with conversation compaction disabled.",
+      "flags": ["--no-compaction"]
+    }
+  ],
+  "required_metadata": [
+    "model_id",
+    "provider",
+    "harness_commit",
+    "suite_digest",
+    "case_id",
+    "arm",
+    "max_steps",
+    "max_output_tokens",
+    "started_at",
+    "trace_schema"
+  ],
+  "failure_classes": [
+    "success",
+    "test_failure",
+    "action_violation",
+    "verifier_failure",
+    "provider",
+    "infrastructure",
+    "boundary_violation",
+    "budget_exhausted",
+    "ambiguous"
+  ],
+  "failure_cause_groups": [
+    "model",
+    "harness",
+    "infrastructure",
+    "ambiguous"
+  ],
+  "behavior_coverage": {
+    "no_op": ["already-correct-stable-deduplication"],
+    "clarification": ["ambiguous-retry-policy-needs-clarification"],
+    "boundary": ["fix-renderer-not-generated-schema"],
+    "recovery": ["one-fix-is-not-enough", "failed-transfer-leaves-no-debit"]
+  }
+}

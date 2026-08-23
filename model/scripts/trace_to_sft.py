@@ -3,9 +3,9 @@
     python scripts/trace_to_sft.py --traces .daedalus --out corpus.jsonl
 
 Input is JSONL written by `knossos-rs` with `--collect-exchanges`: one
-`exchange` event per engine call, carrying the exact request and the exact
-reply, plus the `halt` and `oracle_verdict` events that say whether the run
-worked.
+`exchange_delta` event per engine call, carrying only the request suffix and
+the exact reply, plus the evaluation labels that say whether the run worked.
+Legacy full-prefix `exchange` events remain readable.
 
 Output is one JSON object per line in the OpenAI chat shape, because that is
 what every SFT trainer already reads:
@@ -20,15 +20,16 @@ do by accident.
 What "successful" means here
 ----------------------------
 
-`Halt.Done` and nothing else. The enum says so itself -- "the only halt that
-means success" -- and Talos will not issue it over an empty change set, so a
-run that talked its way to a passing verdict without touching a file does not
-qualify. That check is the reason this filter can be trusted at all.
+For v2 traces, the deterministic `evaluation_finished` label must report both
+`grader_pass` and `verifier_pass`, with no provider, infrastructure, or tamper
+failure. This label outranks the harness halt because historical traces proved
+that a halt can disagree with the external grader. Legacy traces fall back to
+`Halt.Done`; use the stricter curator before training on them.
 
 Where the input format is defined
 ---------------------------------
 
-`knossos-rs/src/session.rs` (`TraceEvent::Exchange`) and
+`knossos-rs/src/session.rs` (`TraceEvent::ExchangeDelta`) and
 `knossos-rs/src/engine/types.rs` (`Content`, `Message`, `Role`). This reader
 was written from those and its tests use events constructed by hand to match
 them -- so the two sides are pinned to the same shape by inspection, not by a
@@ -78,7 +79,27 @@ def read_trace(path: pathlib.Path) -> List[Dict[str, Any]]:
 
 
 def succeeded(events: Iterable[Dict[str, Any]]) -> bool:
-    """Whether this trajectory reached `Halt.Done`."""
+    """Whether the strongest available label says the trajectory succeeded."""
+    events = list(events)
+    evaluations = [e for e in events if e.get("event") == "evaluation_finished"]
+    if evaluations:
+        label = evaluations[-1]
+        halts = [e for e in events if e.get("event") == "halt"]
+        metadata = [e for e in events if e.get("event") == "experiment_metadata"]
+        clarification = bool(
+            metadata and metadata[-1].get("expected_action") == "clarify"
+        )
+        completion_consistent = (
+            not halts or halts[-1].get("reason") == SUCCESS or clarification
+        )
+        return (
+            completion_consistent
+            and label.get("grader_pass") is True
+            and label.get("verifier_pass") is True
+            and label.get("provider_status") == "ok"
+            and label.get("infrastructure_status") == "ok"
+            and label.get("tamper") is False
+        )
     for event in events:
         if event.get("event") == "halt" and event.get("reason") == SUCCESS:
             return True
@@ -150,15 +171,32 @@ def to_chat(message: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def records(events: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
     """One SFT record per exchange: the prompt as sent, the reply as target."""
+    system = ""
+    request_messages: List[Dict[str, Any]] = []
     for event in events:
-        if event.get("event") != "exchange":
+        kind = event.get("event")
+        if kind not in {"exchange", "exchange_delta"}:
             continue
-        request, response = event.get("request") or {}, event.get("response") or {}
+        if kind == "exchange":
+            request, response = event.get("request") or {}, event.get("response") or {}
+            system = request.get("system") or ""
+            request_messages = list(request.get("messages") or [])
+        else:
+            response = event.get("response") or {}
+            if event.get("reset"):
+                system = event.get("system") or ""
+                request_messages = []
+            start = event.get("messages_start")
+            if not isinstance(start, int) or start < 0 or start > len(request_messages):
+                # A missing prefix is corruption, not a reason to silently
+                # train on a different prompt than the model actually saw.
+                continue
+            request_messages[start:] = list(event.get("messages") or [])
 
         messages: List[Dict[str, Any]] = []
-        if request.get("system"):
-            messages.append({"role": "system", "content": request["system"]})
-        for m in request.get("messages") or []:
+        if system:
+            messages.append({"role": "system", "content": system})
+        for m in request_messages:
             messages.extend(to_chat(m))
 
         target = to_chat({"role": "assistant", "content": response.get("content") or []})
@@ -170,7 +208,12 @@ def records(events: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
             continue
         messages.extend(target)
 
-        yield {"messages": messages, "step": event.get("step")}
+        yield {
+            "messages": messages,
+            "step": event.get("step"),
+            "run_id": event.get("run_id"),
+            "trace_schema": event.get("schema_version", "daedalus-trace/v1"),
+        }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -199,7 +242,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         for path in paths:
             events = read_trace(path)
-            if not any(e.get("event") == "exchange" for e in events):
+            if not any(e.get("event") in {"exchange", "exchange_delta"} for e in events):
                 # Almost always the real cause: the run was not collecting.
                 stats["no exchanges (run without --collect-exchanges?)"] += 1
                 continue

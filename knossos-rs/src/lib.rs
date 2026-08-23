@@ -20,10 +20,15 @@
 pub mod acp;
 pub mod argus;
 pub mod ariadne;
+pub mod cameo_board;
+pub mod client_io;
 pub mod config;
 pub mod delegate;
 pub mod diff;
 pub mod engine;
+pub mod episode;
+pub mod eval;
+pub mod eval_checkpoint;
 pub mod gate;
 pub mod hooks;
 pub mod interject;

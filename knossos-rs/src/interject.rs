@@ -189,7 +189,10 @@ mod tests {
 
         let msg = loop_side.take_message().unwrap();
         assert!(msg.contains("from the user"));
-        assert!(front_end.is_empty(), "draining on one side clears the other");
+        assert!(
+            front_end.is_empty(),
+            "draining on one side clears the other"
+        );
     }
 
     #[test]
@@ -198,6 +201,9 @@ mod tests {
         let front_end = loop_side.clone();
         let t = std::thread::spawn(move || front_end.push("said from elsewhere"));
         assert!(t.join().unwrap());
-        assert!(loop_side.take_message().unwrap().contains("said from elsewhere"));
+        assert!(loop_side
+            .take_message()
+            .unwrap()
+            .contains("said from elsewhere"));
     }
 }

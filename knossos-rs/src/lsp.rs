@@ -87,9 +87,9 @@ pub fn path_to_uri(path: &Path) -> String {
 }
 
 pub fn uri_to_path(uri: &str) -> PathBuf {
-    let rest = uri.strip_prefix("file://").unwrap_or_else(|| {
-        uri.strip_prefix("file:").unwrap_or(uri)
-    });
+    let rest = uri
+        .strip_prefix("file://")
+        .unwrap_or_else(|| uri.strip_prefix("file:").unwrap_or(uri));
     // `file://host/path` is not something a language server emits, but an empty
     // authority is, and both leave the path starting at the first `/`.
     let raw = percent_decode(rest);
@@ -221,7 +221,10 @@ pub fn for_workspace(root: impl AsRef<Path>, timeout: Duration) -> Option<LspCli
         }
     }
     let (suffix, _) = counts.into_iter().max_by_key(|(_, n)| *n)?;
-    let candidates = SERVERS.iter().find(|(s, _)| *s == suffix).map(|(_, c)| *c)?;
+    let candidates = SERVERS
+        .iter()
+        .find(|(s, _)| *s == suffix)
+        .map(|(_, c)| *c)?;
 
     for argv in candidates {
         if !launchable(argv) {
@@ -243,7 +246,9 @@ fn count_files(root: &Path, suffix: &str, cap: usize) -> usize {
     let mut found = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name();
@@ -349,7 +354,12 @@ impl LspClient {
         root: impl AsRef<Path>,
         timeout: Duration,
     ) -> Option<Self> {
-        let root = plain(&root.as_ref().canonicalize().unwrap_or_else(|_| root.as_ref().into()));
+        let root = plain(
+            &root
+                .as_ref()
+                .canonicalize()
+                .unwrap_or_else(|_| root.as_ref().into()),
+        );
         let client = LspClient {
             label: label.to_string(),
             capabilities: Value::Null,
@@ -370,7 +380,10 @@ impl LspClient {
             .ok()?;
 
         let uri = path_to_uri(&client.root);
-        let name = client.root.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = client
+            .root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
         let result = client.request(
             "initialize",
             json!({
@@ -417,7 +430,12 @@ impl LspClient {
         }
         // A killed server whose pipe has not yet reached EOF still reports
         // `ready`; the exit status is the earlier signal of the two.
-        let status = self.child.lock().expect("child mutex").as_mut().map(Child::try_wait);
+        let status = self
+            .child
+            .lock()
+            .expect("child mutex")
+            .as_mut()
+            .map(Child::try_wait);
         !matches!(status, Some(Ok(Some(_))))
     }
 
@@ -430,8 +448,13 @@ impl LspClient {
         }
         // Anything still waiting must be released; the reader may be parked on
         // a pipe that only the server can close.
-        let stranded: Vec<Arc<Slot>> =
-            self.pending.lock().expect("pending mutex").drain().map(|(_, s)| s).collect();
+        let stranded: Vec<Arc<Slot>> = self
+            .pending
+            .lock()
+            .expect("pending mutex")
+            .drain()
+            .map(|(_, s)| s)
+            .collect();
         for slot in stranded {
             settle(&slot, Err("client stopped".into()));
         }
@@ -505,7 +528,10 @@ impl LspClient {
         }
         let mut params = Map::new();
         params.insert("textDocument".into(), json!({"uri": path_to_uri(path)}));
-        params.insert("position".into(), json!({"line": line, "character": character}));
+        params.insert(
+            "position".into(),
+            json!({"line": line, "character": character}),
+        );
         if let Some(Value::Object(extra)) = extra {
             params.extend(extra);
         }
@@ -531,7 +557,10 @@ impl LspClient {
     pub fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let slot = Arc::new(Slot::default());
-        self.pending.lock().expect("pending mutex").insert(id, Arc::clone(&slot));
+        self.pending
+            .lock()
+            .expect("pending mutex")
+            .insert(id, Arc::clone(&slot));
 
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
 
@@ -614,11 +643,15 @@ fn read_loop(
         if rx.read_exact(&mut body).is_err() {
             break;
         }
-        let Ok(message) = serde_json::from_slice::<Value>(&body) else { continue };
+        let Ok(message) = serde_json::from_slice::<Value>(&body) else {
+            continue;
+        };
 
         // Server->client requests are ignored: none of the capabilities
         // advertised above require answering one.
-        let Some(id) = message.get("id").and_then(Value::as_i64) else { continue };
+        let Some(id) = message.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
         if message.get("method").is_some() {
             continue;
         }
@@ -638,8 +671,12 @@ fn read_loop(
 
     ready.store(false, Ordering::SeqCst);
     // Nothing will answer outstanding calls now.
-    let stranded: Vec<Arc<Slot>> =
-        pending.lock().expect("pending mutex").drain().map(|(_, s)| s).collect();
+    let stranded: Vec<Arc<Slot>> = pending
+        .lock()
+        .expect("pending mutex")
+        .drain()
+        .map(|(_, s)| s)
+        .collect();
     for slot in stranded {
         settle(&slot, Err("language server closed the connection".into()));
     }
@@ -699,7 +736,9 @@ mod tests {
                     if rx.read_exact(&mut body).is_err() {
                         break;
                     }
-                    let Ok(msg) = serde_json::from_slice::<Value>(&body) else { break };
+                    let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
+                        break;
+                    };
                     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
                     let id = msg.get("id").cloned();
 
@@ -718,13 +757,14 @@ mod tests {
                             json!({"capabilities": {
                                 "referencesProvider": true, "definitionProvider": true,
                                 "workspaceSymbolProvider": true}})
-                            }
+                        }
                         "workspace/symbol" => json!([{
                             "name": "Router", "kind": 5,
                             "location": loc(format!("{root}/moe.rs"), 28)}]),
                         "textDocument/references" => json!([
                             loc(format!("{root}/naiads.rs"), 41),
-                            loc(format!("{root}/full.rs"), 7)]),
+                            loc(format!("{root}/full.rs"), 7)
+                        ]),
                         "textDocument/definition" => loc(format!("{root}/moe.rs"), 28),
                         "textDocument/nothing" => Value::Null,
                         "exit" => break,
@@ -804,7 +844,9 @@ mod tests {
 
         assert!(!client.available());
         assert!(client.workspace_symbols("Router").is_empty());
-        assert!(client.references(&dir.path().join("x.rs"), 0, 0, false).is_empty());
+        assert!(client
+            .references(&dir.path().join("x.rs"), 0, 0, false)
+            .is_empty());
     }
 
     /// Otherwise a crashed server hangs whatever asked it a question.
@@ -829,7 +871,9 @@ mod tests {
         // and used to wait the whole timeout roughly half the time, because
         // nothing re-checked the pipe once the wait had started.
         let started = Instant::now();
-        assert!(client.references(&dir.path().join("x.rs"), 1, 1, false).is_empty());
+        assert!(client
+            .references(&dir.path().join("x.rs"), 1, 1, false)
+            .is_empty());
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "waited {:?} for a server that was already gone",
@@ -860,9 +904,15 @@ mod tests {
         }
 
         let started = Instant::now();
-        let err = client.request("workspace/symbol", json!({"query": ""})).expect_err("no server");
+        let err = client
+            .request("workspace/symbol", json!({"query": ""}))
+            .expect_err("no server");
         assert!(err.contains("closed the connection"), "{err}");
-        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     // ---------------------------------------------------------------- queries
@@ -913,9 +963,18 @@ mod tests {
     fn an_unsupported_method_does_not_propagate_as_a_failure() {
         let (dir, _server, client) = connected();
         assert!(client
-            .locations("textDocument/whatever", &dir.path().join("x.rs"), 0, 0, None)
+            .locations(
+                "textDocument/whatever",
+                &dir.path().join("x.rs"),
+                0,
+                0,
+                None
+            )
             .is_empty());
-        assert!(client.available(), "one unsupported call must not end the session");
+        assert!(
+            client.available(),
+            "one unsupported call must not end the session"
+        );
     }
 
     // ------------------------------------------------------------------- uris
@@ -932,7 +991,12 @@ mod tests {
 
     #[test]
     fn a_uri_with_spaces_is_decoded() {
-        assert_eq!(uri_to_path("file:///proj/my%20file.rs").file_name().unwrap(), "my file.rs");
+        assert_eq!(
+            uri_to_path("file:///proj/my%20file.rs")
+                .file_name()
+                .unwrap(),
+            "my file.rs"
+        );
     }
 
     #[test]
@@ -946,7 +1010,11 @@ mod tests {
     #[test]
     fn windows_drive_letters_lose_the_leading_slash() {
         let path = uri_to_path("file:///C:/proj/x.rs");
-        assert!(path.to_string_lossy().starts_with("C:"), "{}", path.display());
+        assert!(
+            path.to_string_lossy().starts_with("C:"),
+            "{}",
+            path.display()
+        );
     }
 
     /// A drive letter must not be escaped, or the server reads `C%3A` as a host.
@@ -958,7 +1026,11 @@ mod tests {
     /// LSP lines are 0-based; humans and editors count from 1.
     #[test]
     fn a_location_reports_a_one_based_reference() {
-        let loc = Location { path: PathBuf::from("/a/b.rs"), line: 27, character: 0 };
+        let loc = Location {
+            path: PathBuf::from("/a/b.rs"),
+            line: 27,
+            character: 0,
+        };
         assert!(loc.reference().ends_with(":28"));
     }
 
@@ -1005,7 +1077,10 @@ mod tests {
         let mut users = argus.users_of(&router);
         users.sort();
         assert_eq!(users, ["full.rs", "naiads.rs"]);
-        assert!(!users.contains(&"moe.rs".to_string()), "a symbol is not its own user");
+        assert!(
+            !users.contains(&"moe.rs".to_string()),
+            "a symbol is not its own user"
+        );
     }
 
     /// No server must mean "no exact answer", not "no retrieval".

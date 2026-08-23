@@ -12,7 +12,15 @@ that can have real capability today, because it is not compute-bound.
 
 ```bash
 daedalus task "add a triple() function next to double()" -w ./my-crate
+daedalus acp                          # editor agent (ACP on stdio)
+daedalus eval --cases suite.json      # fail_to_pass / pass_to_pass grader
 ```
+
+`python -m knossos` is training/legacy. The product binary is `daedalus`.
+With no API key, `daedalus acp` still starts (retrieval-only: search the
+tree, no edits). Pass `--engine ollama` or `--engine cameo` for a local
+model, or set `ANTHROPIC_API_KEY`. Editors that advertise `fs`, `terminal`,
+or elicitation get those channels; everyone else stays on the workspace jail.
 
 ## The mapping
 
@@ -111,6 +119,35 @@ daedalus task "add a --json flag" -w ./my-crate --dry-run
 
 # interactive session that keeps context between turns
 daedalus repl -w ./my-crate --dry-run
+
+# Agent Client Protocol — this is what an editor spawns (no Python)
+daedalus acp --engine cameo --model qwen2.5-0.5b
+```
+
+### In a code editor (ACP)
+
+You do **not** need the Python agent. Any editor that speaks [ACP](https://agentclientprotocol.com) (Zed, JetBrains ACP, VS Code ACP, this repo's Lapce fork) can spawn the Rust binary on stdio:
+
+```
+command: /absolute/path/to/daedalus
+args:    acp
+env:     CAMEO_BASE_URL=http://127.0.0.1:9090/v1
+         CAMEO_MODEL=qwen2.5-0.5b
+         CAMEO_SERVE_KEY=…          # consumer /v1
+         CAMEO_CONSOLE_KEY=…        # optional; loads a cold model
+```
+
+Implemented: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/close`, `session/set_mode` (`ask`/`preview`/`write`), `session/interject`, plus `session/update` and `session/request_permission`. Assistant prose still arrives as one chunk until engines stream.
+
+Zed-style agent server (shape; field names follow your editor's schema):
+
+```json
+{
+  "name": "daedalus",
+  "command": "/absolute/path/to/daedalus",
+  "args": ["acp"],
+  "env": { "CAMEO_BASE_URL": "http://127.0.0.1:9090/v1" }
+}
 ```
 
 ### Dry run
@@ -243,16 +280,25 @@ What the tests defend:
 real file edits and build commands, verifies with a tiered ladder, and stops on
 evidence or on a budget. That is a working agent, not a frontier one.
 
+**What is in the harness today.** Scribe indexes Rust, Python, Go and Node
+(tree-sitter for Rust; scanners for the rest). Oracle runs the matching
+ladder. Lethe shrinks oversized tool results in place. Failed hypotheses
+land in `{workspace}/.knossos/episodes.jsonl` and are injected after compact
+and on the next run. First `Stuck` redirects once; the second is an honest
+halt. Product spawn is `daedalus acp` (stdio JSON-RPC). `session/load`
+replays already-sent updates; it does not re-run tools.
+
 **Not implemented, deliberately:**
 
-- **Apollo** (routing to specialist sub-agents) — the core loop should be proven
-  before adding a routing layer on top of it.
-- **Naiads** (per-task memory namespaces) — follows conversation compaction,
-  which is itself still unbuilt.
-- **Conversation compaction** — Mnemosyne indexes the *codebase*; the running
-  transcript is still uncompressed, so very long sessions will eventually run
-  into the context window.
-- **Echo** (trajectory distillation) — traces are *captured*, not consumed.
+- **Apollo** (routing to specialist sub-agents) — `delegate` already runs a
+  child agent; a routing layer on top waits until the core loop is the only
+  ACP server editors spawn.
+- **Naiads** (per-task memory namespaces) — episode store is workspace-scoped,
+  not per-task.
+- **Echo** (trajectory distillation / SFT) — collection and deterministic
+  SFT/DPO curation are implemented in `model/scripts/curate_traces.py` with
+  v2 external labels, secret quarantine, task-level splits, and exact-prompt
+  DPO pairing. The actual model-training job remains a separate pipeline.
 - **Proteus** (self-modifying weights → self-editing prompts) — **excluded
   permanently, not deferred.** It has the same runaway failure mode as the
   tensor-level version, but at system level there is no `‖W‖` to watch; you lose
@@ -262,14 +308,14 @@ evidence or on a budget. That is a working agent, not a frontier one.
 - **Tab completion.** Calling an API per keystroke is 300ms–2s where Cursor Tab
   is under 100ms, and it costs tokens continuously. The version worth having is
   a small FIM-trained model, which is a separate project.
-- **Token-level streaming.** Progress streams (steps, tool calls, verdicts) but
-  assistant prose arrives whole.
+- **Token-level streaming on every backend.** OpenAI-compat and Cameo stream
+  SSE into `agent_message_chunk` / `agent_thought_chunk` as tokens arrive.
+  Anthropic and Ollama still complete in one shot (they inherit the default).
+  `MockEngine` does not stream, so the halt tests stay one-shot.
 - **Inline gutter accept/reject.** Hunk-level review happens in the panel, not
   as decorations over your editor buffer.
-- **A second language.** The `LanguageAdapter` trait exists and Rust is its only
-  implementation. The trait will need revision when a second one lands —
-  interfaces designed against one example usually do. It is there to keep
-  `cargo` strings out of the agent loop, not because it is already right.
+- **Editor `fs/*` / `terminal/*`.** The path jail is the product. The agent
+  reads and writes through its own tools, not through the client.
 
 **Known limits.** Quality tracks the engine, not the harness: a weak local model
 will look like a harness bug. Ollama tool-use reliability varies by model. The

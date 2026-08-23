@@ -46,6 +46,61 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
+#[cfg(windows)]
+struct WindowsJob(usize);
+
+#[cfg(windows)]
+impl WindowsJob {
+    fn assign(child: &tokio::process::Child) -> Option<Self> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        unsafe {
+            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if handle.is_null() {
+                return None;
+            }
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of_val(&info) as u32,
+            ) != 0;
+            let Some(process) = child.raw_handle() else {
+                CloseHandle(handle);
+                return None;
+            };
+            let assigned = configured && AssignProcessToJobObject(handle, process.cast()) != 0;
+            if !assigned {
+                CloseHandle(handle);
+                return None;
+            }
+            Some(Self(handle as usize))
+        }
+    }
+
+    fn terminate(&self) {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0 as _, 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJob {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0 as _);
+        }
+    }
+}
+
 /// Variables without which nothing runs at all.
 const BASE: &[&str] = &["PATH"];
 
@@ -167,7 +222,7 @@ async fn kill_tree(pid: u32) {
 
     // Bounded: a cleanup step that can itself hang has moved the problem
     // rather than solved it.
-    let _ = tokio::time::timeout(Duration::from_secs(10), killer.status()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), killer.status()).await;
 }
 
 /// The environment policy applied to every command `shell` runs.
@@ -183,7 +238,10 @@ impl Default for Sandbox {
     /// Offline, because a run that silently fetches a new dependency has
     /// changed the build in a way the diff does not show.
     fn default() -> Self {
-        Sandbox { extra: Vec::new(), offline: true }
+        Sandbox {
+            extra: Vec::new(),
+            offline: true,
+        }
     }
 }
 
@@ -329,6 +387,8 @@ impl Sandbox {
 
         let mut child = cmd.spawn()?;
         let pid = child.id();
+        #[cfg(windows)]
+        let job = WindowsJob::assign(&child);
         let mut out = child.stdout.take().expect("stdout was piped");
         let mut err = child.stderr.take().expect("stderr was piped");
 
@@ -345,14 +405,32 @@ impl Sandbox {
             // Before reaping the direct child: once it is gone the children it
             // launched are orphans, and on Windows `taskkill /T` finds them by
             // asking who their parent is.
+            #[cfg(windows)]
+            if let Some(job) = &job {
+                job.terminate();
+            } else if let Some(pid) = pid {
+                kill_tree(pid).await;
+            }
+            #[cfg(not(windows))]
             if let Some(pid) = pid {
                 kill_tree(pid).await;
             }
+            // `taskkill /T` is best effort. Always signal the direct child as
+            // a fallback, then bound reaping too: a deadline that can spend the
+            // child's remaining 30 seconds in `wait` is not a deadline.
+            let _ = child.start_kill();
         }
 
         // Whatever was read before the deadline is kept. Partial compiler
         // output from a run that hung is more use to the agent than nothing.
-        let status = child.wait().await.ok();
+        let status = if timed_out {
+            tokio::time::timeout(Duration::from_secs(2), child.wait())
+                .await
+                .ok()
+                .and_then(Result::ok)
+        } else {
+            child.wait().await.ok()
+        };
 
         Ok(Finished {
             status,
@@ -431,8 +509,14 @@ mod tests {
     fn the_toolchain_still_gets_what_it_needs() {
         let env = Sandbox::default().env_for(realistic());
         assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin"));
-        assert_eq!(env.get("CARGO_HOME").map(String::as_str), Some("/home/k/.cargo"));
-        assert_eq!(env.get("RUSTUP_TOOLCHAIN").map(String::as_str), Some("stable"));
+        assert_eq!(
+            env.get("CARGO_HOME").map(String::as_str),
+            Some("/home/k/.cargo")
+        );
+        assert_eq!(
+            env.get("RUSTUP_TOOLCHAIN").map(String::as_str),
+            Some("stable")
+        );
         assert_eq!(env.get("RUST_BACKTRACE").map(String::as_str), Some("1"));
     }
 
@@ -450,7 +534,10 @@ mod tests {
     fn an_operator_can_widen_the_list_but_not_past_the_secret_check() {
         let s = Sandbox::default().allow("KUBECONFIG").allow("MY_TOKEN");
         assert!(s.admits("KUBECONFIG"));
-        assert!(!s.admits("MY_TOKEN"), "allow() must not override the secret layer");
+        assert!(
+            !s.admits("MY_TOKEN"),
+            "allow() must not override the secret layer"
+        );
     }
 
     #[test]
@@ -465,7 +552,10 @@ mod tests {
     #[test]
     fn offline_is_the_default_and_can_be_turned_off() {
         let offline = Sandbox::default().env_for(realistic());
-        assert_eq!(offline.get("CARGO_NET_OFFLINE").map(String::as_str), Some("true"));
+        assert_eq!(
+            offline.get("CARGO_NET_OFFLINE").map(String::as_str),
+            Some("true")
+        );
 
         let networked = Sandbox::default().networked().env_for(realistic());
         assert!(!networked.contains_key("CARGO_NET_OFFLINE"));
@@ -474,7 +564,10 @@ mod tests {
     #[test]
     fn colour_is_forced_off_regardless_of_the_parent() {
         let env = Sandbox::default().env_for(vec![("CARGO_TERM_COLOR", "always")]);
-        assert_eq!(env.get("CARGO_TERM_COLOR").map(String::as_str), Some("never"));
+        assert_eq!(
+            env.get("CARGO_TERM_COLOR").map(String::as_str),
+            Some("never")
+        );
     }
 
     /// The single spawn point has to carry the policy, or consolidating on it
@@ -500,7 +593,10 @@ mod tests {
             text.contains("PATH=") || text.contains("Path="),
             "the probe produced nothing, so this proves nothing: {text}"
         );
-        assert!(!text.contains("canary-must-not-appear"), "command() must scrub");
+        assert!(
+            !text.contains("canary-must-not-appear"),
+            "command() must scrub"
+        );
 
         std::env::remove_var("KNOSSOS_COMMAND_CANARY_KEY");
     }
@@ -542,8 +638,16 @@ mod tests {
         if cfg!(windows) {
             // `timeout` needs a console; ping against loopback does not, and
             // waits about one second per count.
-            ("cmd", vec!["/c".into(), "ping".into(), "-n".into(),
-                         (seconds + 1).to_string(), "127.0.0.1".into()])
+            (
+                "cmd",
+                vec![
+                    "/c".into(),
+                    "ping".into(),
+                    "-n".into(),
+                    (seconds + 1).to_string(),
+                    "127.0.0.1".into(),
+                ],
+            )
         } else {
             ("sleep", vec![seconds.to_string()])
         }
@@ -596,13 +700,19 @@ mod tests {
         std::env::set_var("KNOSSOS_SANDBOX_CANARY_KEY", "canary-must-not-appear");
 
         // A program that prints its own environment. `set` is a cmd builtin.
-        let (program, args): (&str, &[&str]) =
-            if cfg!(windows) { ("cmd", &["/c", "set"]) } else { ("env", &[]) };
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/c", "set"])
+        } else {
+            ("env", &[])
+        };
 
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(args);
         Sandbox::default().apply(&mut cmd);
-        let out = cmd.output().await.expect("could not run the environment probe");
+        let out = cmd
+            .output()
+            .await
+            .expect("could not run the environment probe");
         let text = String::from_utf8_lossy(&out.stdout);
 
         // Guards against passing vacuously: if the probe printed nothing, the

@@ -270,9 +270,14 @@ impl Tool for Delegate {
             )));
         }
 
-        let Some(task) = input.get("task").and_then(Value::as_str).filter(|t| !t.trim().is_empty())
+        let Some(task) = input
+            .get("task")
+            .and_then(Value::as_str)
+            .filter(|t| !t.trim().is_empty())
         else {
-            return Ok(ToolOutput::error("`task` is required and must not be empty"));
+            return Ok(ToolOutput::error(
+                "`task` is required and must not be empty",
+            ));
         };
 
         let role = match self.role(input.get("role").and_then(Value::as_str)) {
@@ -292,13 +297,17 @@ impl Tool for Delegate {
         let mut child = match (self.spawn)(request) {
             Ok(child) => child,
             Err(err) => {
-                return Ok(ToolOutput::error(format!("could not start a child agent: {err}")))
+                return Ok(ToolOutput::error(format!(
+                    "could not start a child agent: {err}"
+                )))
             }
         };
 
         // A child gets the subtask as its whole plan. Planning it again would
         // spend one of its few steps restating what the parent already decided.
-        let plan = Plan { steps: vec![task.to_string()] };
+        let plan = Plan {
+            steps: vec![task.to_string()],
+        };
         let outcome = match child.run(task, &plan).await {
             Ok(outcome) => outcome,
             Err(err) => return Ok(ToolOutput::error(format!("the child agent failed: {err}"))),
@@ -416,8 +425,8 @@ mod tests {
     #[tokio::test]
     async fn a_child_reports_back_only_a_summary() {
         let (_dir, root) = workspace();
-        // A child that only reads has changed nothing, so it gets pushed back
-        // on and spends its whole budget saying so. Scripted to the budget.
+        // A read-only child may finish without changing the tree, but its
+        // answer still has to survive the summary boundary.
         let (d, _) = delegate_with(
             &root,
             vec![text_response("had a look, all fine"); Delegate::child_steps(8)],
@@ -425,7 +434,10 @@ mod tests {
         );
         let ctx = ToolCtx::new(&root);
 
-        let out = d.run(&json!({"task": "look at src/lib.rs"}), &ctx).await.expect("run");
+        let out = d
+            .run(&json!({"task": "look at src/lib.rs"}), &ctx)
+            .await
+            .expect("run");
 
         assert!(out.content.contains("had a look"), "{}", out.content);
         assert!(out.content.contains("general subagent"), "{}", out.content);
@@ -472,7 +484,10 @@ mod tests {
         );
         let ctx = ToolCtx::new(&root);
 
-        let out = d.run(&json!({"task": "add src/added.rs"}), &ctx).await.expect("run");
+        let out = d
+            .run(&json!({"task": "add src/added.rs"}), &ctx)
+            .await
+            .expect("run");
 
         assert!(
             out.changed.iter().any(|p| p.ends_with("added.rs")),
@@ -502,8 +517,14 @@ mod tests {
         );
         let ctx = ToolCtx::new(&root);
 
-        let out = d.run(&json!({"task": "break it"}), &ctx).await.expect("run");
-        assert!(out.is_error, "a child that failed verification must not read as success");
+        let out = d
+            .run(&json!({"task": "break it"}), &ctx)
+            .await
+            .expect("run");
+        assert!(
+            out.is_error,
+            "a child that failed verification must not read as success"
+        );
     }
 
     // ------------------------------------------------------------- roles
@@ -514,7 +535,9 @@ mod tests {
         let (d, seen) = delegate_with(&root, vec![text_response("reviewed")], 8);
         let ctx = ToolCtx::new(&root);
 
-        d.run(&json!({"task": "review it", "role": "reviewer"}), &ctx).await.expect("run");
+        d.run(&json!({"task": "review it", "role": "reviewer"}), &ctx)
+            .await
+            .expect("run");
 
         assert_eq!(seen.lock().unwrap()[0].role, "reviewer");
     }
@@ -525,7 +548,10 @@ mod tests {
         let (d, _) = delegate_with(&root, vec![text_response("x")], 8);
         let ctx = ToolCtx::new(&root);
 
-        let out = d.run(&json!({"task": "x", "role": "wizard"}), &ctx).await.expect("run");
+        let out = d
+            .run(&json!({"task": "x", "role": "wizard"}), &ctx)
+            .await
+            .expect("run");
 
         assert!(out.is_error);
         assert!(out.content.contains("reviewer"), "{}", out.content);
@@ -567,10 +593,16 @@ mod tests {
         d.depth = MAX_DEPTH;
         let ctx = ToolCtx::new(&root);
 
-        let out = d.run(&json!({"task": "spawn another"}), &ctx).await.expect("run");
+        let out = d
+            .run(&json!({"task": "spawn another"}), &ctx)
+            .await
+            .expect("run");
 
         assert!(out.is_error);
-        assert!(seen.lock().unwrap().is_empty(), "no child may be built at the limit");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "no child may be built at the limit"
+        );
     }
 
     #[tokio::test]
@@ -583,7 +615,10 @@ mod tests {
             let out = d.run(&input, &ctx).await.expect("run");
             assert!(out.is_error, "{input}");
         }
-        assert!(seen.lock().unwrap().is_empty(), "an empty task must not cost a child");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "an empty task must not cost a child"
+        );
     }
 
     /// Spawning is the last point at which a whole subtask can be declined.

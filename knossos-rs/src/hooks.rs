@@ -79,7 +79,7 @@ pub struct ProtectPaths {
 
 impl Default for ProtectPaths {
     fn default() -> Self {
-        ProtectPaths::new([".git"])
+        ProtectPaths::new([".git", ".knossos"])
     }
 }
 
@@ -89,7 +89,9 @@ impl ProtectPaths {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        ProtectPaths { components: components.into_iter().map(Into::into).collect() }
+        ProtectPaths {
+            components: components.into_iter().map(Into::into).collect(),
+        }
     }
 
     /// The protected component this path falls under, if any.
@@ -160,15 +162,15 @@ pub(crate) fn before_chain<'a>(
             Decision::Deny(reason) => {
                 return Chained {
                     input: current,
-                    denial: Some(format!(
-                        "{tool} was refused by `{}`: {reason}",
-                        hook.name()
-                    )),
+                    denial: Some(format!("{tool} was refused by `{}`: {reason}", hook.name())),
                 }
             }
         }
     }
-    Chained { input: current, denial: None }
+    Chained {
+        input: current,
+        denial: None,
+    }
 }
 
 #[cfg(test)]
@@ -184,19 +186,41 @@ mod tests {
     }
 
     #[test]
+    fn writes_into_the_episode_store_are_refused() {
+        let h = ProtectPaths::default();
+        let d = h.before("write_file", &json!({"path": ".knossos/episodes.jsonl"}));
+        assert!(matches!(d, Decision::Deny(_)), "{d:?}");
+    }
+
+    #[test]
     fn the_working_tree_is_untouched_by_the_rule() {
         let h = ProtectPaths::default();
-        assert!(matches!(h.before("write_file", &json!({"path": "src/main.rs"})), Decision::Allow));
+        assert!(matches!(
+            h.before("write_file", &json!({"path": "src/main.rs"})),
+            Decision::Allow
+        ));
         // A substring match would have caught this one.
-        assert!(matches!(h.before("write_file", &json!({"path": "src/mygit.rs"})), Decision::Allow));
-        assert!(matches!(h.before("write_file", &json!({"path": "gitignore.rs"})), Decision::Allow));
+        assert!(matches!(
+            h.before("write_file", &json!({"path": "src/mygit.rs"})),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            h.before("write_file", &json!({"path": "gitignore.rs"})),
+            Decision::Allow
+        ));
     }
 
     #[test]
     fn reads_are_never_blocked() {
         let h = ProtectPaths::default();
-        assert!(matches!(h.before("read_file", &json!({"path": ".git/config"})), Decision::Allow));
-        assert!(matches!(h.before("list_dir", &json!({"path": ".git"})), Decision::Allow));
+        assert!(matches!(
+            h.before("read_file", &json!({"path": ".git/config"})),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            h.before("list_dir", &json!({"path": ".git"})),
+            Decision::Allow
+        ));
     }
 
     #[test]
@@ -209,8 +233,14 @@ mod tests {
     #[test]
     fn the_protected_set_is_configurable() {
         let h = ProtectPaths::new(["migrations", "vendor"]);
-        assert!(matches!(h.before("write_file", &json!({"path": "migrations/003.sql"})), Decision::Deny(_)));
-        assert!(matches!(h.before("write_file", &json!({"path": ".git/config"})), Decision::Allow));
+        assert!(matches!(
+            h.before("write_file", &json!({"path": "migrations/003.sql"})),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            h.before("write_file", &json!({"path": ".git/config"})),
+            Decision::Allow
+        ));
     }
 
     struct Rewriter;
@@ -237,19 +267,20 @@ mod tests {
     fn a_rewrite_is_visible_to_the_hooks_that_follow_it() {
         // Otherwise a rewrite could be used to smuggle a path past a later
         // policy hook, which would make hook order a security boundary.
-        let hooks: Vec<Box<dyn Hook>> =
-            vec![Box::new(Rewriter), Box::new(ProtectPaths::default())];
+        let hooks: Vec<Box<dyn Hook>> = vec![Box::new(Rewriter), Box::new(ProtectPaths::default())];
         let input = json!({"path": "src/ok.rs"});
         let out = before_chain(&hooks, "write_file", &input);
-        assert!(out.denial.is_some(), "the rewritten path should have been judged");
+        assert!(
+            out.denial.is_some(),
+            "the rewritten path should have been judged"
+        );
     }
 
     /// What an audit log has to say about a call that was rewritten and then
     /// refused: the attempt was on the rewritten path, not the original.
     #[test]
     fn a_denial_reports_the_call_that_was_actually_attempted() {
-        let hooks: Vec<Box<dyn Hook>> =
-            vec![Box::new(Rewriter), Box::new(ProtectPaths::default())];
+        let hooks: Vec<Box<dyn Hook>> = vec![Box::new(Rewriter), Box::new(ProtectPaths::default())];
         let input = json!({"path": "src/harmless.rs"});
         let out = before_chain(&hooks, "write_file", &input);
 

@@ -162,7 +162,9 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
     let pending: Pending = Default::default();
     let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    talos.approver = Some(std::sync::Arc::new(PromptApprover { pending: pending.clone() }));
+    talos.approver = Some(std::sync::Arc::new(PromptApprover {
+        pending: pending.clone(),
+    }));
 
     // One reader owns stdin for the whole session. On its own thread because
     // `read_line` blocks for as long as the user takes to type, which is not
@@ -313,7 +315,13 @@ mod routing {
             interjections.clone(),
         ));
 
-        Harness { lines: line_tx, commands: cmd_rx, pending, busy, interjections }
+        Harness {
+            lines: line_tx,
+            commands: cmd_rx,
+            pending,
+            busy,
+            interjections,
+        }
     }
 
     impl Harness {
@@ -462,7 +470,11 @@ fn report(talos: &Talos, outcome: &crate::talos::Outcome) {
     if outcome.dry_run && !talos.diffs().is_empty() {
         println!("\n/diff to review, /apply to write, /discard to throw away.");
     }
-    println!("[{} in {} step(s)]\n", outcome.halt.label(), outcome.steps_used);
+    println!(
+        "[{} in {} step(s)]\n",
+        outcome.halt.label(),
+        outcome.steps_used
+    );
 }
 
 fn show_diff(talos: &Talos) {
@@ -604,7 +616,10 @@ mod tests {
 
     #[test]
     fn help_lists_every_command_the_loop_handles() {
-        for cmd in ["/help", "/diff", "/apply", "/discard", "/verify", "/index", "/plan", "/reset", "/steps", "/quit"] {
+        for cmd in [
+            "/help", "/diff", "/apply", "/discard", "/verify", "/index", "/plan", "/reset",
+            "/steps", "/quit",
+        ] {
             assert!(HELP.contains(cmd), "help text is missing {cmd}");
         }
     }

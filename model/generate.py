@@ -44,7 +44,7 @@ def build(cfg, device):
     raise ValueError(name)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def generate(model, tok, prompt, device, n=400, temp=0.9, top_k=50, top_p=0.0,
              rep_pen=1.15, rep_window=128):
     """Autoregressive sampling with temperature, top-k/top-p and a repetition penalty.
@@ -56,18 +56,23 @@ def generate(model, tok, prompt, device, n=400, temp=0.9, top_k=50, top_p=0.0,
     lower it as the model gets better rather than leaving it cranked up.
     """
     model.eval()
-    idx = torch.tensor([tok.encode(prompt)], device=device)
+    idx = torch.tensor([tok.encode(prompt)], dtype=torch.long, device=device)
     if idx.numel() == 0:
         idx = torch.zeros((1, 1), dtype=torch.long, device=device)
     start = idx.shape[1]
+    tokens = torch.empty((1, start + n), dtype=torch.long, device=device)
+    tokens[:, :start] = idx
+    length = start
     for _ in range(n):
-        cond = idx[:, -model.block_size:]
-        logits = model(cond)[0][:, -1, :].float()            # (1, vocab)
+        cond = tokens[:, max(0, length - model.block_size):length]
+        output = (model(cond, return_step_logits=False)
+                  if isinstance(model, DaedalusFullAdaptive) else model(cond))
+        logits = output[0][:, -1, :].float()                 # (1, vocab)
         if rep_pen != 1.0:
-            for t in set(idx[0, -rep_window:].tolist()):
-                # negative logits must be *multiplied* to be pushed down
-                logits[0, t] = (logits[0, t] / rep_pen if logits[0, t] > 0
-                                else logits[0, t] * rep_pen)
+            recent = torch.unique(tokens[0, max(0, length - rep_window):length])
+            selected = logits[0, recent]
+            logits[0, recent] = torch.where(selected > 0, selected / rep_pen,
+                                             selected * rep_pen)
         logits = logits / max(temp, 1e-6)
         if top_k:
             v, _ = torch.topk(logits, min(top_k, logits.shape[-1]))
@@ -77,8 +82,9 @@ def generate(model, tok, prompt, device, n=400, temp=0.9, top_k=50, top_p=0.0,
             cum = torch.cumsum(F.softmax(srt, -1), -1)
             drop = cum - F.softmax(srt, -1) > top_p         # keep the token that crosses p
             logits[0, si[0][drop[0]]] = -float("inf")
-        idx = torch.cat([idx, torch.multinomial(F.softmax(logits, -1), 1)], 1)
-    return prompt + tok.decode(idx[0, start:].tolist())
+        tokens[:, length:length + 1] = torch.multinomial(F.softmax(logits, -1), 1)
+        length += 1
+    return prompt + tok.decode(tokens[0, start:length].tolist())
 
 
 def resolve_config(ck, overrides=None):

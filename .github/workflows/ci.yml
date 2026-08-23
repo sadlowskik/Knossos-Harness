@@ -25,6 +25,9 @@ jobs:
       - name: Fast suite
         working-directory: model
         run: pytest -q
+      - name: Audit frozen evaluation suites
+        working-directory: model
+        run: python scripts/audit_suites.py --lock ../knossos-rs/cases/suite-lock.json
 
   rust:
     name: Knossos (Rust)
@@ -32,11 +35,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        working-directory: knossos-rs
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: knossos-rs
+        run: cargo clippy --all-targets --locked -- -D warnings
       - working-directory: knossos-rs
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
-        run: cargo test
+        run: cargo test --all-targets --locked
 
   conformance:
     name: ACP conformance
@@ -63,8 +74,8 @@ jobs:
   # live checks cannot: the model server is on the LAN, so no hosted runner can
   # reach it. That is what a self-hosted runner is for here -- not speed.
   #
-  # Skipped entirely unless a runner labelled `knossos-live` is online, so the
-  # rest of CI is unaffected when it is not. When it *is* online the STRICT
+  # Skipped unless KNOSSOS_LIVE_ENABLED=1 and a `knossos-live` runner is ready,
+  # so the rest of CI is unaffected when it is not. When enabled the STRICT
   # variables make an unconfigured skip a failure, which is the whole point:
   # §2.5 was about tests that silently do not run.
   live:
@@ -72,7 +83,7 @@ jobs:
     runs-on: [self-hosted, knossos-live]
     # Pull requests from forks must not reach a self-hosted runner: a workflow
     # is code, and this one would execute it on a personal machine.
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.KNOSSOS_LIVE_ENABLED == '1'
     steps:
       - uses: actions/checkout@v4
       - name: Knossos against a live provider

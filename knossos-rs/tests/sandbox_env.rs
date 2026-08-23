@@ -86,16 +86,29 @@ async fn a_grandchild_does_not_outlive_the_process_that_was_killed() {
     // Control. Without this the real assertion below could pass because the
     // batch file never worked, rather than because the kill worked.
     let control = sandbox
-        .run_bounded("cmd", &["/c", "grandchild.bat"], dir, Duration::from_secs(60))
+        .run_bounded(
+            "cmd",
+            &["/c", "grandchild.bat"],
+            dir,
+            Duration::from_secs(60),
+        )
         .await
         .unwrap();
-    assert!(!control.timed_out, "the control run should finish on its own");
+    assert!(
+        !control.timed_out,
+        "the control run should finish on its own"
+    );
     assert!(marker.exists(), "the control run must produce the marker");
     std::fs::remove_file(&marker).unwrap();
 
     // The real case: kill the parent well before the grandchild is done.
     let finished = sandbox
-        .run_bounded("cmd", &["/c", "parent.bat"], dir, Duration::from_millis(700))
+        .run_bounded(
+            "cmd",
+            &["/c", "parent.bat"],
+            dir,
+            Duration::from_millis(700),
+        )
         .await
         .unwrap();
     assert!(finished.timed_out, "should have hit the deadline");
@@ -130,7 +143,10 @@ fn exfiltrate() {
     .unwrap();
 
     let mut cmd = tokio::process::Command::new("cargo");
-    cmd.arg("test").arg("--").arg("--nocapture").current_dir(tmp.path());
+    cmd.arg("test")
+        .arg("--")
+        .arg("--nocapture")
+        .current_dir(tmp.path());
     Sandbox::default().apply(&mut cmd);
 
     let out = cmd.output().await.expect("cargo is not on PATH");

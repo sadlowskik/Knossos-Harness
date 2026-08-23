@@ -28,7 +28,9 @@ const LIMIT: Duration = Duration::from_secs(20);
 
 fn fixture(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
     copy_tree(&src, dir.path()).unwrap();
     dir
 }
@@ -109,7 +111,13 @@ impl Server {
             Emitter::new(event_tx),
         ));
 
-        Server { lines: line_tx, events: event_rx, handle, _dir: dir, root }
+        Server {
+            lines: line_tx,
+            events: event_rx,
+            handle,
+            _dir: dir,
+            root,
+        }
     }
 
     fn send(&self, raw: &str) {
@@ -189,7 +197,10 @@ async fn a_word_typed_during_a_task_reaches_the_run_without_stopping_it() {
     );
 
     let trace = std::fs::read_to_string(server.root.join("trace.jsonl")).unwrap();
-    assert!(trace.contains("interjected"), "the run never saw it:\n{trace}");
+    assert!(
+        trace.contains("interjected"),
+        "the run never saw it:\n{trace}"
+    );
     assert!(trace.contains("call it quadruple instead"), "{trace}");
 }
 
@@ -286,7 +297,10 @@ async fn the_loop_answers_a_command_and_returns_to_idle() {
     server.send(r#"{"cmd":"index"}"#);
     let (_, seen) = server.until(is_idle).await;
 
-    assert!(seen.iter().any(|e| matches!(e, Event::Index { .. })), "{seen:?}");
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Index { .. })),
+        "{seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -296,12 +310,18 @@ async fn a_bad_command_is_reported_and_the_loop_survives() {
 
     server.send("not json at all");
     let (_, seen) = server.until(is_idle).await;
-    assert!(seen.iter().any(|e| matches!(e, Event::Error { .. })), "{seen:?}");
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Error { .. })),
+        "{seen:?}"
+    );
 
     // Still answering afterwards.
     server.send(r#"{"cmd":"index"}"#);
     let (_, seen) = server.until(is_idle).await;
-    assert!(seen.iter().any(|e| matches!(e, Event::Index { .. })), "{seen:?}");
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Index { .. })),
+        "{seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -325,7 +345,9 @@ async fn a_consequential_call_asks_before_it_writes() {
     let (request, _) = server
         .until(|e| matches!(e, Event::PermissionRequest { .. }))
         .await;
-    let Event::PermissionRequest { id, tool, .. } = request else { unreachable!() };
+    let Event::PermissionRequest { id, tool, .. } = request else {
+        unreachable!()
+    };
     assert_eq!(tool, "write_file");
     assert!(
         !server.root.join("src/added.rs").exists(),
@@ -335,7 +357,10 @@ async fn a_consequential_call_asks_before_it_writes() {
     server.send(&format!(r#"{{"cmd":"permission","id":{id},"allow":true}}"#));
     server.until(is_idle).await;
 
-    assert!(server.root.join("src/added.rs").exists(), "approval did not let it through");
+    assert!(
+        server.root.join("src/added.rs").exists(),
+        "approval did not let it through"
+    );
 }
 
 #[tokio::test]
@@ -367,12 +392,19 @@ async fn refusing_a_call_prevents_it_and_the_run_continues() {
     let (request, _) = server
         .until(|e| matches!(e, Event::PermissionRequest { .. }))
         .await;
-    let Event::PermissionRequest { id, .. } = request else { unreachable!() };
-    server.send(&format!(r#"{{"cmd":"permission","id":{id},"allow":false}}"#));
+    let Event::PermissionRequest { id, .. } = request else {
+        unreachable!()
+    };
+    server.send(&format!(
+        r#"{{"cmd":"permission","id":{id},"allow":false}}"#
+    ));
 
     let (_, seen) = server.until(is_idle).await;
 
-    assert!(!server.root.join("src/nope.rs").exists(), "a refused write still happened");
+    assert!(
+        !server.root.join("src/nope.rs").exists(),
+        "a refused write still happened"
+    );
     assert!(
         seen.iter().any(|e| matches!(e, Event::Outcome { .. })),
         "the run should have finished rather than aborting: {seen:?}"
@@ -397,7 +429,9 @@ async fn a_read_is_never_put_to_the_user() {
     let (_, seen) = server.until(is_idle).await;
 
     assert!(
-        !seen.iter().any(|e| matches!(e, Event::PermissionRequest { .. })),
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::PermissionRequest { .. })),
         "a read should not have been put to the user: {seen:?}"
     );
 }
@@ -429,14 +463,19 @@ async fn the_loop_keeps_reading_while_a_permission_is_outstanding() {
     let (request, _) = server
         .until(|e| matches!(e, Event::PermissionRequest { .. }))
         .await;
-    let Event::PermissionRequest { id, .. } = request else { unreachable!() };
+    let Event::PermissionRequest { id, .. } = request else {
+        unreachable!()
+    };
 
     // Arrives while the dispatch loop is inside `talos.run`.
     server.send("   ");
     server.send(&format!(r#"{{"cmd":"permission","id":{id},"allow":true}}"#));
 
     let (_, seen) = server.until(is_idle).await;
-    assert!(seen.iter().any(|e| matches!(e, Event::Outcome { .. })), "{seen:?}");
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Outcome { .. })),
+        "{seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -450,7 +489,10 @@ async fn a_reply_to_an_unknown_request_is_ignored() {
     server.send(r#"{"cmd":"index"}"#);
 
     let (_, seen) = server.until(is_idle).await;
-    assert!(seen.iter().any(|e| matches!(e, Event::Index { .. })), "{seen:?}");
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Index { .. })),
+        "{seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -486,7 +528,10 @@ async fn a_disconnected_front_end_denies_rather_than_hanging() {
     }));
 
     let finished = tokio::time::timeout(LIMIT, server.handle).await;
-    assert!(finished.is_ok(), "the server hung after the front end disconnected");
+    assert!(
+        finished.is_ok(),
+        "the server hung after the front end disconnected"
+    );
     assert!(
         !server.root.join("src/ghost.rs").exists(),
         "a request nobody answered must not be treated as approval"
@@ -521,10 +566,15 @@ async fn a_front_end_that_never_declares_is_not_gated() {
     let (_, seen) = server.until(is_idle).await;
 
     assert!(
-        !seen.iter().any(|e| matches!(e, Event::PermissionRequest { .. })),
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::PermissionRequest { .. })),
         "an undeclared front end was asked something it cannot answer: {seen:?}"
     );
-    assert!(server.root.join("src/added.rs").exists(), "the run did not complete");
+    assert!(
+        server.root.join("src/added.rs").exists(),
+        "the run did not complete"
+    );
 }
 
 #[tokio::test]
@@ -546,7 +596,12 @@ async fn declaring_permissions_false_is_the_same_as_not_declaring() {
 
     let (_, seen) = server.until(is_idle).await;
 
-    assert!(!seen.iter().any(|e| matches!(e, Event::PermissionRequest { .. })), "{seen:?}");
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::PermissionRequest { .. })),
+        "{seen:?}"
+    );
 }
 
 #[tokio::test]
@@ -588,9 +643,14 @@ async fn every_dispatched_command_ends_with_exactly_one_idle() {
         "an Idle arrived before the command finished: {before:?}"
     );
 
-    let Event::PermissionRequest { id, .. } = request else { unreachable!() };
+    let Event::PermissionRequest { id, .. } = request else {
+        unreachable!()
+    };
     server.send(&format!(r#"{{"cmd":"permission","id":{id},"allow":true}}"#));
 
     let (_, after) = server.until(is_idle).await;
-    assert!(!after.iter().any(is_idle), "more than one Idle for one command: {after:?}");
+    assert!(
+        !after.iter().any(is_idle),
+        "more than one Idle for one command: {after:?}"
+    );
 }

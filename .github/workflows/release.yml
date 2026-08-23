@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            binary: daedalus
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            binary: daedalus.exe
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            binary: daedalus
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: knossos-rs -> target
+      - name: Build Daedalus
+        working-directory: knossos-rs
+        run: cargo build --release --locked --bin daedalus --target ${{ matrix.target }}
+      - name: Package release
+        run: >-
+          python release/package.py
+          --binary knossos-rs/target/${{ matrix.target }}/release/${{ matrix.binary }}
+          --version ${{ github.ref_name }}
+          --platform ${{ matrix.platform }}
+          --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daedalus-${{ matrix.platform }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: daedalus-*
+          merge-multiple: true
+      - name: Create aggregate checksum
+        working-directory: dist
+        run: sha256sum ./*.zip > SHA256SUMS
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          --repo "${GITHUB_REPOSITORY}"
+          --title "Daedalus ${GITHUB_REF_NAME}"
+          --prerelease
+          --generate-notes
+          dist/*.zip
+          dist/*.zip.sha256
+          dist/SHA256SUMS

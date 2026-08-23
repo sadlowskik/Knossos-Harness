@@ -74,7 +74,11 @@ pub struct Lethe {
 
 impl Default for Lethe {
     fn default() -> Self {
-        Lethe { max_tokens: 24_000, keep_recent: 6, pin_opening: 1 }
+        Lethe {
+            max_tokens: 24_000,
+            keep_recent: 6,
+            pin_opening: 1,
+        }
     }
 }
 
@@ -253,7 +257,11 @@ mod tests {
     #[test]
     fn an_over_budget_conversation_is_brought_within_budget() {
         let mut messages = conversation();
-        let lethe = Lethe { max_tokens: 2_000, keep_recent: 1, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 2_000,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         assert!(lethe.compact(&mut messages));
         assert!(estimate_tokens(&messages) <= 2_000);
@@ -265,22 +273,29 @@ mod tests {
         // a hard provider error, not a degradation, so pairing is preserved by
         // construction rather than by a check.
         let mut messages = conversation();
-        let before: Vec<(usize, usize)> =
-            messages.iter().map(|m| (m.content.len(), 0)).collect();
-        let lethe = Lethe { max_tokens: 500, keep_recent: 1, pin_opening: 1 };
+        let before: Vec<(usize, usize)> = messages.iter().map(|m| (m.content.len(), 0)).collect();
+        let lethe = Lethe {
+            max_tokens: 500,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
 
         assert_eq!(messages.len(), 4);
-        let after: Vec<(usize, usize)> =
-            messages.iter().map(|m| (m.content.len(), 0)).collect();
+        let after: Vec<(usize, usize)> = messages.iter().map(|m| (m.content.len(), 0)).collect();
         assert_eq!(before, after);
     }
 
     #[test]
     fn every_tool_use_keeps_its_result() {
         let mut messages = conversation();
-        Lethe { max_tokens: 500, keep_recent: 1, pin_opening: 1 }.compact(&mut messages);
+        Lethe {
+            max_tokens: 500,
+            keep_recent: 1,
+            pin_opening: 1,
+        }
+        .compact(&mut messages);
 
         let uses: Vec<&str> = messages
             .iter()
@@ -312,7 +327,11 @@ mod tests {
             name: "write_file".into(),
             input: serde_json::json!({ "path": "a.rs", "content": big(50_000) }),
         }];
-        let lethe = Lethe { max_tokens: 100, keep_recent: 1, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 100,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
 
@@ -329,7 +348,11 @@ mod tests {
         let mut messages = conversation();
         messages[0] = Message::user_text(format!("## Task\n{}", big(100_000)));
         let original = messages[0].clone();
-        let lethe = Lethe { max_tokens: 500, keep_recent: 1, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 500,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
 
@@ -346,7 +369,10 @@ mod tests {
         // early and the bound does not apply exactly when it is first needed.
         let mut messages = conversation();
         assert!(messages.len() < Lethe::default().keep_recent);
-        let lethe = Lethe { max_tokens: 2_000, ..Lethe::default() };
+        let lethe = Lethe {
+            max_tokens: 2_000,
+            ..Lethe::default()
+        };
 
         assert!(lethe.compact(&mut messages));
         assert!(estimate_tokens(&messages) <= 2_000);
@@ -364,7 +390,11 @@ mod tests {
             Message::user_text("recent 2"),
         ];
         let tail = messages[3].clone();
-        let lethe = Lethe { max_tokens: 2_000, keep_recent: 2, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 2_000,
+            keep_recent: 2,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
 
@@ -376,7 +406,12 @@ mod tests {
     fn the_recent_tail_is_untouched() {
         let mut messages = conversation();
         let tail = messages.last().unwrap().clone();
-        Lethe { max_tokens: 500, keep_recent: 1, pin_opening: 1 }.compact(&mut messages);
+        Lethe {
+            max_tokens: 500,
+            keep_recent: 1,
+            pin_opening: 1,
+        }
+        .compact(&mut messages);
 
         assert_eq!(messages.last().unwrap(), &tail);
     }
@@ -393,7 +428,11 @@ mod tests {
     #[test]
     fn compaction_is_idempotent_once_it_fits() {
         let mut messages = conversation();
-        let lethe = Lethe { max_tokens: 2_000, keep_recent: 1, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 2_000,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
         let once = messages.clone();
@@ -406,9 +445,14 @@ mod tests {
     fn nothing_left_to_take_terminates_rather_than_spinning() {
         // Many tiny messages: the floor this strategy accepts in exchange for
         // never being able to break a pair.
-        let mut messages: Vec<Message> =
-            (0..500).map(|i| Message::user_text(format!("turn {i}"))).collect();
-        let lethe = Lethe { max_tokens: 1, keep_recent: 1, pin_opening: 1 };
+        let mut messages: Vec<Message> = (0..500)
+            .map(|i| Message::user_text(format!("turn {i}")))
+            .collect();
+        let lethe = Lethe {
+            max_tokens: 1,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages);
 
@@ -423,7 +467,11 @@ mod tests {
             content: "é".repeat(50_000),
             is_error: false,
         }];
-        let lethe = Lethe { max_tokens: 500, keep_recent: 1, pin_opening: 1 };
+        let lethe = Lethe {
+            max_tokens: 500,
+            keep_recent: 1,
+            pin_opening: 1,
+        };
 
         lethe.compact(&mut messages); // panics on a bad boundary
 
@@ -436,11 +484,19 @@ mod tests {
     #[test]
     fn the_marker_says_something_was_dropped() {
         let mut messages = conversation();
-        Lethe { max_tokens: 2_000, keep_recent: 1, pin_opening: 1 }.compact(&mut messages);
+        Lethe {
+            max_tokens: 2_000,
+            keep_recent: 1,
+            pin_opening: 1,
+        }
+        .compact(&mut messages);
 
         match &messages[2].content[0] {
             Content::ToolResult { content, .. } => {
-                assert!(content.contains("elided"), "the model must be told, not lied to");
+                assert!(
+                    content.contains("elided"),
+                    "the model must be told, not lied to"
+                );
             }
             other => panic!("became {other:?}"),
         }

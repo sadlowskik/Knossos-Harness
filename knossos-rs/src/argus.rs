@@ -69,8 +69,15 @@ const PROSE_EXTENSIONS: &[&str] = &["md", "toml"];
 /// Directories never worth descending. `.gitignore` covers most of these in a
 /// real repository and none of them in a fresh one, so both are applied.
 const EXCLUDED_DIRS: &[&str] = &[
-    ".git", ".argus", "target", "node_modules", "__pycache__", ".venv", "venv",
-    "build", "dist",
+    ".git",
+    ".argus",
+    "target",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
 ];
 
 /// BM25 (Robertson & Walker 1994). `K1` saturates term frequency: the 50th
@@ -312,7 +319,10 @@ pub fn render(hits: &[Retrieved]) -> Context {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    Context { text, hits: hits.to_vec() }
+    Context {
+        text,
+        hits: hits.to_vec(),
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -360,11 +370,21 @@ impl Argus {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         let adapter = adapter_for(&root);
-        Argus { root, adapter, files: BTreeMap::new(), lsp: None }
+        Argus {
+            root,
+            adapter,
+            files: BTreeMap::new(),
+            lsp: None,
+        }
     }
 
     pub fn with_adapter(root: impl Into<PathBuf>, adapter: Box<dyn LanguageAdapter>) -> Self {
-        Argus { root: root.into(), adapter, files: BTreeMap::new(), lsp: None }
+        Argus {
+            root: root.into(),
+            adapter,
+            files: BTreeMap::new(),
+            lsp: None,
+        }
     }
 
     /// Attach a language server, for the questions name matching cannot answer.
@@ -458,8 +478,12 @@ impl Argus {
             report.parsed += 1;
         }
 
-        let gone: Vec<String> =
-            self.files.keys().filter(|k| !seen.contains(*k)).cloned().collect();
+        let gone: Vec<String> = self
+            .files
+            .keys()
+            .filter(|k| !seen.contains(*k))
+            .cloned()
+            .collect();
         report.removed = gone.len();
         for key in gone {
             self.files.remove(&key);
@@ -514,7 +538,10 @@ impl Argus {
     }
 
     pub fn symbols_in(&self, path: &str) -> Vec<&Symbol> {
-        self.files.get(path).map(|r| r.symbols.iter().collect()).unwrap_or_default()
+        self.files
+            .get(path)
+            .map(|r| r.symbols.iter().collect())
+            .unwrap_or_default()
     }
 
     /// Files that actually reference `symbol`, via the language server.
@@ -553,8 +580,14 @@ impl Argus {
     /// A path inside the workspace, as the forward-slashed key `files` uses.
     fn relative(&self, path: &Path) -> Option<String> {
         let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let root = self.root.canonicalize().unwrap_or_else(|_| self.root.clone());
-        let rel = resolved.strip_prefix(&root).or_else(|_| path.strip_prefix(&self.root)).ok()?;
+        let root = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        let rel = resolved
+            .strip_prefix(&root)
+            .or_else(|_| path.strip_prefix(&self.root))
+            .ok()?;
         Some(rel.to_string_lossy().replace('\\', "/"))
     }
 
@@ -573,7 +606,9 @@ impl Argus {
             .iter()
             .filter(|(rel, _)| rel.as_str() != path)
             .filter(|(_, rec)| {
-                rec.imports.iter().any(|imp| contains_run(&import_segments(imp), &target))
+                rec.imports
+                    .iter()
+                    .any(|imp| contains_run(&import_segments(imp), &target))
             })
             .map(|(rel, _)| rel.clone())
             .collect()
@@ -594,7 +629,10 @@ impl Argus {
         df.into_iter()
             .map(|(term, count)| {
                 let c = count as f64;
-                (term.to_string(), (1.0 + (n_docs - c + 0.5) / (c + 0.5)).ln())
+                (
+                    term.to_string(),
+                    (1.0 + (n_docs - c + 0.5) / (c + 0.5)).ln(),
+                )
             })
             .collect()
     }
@@ -675,7 +713,11 @@ impl Argus {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
         scored
     }
 
@@ -727,7 +769,14 @@ impl Argus {
                 .collect();
 
             if located.is_empty() {
-                packer.take(&rel, 1, rec.n_lines.min(60), score, format!("bm25 {score:.2} in {rel}"), None);
+                packer.take(
+                    &rel,
+                    1,
+                    rec.n_lines.min(60),
+                    score,
+                    format!("bm25 {score:.2} in {rel}"),
+                    None,
+                );
                 continue;
             }
 
@@ -773,7 +822,11 @@ impl Argus {
                     let Some(rec) = self.files.get(&neighbour) else {
                         continue;
                     };
-                    if let Some(head) = rec.located().into_iter().find(|l| l.symbol.kind != SymbolKind::Import) {
+                    if let Some(head) = rec
+                        .located()
+                        .into_iter()
+                        .find(|l| l.symbol.kind != SymbolKind::Import)
+                    {
                         packer.take(
                             &neighbour,
                             head.symbol.line,
@@ -812,7 +865,9 @@ impl Argus {
     }
 
     pub fn save(&self, path: Option<&Path>) -> Result<PathBuf> {
-        let target = path.map(Path::to_path_buf).unwrap_or_else(|| self.default_index_path());
+        let target = path
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.default_index_path());
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -832,7 +887,9 @@ impl Argus {
     /// disappeared. A *wrong-schema* index is a different matter, and is refused
     /// rather than half-loaded — see `INDEX_VERSION`.
     pub fn load(&mut self, path: Option<&Path>) -> Result<bool> {
-        let target = path.map(Path::to_path_buf).unwrap_or_else(|| self.default_index_path());
+        let target = path
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.default_index_path());
         let Ok(raw) = std::fs::read_to_string(&target) else {
             return Ok(false);
         };
@@ -1030,7 +1087,11 @@ fn normalize_import(name: &str) -> Option<String> {
             break;
         }
     }
-    rest = rest.strip_prefix("use")?.trim().trim_end_matches(';').trim();
+    rest = rest
+        .strip_prefix("use")?
+        .trim()
+        .trim_end_matches(';')
+        .trim();
     (!rest.is_empty()).then(|| rest.to_string())
 }
 
@@ -1074,18 +1135,28 @@ fn contains_run(haystack: &[String], needle: &[String]) -> bool {
 
 fn dedup(items: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
-    items.into_iter().filter(|i| seen.insert(i.clone())).collect()
+    items
+        .into_iter()
+        .filter(|i| seen.insert(i.clone()))
+        .collect()
 }
 
 fn extension_of(path: &Path) -> Option<String> {
-    path.extension().and_then(|e| e.to_str()).map(str::to_lowercase)
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
 }
 
 /// Repository-relative with forward slashes, so an index written on Windows
 /// reads the same as one written anywhere else.
 fn relative_posix(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
-    Some(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+    Some(
+        rel.components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
 }
 
 #[cfg(test)]
@@ -1096,7 +1167,11 @@ mod tests {
     fn repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("src/alpha.rs"),
             "use std::collections::HashMap;\n\
@@ -1144,7 +1219,10 @@ mod tests {
         let dir = repo();
         let argus = scanned(&dir);
         let hits = argus.lookup("forward");
-        let mut files: Vec<String> = hits.iter().map(|h| h.symbol.file.display().to_string()).collect();
+        let mut files: Vec<String> = hits
+            .iter()
+            .map(|h| h.symbol.file.display().to_string())
+            .collect();
         files.sort();
         assert_eq!(files, vec!["src/alpha.rs", "src/beta.rs"]);
     }
@@ -1154,14 +1232,20 @@ mod tests {
     fn a_method_carries_its_impl_as_its_qualified_name() {
         let dir = repo();
         let argus = scanned(&dir);
-        let mut names: Vec<String> =
-            argus.lookup("forward").iter().map(Located::qualname).collect();
+        let mut names: Vec<String> = argus
+            .lookup("forward")
+            .iter()
+            .map(Located::qualname)
+            .collect();
         names.sort();
         assert_eq!(names, vec!["Expert::forward", "Router::forward"]);
 
         let qualified = argus.lookup("Router::forward");
         assert_eq!(qualified.len(), 1);
-        assert_eq!(qualified[0].symbol.file.display().to_string(), "src/alpha.rs");
+        assert_eq!(
+            qualified[0].symbol.file.display().to_string(),
+            "src/alpha.rs"
+        );
     }
 
     #[test]
@@ -1173,11 +1257,19 @@ mod tests {
         assert_eq!(again.parsed, 0, "{again}");
         assert_eq!(again.unchanged, again.scanned);
 
-        std::fs::write(dir.path().join("src/beta.rs"), "pub fn only_thing() -> u32 { 1 }\n").unwrap();
+        std::fs::write(
+            dir.path().join("src/beta.rs"),
+            "pub fn only_thing() -> u32 { 1 }\n",
+        )
+        .unwrap();
         let after = argus.scan();
         assert_eq!(after.parsed, 1, "{after}");
         assert_eq!(
-            argus.symbols_in("src/beta.rs").iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            argus
+                .symbols_in("src/beta.rs")
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["only_thing"]
         );
     }
@@ -1215,10 +1307,17 @@ mod tests {
         .unwrap();
 
         let argus = scanned(&dir);
-        let names: Vec<&str> =
-            argus.symbols_in("lib.rs").iter().map(|s| s.name.as_str()).collect();
+        let names: Vec<&str> = argus
+            .symbols_in("lib.rs")
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
         assert!(names.contains(&"real"), "{names:?}");
-        for ghost in ["ghost_in_a_string", "ghost_in_a_line_comment", "ghost_in_the_comment"] {
+        for ghost in [
+            "ghost_in_a_string",
+            "ghost_in_a_line_comment",
+            "ghost_in_the_comment",
+        ] {
             assert!(!names.contains(&ghost), "{ghost} is not a real definition");
         }
     }
@@ -1302,7 +1401,10 @@ mod tests {
         let argus = scanned(&dir);
         let defs = &argus.files()["thing.rs"].defs;
         assert!(defs.contains_key("widget"), "{defs:?}");
-        assert!(!defs.contains_key("sprocket"), "a test name is not a definition: {defs:?}");
+        assert!(
+            !defs.contains_key("sprocket"),
+            "a test name is not a definition: {defs:?}"
+        );
         assert!(!defs.contains_key("verification"), "{defs:?}");
     }
 
@@ -1313,7 +1415,11 @@ mod tests {
         let hits = argus.retrieve("fix the balance method", 4000, 1);
         assert!(!hits.is_empty(), "expected at least one slice");
         assert_eq!(hits[0].symbol.as_deref(), Some("Router::balance"));
-        assert!(hits[0].reason.contains("exact symbol match"), "{}", hits[0].reason);
+        assert!(
+            hits[0].reason.contains("exact symbol match"),
+            "{}",
+            hits[0].reason
+        );
     }
 
     #[test]
@@ -1355,7 +1461,11 @@ mod tests {
     fn the_index_survives_a_save_load_round_trip() {
         let dir = repo();
         let argus = scanned(&dir);
-        let before: Vec<String> = argus.lookup("forward").iter().map(Located::reference).collect();
+        let before: Vec<String> = argus
+            .lookup("forward")
+            .iter()
+            .map(Located::reference)
+            .collect();
         let record = &argus.files()["src/alpha.rs"];
         assert!(
             !record.idents.is_empty() && !record.defs.is_empty() && !record.path_terms.is_empty(),
@@ -1368,10 +1478,17 @@ mod tests {
         let mut restored = Argus::new(dir.path());
         assert!(restored.load(Some(&path)).unwrap());
 
-        let after: Vec<String> = restored.lookup("forward").iter().map(Located::reference).collect();
+        let after: Vec<String> = restored
+            .lookup("forward")
+            .iter()
+            .map(Located::reference)
+            .collect();
         assert_eq!(after, before);
         assert_eq!(restored.files()["src/alpha.rs"].defs, record.defs);
-        assert_eq!(restored.files()["src/alpha.rs"].path_terms, record.path_terms);
+        assert_eq!(
+            restored.files()["src/alpha.rs"].path_terms,
+            record.path_terms
+        );
 
         // Nothing changed on disk, so a scan of a restored index re-parses nothing.
         assert_eq!(restored.scan().parsed, 0);
@@ -1390,8 +1507,14 @@ mod tests {
         std::fs::write(&path, serde_json::to_string(&blob).unwrap()).unwrap();
 
         let mut stale = Argus::new(dir.path());
-        assert!(!stale.load(Some(&path)).unwrap(), "an older schema must be refused");
-        assert!(stale.files().is_empty(), "nothing should be half-loaded from a refused index");
+        assert!(
+            !stale.load(Some(&path)).unwrap(),
+            "an older schema must be refused"
+        );
+        assert!(
+            stale.files().is_empty(),
+            "nothing should be half-loaded from a refused index"
+        );
     }
 
     #[test]
@@ -1426,7 +1549,10 @@ mod tests {
         argus.scan();
 
         let record = &argus.files()["src/broken.rs"];
-        assert!(!record.idents.is_empty(), "a broken file must stay findable");
+        assert!(
+            !record.idents.is_empty(),
+            "a broken file must stay findable"
+        );
     }
 
     #[test]
@@ -1436,13 +1562,19 @@ mod tests {
         assert!(bag.contains_key("verify"), "{bag:?}");
         assert!(bag.contains_key("token"), "{bag:?}");
         for noise in ["pub", "fn", "self", "bool"] {
-            assert!(!bag.contains_key(noise), "{noise} should be a stop word: {bag:?}");
+            assert!(
+                !bag.contains_key(noise),
+                "{noise} should be a stop word: {bag:?}"
+            );
         }
     }
 
     #[test]
     fn a_module_path_names_the_directory_for_mod_rs_and_nothing_for_a_crate_root() {
-        assert_eq!(module_path("src/oracle/diagnostics.rs"), vec!["oracle", "diagnostics"]);
+        assert_eq!(
+            module_path("src/oracle/diagnostics.rs"),
+            vec!["oracle", "diagnostics"]
+        );
         assert_eq!(module_path("src/oracle/mod.rs"), vec!["oracle"]);
         assert!(module_path("src/lib.rs").is_empty());
         assert!(module_path("src/main.rs").is_empty());

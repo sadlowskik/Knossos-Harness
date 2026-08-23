@@ -4,18 +4,39 @@ Scope: the agentic harness only. `model/daedalus/` (the model architecture) appe
 here only as the engine slot's other side; `editor/` (a git submodule),
 `node_modules/` and `.claude/worktrees/` are out of scope entirely.
 
-State documented: **the working tree of 2026-07-28**, branch `main`, including
-uncommitted modifications and untracked files. Every `file:line` below was
-re-derived from the current tree in this pass — the previous version of this
-document had drifted badly enough to produce wrong findings downstream, and none
-of its anchors were carried forward on trust.
+State documented: **the working tree at HEAD `d37739d` (2026-07-30), branch
+`fix/wire-delegation-constitution-ariadne`, clean tree** (this branch is ahead of
+`main`; `main` does not yet carry the delegation/constitution wiring or the Rust
+ports below).
 
-Verified counts as of this pass: **772 Python tests collected** (768 selected, 4
-deselected — `python -m pytest --collect-only -q`), **174 Rust `#[test]`/
-`#[tokio::test]` attributes** across `src/` and `tests/`, **22 deterministic
-conformance checks + 2 live** (`conformance/run.mjs`), **28 retrieval eval cases**
-(`evalset.CASES`), **12 built-in coding-eval cases** (5 core + 7 hard,
-`codeval.CODING_CASES`).
+> **2026-08-15 re-verification pass.** Sections §§1–11 were written on 2026-07-28/29
+> and their `file:line` anchors were re-derived *then*. This pass re-verified the
+> component inventory, entry points, wiring, and cross-language parity — and found
+> two large bodies of work landed **after** that pass, which §§1–11 predate:
+>
+> 1. **A containment layer** (commit `e2ab40a`, 2026-07-29): `sandbox.py`,
+>    `hooks.py`, `interject.py` and Rust mirrors `sandbox.rs`, `hooks.rs`,
+>    `interject.rs`, `resilience.rs`. None appear in the §2 maps. Documented below.
+> 2. **A Rust porting spree** (commits through `3411fa7`, 2026-07-30): Rust gained
+>    `argus.rs` (1467 lines), `gate.rs`, `lsp.rs`, `mcp.rs`, `jsonrpc.rs`,
+>    `delegate.rs`, `acp.rs`, and an `acp` CLI subcommand. **This invalidates the
+>    §1 framing of Rust as "CLI-only, cargo-ladder, ~4,700 lines" and the many
+>    "absent in Rust" rows in §9.1** — Rust is now near-parity with Python. See the
+>    Drift note at the head of §11 and the corrected §2 Rust table.
+>
+> **Anchor caveat:** legacy anchors in §§1.1–1.2, §4, §5, §8 were *not* all
+> re-derived this pass. Several files grew since 07-29 (`talos.py` 1502→1600,
+> `acp.py` 1386→1511, `engine.py`→1692, `codeval.py` 1251→1488; `CONSEQUENTIAL`
+> moved `348→384`, `_permitted` `1446→1542`), so deep-section anchors may be off by
+> tens of lines. Re-grep before trusting a specific line number in those sections.
+
+Current sizes (this pass): **Python `model/knossos/` ~12,900 lines**, **Rust
+`knossos-rs/src/` ~18,655 lines** (both far above the §1 figures). Test/eval counts
+below are carried forward from the 07-29 pass and were **not** re-run:
+**772 Python tests collected** (768 selected, 4 deselected), **~174 Rust test
+attributes**, **22 deterministic conformance checks + 2 live** (`conformance/run.mjs`),
+**28 retrieval eval cases** (`evalset.CASES`), **12 built-in coding-eval cases**
+(`codeval.CODING_CASES`).
 
 One thing a reader should take before anything else:
 
@@ -38,9 +59,15 @@ that share a design but not a line of code:
 
 | | Python | Rust |
 |---|---|---|
-| Path | `model/knossos/` (~8 000 lines) | `knossos-rs/src/` (~4 700 lines) |
-| Front end | ACP server over stdio (`python -m knossos`) | CLI + NDJSON `serve` (`daedalus`) |
+| Path | `model/knossos/` (~12,900 lines) | `knossos-rs/src/` (~18,655 lines) |
+| Front end | ACP server over stdio (`python -m knossos`) | CLI: `chat`/`index`/`verify`/`plan`/`task`/`repl`/`serve` **and `acp`** (`daedalus`) — Rust now speaks ACP too (`acp.rs`) |
 | Target language | Python, Rust, Go, Node (adapter-detected, §5) | Rust only (cargo ladder) |
+
+*(2026-08-15: the earlier line figures — Python ~8,000, Rust ~4,700 — were from
+07-29 and are obsolete; Rust roughly quadrupled via the porting spree noted in the
+header. "Rust only, cargo ladder" is still true of the **verifier**, not of the
+front end: Rust now has an ACP server, Argus retrieval + gate, LSP, MCP, and
+delegation.)*
 
 ### The engine slot, concretely
 
@@ -200,8 +227,15 @@ Greek names are opaque by design. Plain descriptions below.
 | **mcp** | MCP client: spawns declared servers, handshakes, lists tools, wraps each as a `Tool`. | `mcp.py` (253) | `connect_all()`, `McpClient.connect/call_tool/close`, `McpTool` | `jsonrpc.Peer`, `tools.Tool` |
 | **evalset** | 28 labelled retrieval cases: 18 `repo_specific`, 6 `general`, 4 `negative`; 9 flagged `held_out=True`. | `evalset.py` (321) | `CASES`, `Case` | none |
 | **eval** | Retrieval recall, gate accuracy, raw-vs-harness answer scoring; in-sample and held-out reported separately. | `eval.py` (461) | `main()`, `grade_answer`, `grade_retrieval`, `report_gate/retrieval/answers` | `argus`, `engine`, `evalset`, `gate` |
+| **sandbox** *(new, 2026-07-29)* | Environment isolation for **every** subprocess the harness starts. `Sandbox.environ` scrubs the child env to an allowlist (`_BASE`/platform/toolchain/`_PREFIXES`) with a `_SECRET_MARKERS` deny check that wins first — so `pytest`/`cargo` cannot leak `ANTHROPIC_API_KEY` into stdout that folds back into the transcript. `offline=True` sets `CARGO_NET_OFFLINE`/`PIP_NO_INPUT`. `Sandbox.run` is the single subprocess entry: `shell=False`, `stdin=DEVNULL`, captured text, timeout. **Env isolation, not process isolation** (child can still write anywhere the account can, open sockets). | `sandbox.py` (176) | `Sandbox.admits/environ/withheld/run`, `DEFAULT` | stdlib. Used at `tools.py:462`, `oracle.py:562/609/671`, `codeval.py:1138` |
+| **hooks** *(new, 2026-07-29)* | Per-repo/per-run policy running **inside `ToolRegistry.dispatch`** (`tools.py:844`), so every dispatch path gets it, not just Talos. `before` can deny or rewrite; `after` observes only (a rewritten *result* would lie to the engine). Default installed hook is `ProtectPaths([".git"])` — refuses `write_file`/`edit_file`/`rename_symbol` under protected path components, closing the hole where the jail admits `.git/config` while `run_command` restricts `git` to read-only. Hooks are carried to child agents (`tools.py:815`). | `hooks.py` (153) | `Decision`, `ALLOW`, `deny`, `rewrite`, `Hook`, `ProtectPaths`, `before_chain` | stdlib |
+| **interject** *(new, 2026-07-29)* | A thread-safe queue for steering a running loop mid-task without cancelling it. Talos owns `self.interjections` (`talos.py:502`) and **drains it between steps** (`talos.py:1199`) — only at the step boundary, because mid-step the transcript can be an incomplete tool-call/result exchange a provider rejects. ACP exposes `session/interject` (`acp.py:736`) → `push`. `CAPACITY=64`. | `interject.py` (106) | `Interjections.push/drain/render/take_note`, `CAPACITY` | stdlib |
 
 ### Python scripts (`model/scripts/`)
+
+*(2026-08-15: this table lists a subset; the tree also contains `evaluate.py`,
+`fetch_evals.py`, `make_gec.py`, `prepare_corpus.py`, `trace_to_sft.py`, not
+inspected this pass.)*
 
 | Script | What it does | Lines |
 |---|---|---|
@@ -222,7 +256,7 @@ Greek names are opaque by design. Plain descriptions below.
 | **Lethe** | **New.** Bounds the message list *without removing or merging a message* — only the text inside `Text` and `ToolResult` blocks shrinks. `ToolUse.input` is never elided. Two phases: spare the recent tail, then include it if that was not enough. | `lethe.rs` (448) | `Lethe::compact(&mut [Message])`, `estimate_tokens()` |
 | **Metis** | Planner: tool call → prose → task-as-one-step. No truncated-JSON repair. | `metis.rs` (214) | `metis::plan()` |
 | **Talos** | Executor loop. Same structural rule as Python. Holds `lethe` (`talos.rs:92`) and an optional `approver` (`talos.rs:96`). | `talos.rs` (492) | `Talos::new/run/resume/diffs/apply/apply_hunks/discard`, `Approver` trait (`talos.rs:74`) |
-| **Ariadne** | Same decision procedure as Python's, **but defaults `12 / 6 / 2`** (`ariadne.rs:85`) where Python now ships `20 / 6 / 2`. |`ariadne.rs` (231) | `Ariadne::new/assess/pressure` |
+| **Ariadne** | Same decision procedure as Python's. **Converged to `20 / 6 / 2`** (`ariadne.rs:129`, `config.rs`, `main.rs` clap default) — the "12/6/2" this row previously stated is obsolete; convergence was the point of this branch. Bands are fractions of the ceiling; has the ported repeat/futility window (§9.1). | `ariadne.rs` (364) | `Ariadne::new/assess/pressure` |
 | **Oracle** | Tier 0 = tree-sitter parse; tiers 1..n from `LanguageAdapter::verify_commands()`; tier 4 = `oracle::judge`. Spawns with `kill_on_drop(true)` (`oracle/mod.rs:264`) under a 300 s timeout (`oracle/mod.rs:267`). | `oracle/` (860) | `Oracle::new/verify/verify_staged/root`, `judge()`, `Verdict`, `TierResult` |
 | **tools** | `ToolCtx` (jail + staging + hunk apply) and the tool set. | `tools/` (1 414) | `ToolCtx::{resolve,read,write,diffs,apply_staged,apply_hunks,discard_staged,staged_contents}`, `ToolRegistry::{standard,with_retrieval,dispatch,defs,is_consequential}`, `Tool` trait |
 | **diff** | Unified diff generation, per-hunk splitting, selective application. | `diff.rs` (373) | `diff_file()`, `apply_hunks()`, `render()` |
@@ -230,9 +264,29 @@ Greek names are opaque by design. Plain descriptions below.
 | **serve** | Long-lived NDJSON server. Router task owns the line stream; dispatch never sees a permission reply. | `serve.rs` (637) | `serve::run(talos, max_tokens, lines, emitter)`, `write_events`, `Command`, `Event`, `Emitter` |
 | **repl** | Interactive terminal session with slash commands and a `PromptApprover` (`repl.rs:47`). | `repl.rs` (349) | `repl::run()` |
 | **config** | Which engine, which workspace, what budgets. Canonicalises the root first. | `config.rs` (96) | `Config::build_engine/workspace_root` |
-| **main** | clap CLI: `chat`, `index`, `verify`, `plan`, `task`, `repl`, `serve`. | `main.rs` (402) | `main()`, `build_talos` (`main.rs:227`) |
+| **main** | clap CLI: `chat`, `index`, `verify`, `plan`, `task`, `repl`, `serve`, **and `acp`** (`main.rs:234`, `run_acp` at `:417`). | `main.rs` (703) | `main()`, `build_talos` (`main.rs:~227`), `run_acp` |
 
-No Python component is named Themis, Mnemosyne, or Scribe. See §9.
+**Ported/new since the 07-29 pass (added by this 2026-08-15 pass — inspected at
+module-header + wiring level, not line-by-line):**
+
+| Component | What it does | File (lines) | Wired at |
+|---|---|---|---|
+| **acp** | Full ACP server for the Rust harness (`initialize`/`session/new`/`prompt`/`cancel`/`update`/`request_permission`). stdout is the protocol; progress via `Session::with_sink`; cancel on the reader fast path. | `acp.rs` (681) | `main.rs:417` `run_acp` |
+| **argus** | Rust port of the repository index + retrieval, with save/load. | `argus.rs` (1467) | `main.rs:365` (build index, gate per turn) |
+| **gate** | Rust port of the retrieval gate. | `gate.rs` (547) | `main.rs:364` |
+| **lsp** | Rust LSP client. | `lsp.rs` (1030) | — |
+| **mcp** | Rust MCP client. | `mcp.rs` (888) | — |
+| **jsonrpc** | Rust JSON-RPC peer (reader/worker/fast-path), backing `acp`/`serve`. | `jsonrpc.rs` (871) | `acp.rs`, `serve.rs` |
+| **delegate** | Rust delegation / subagent tool, depth-capped. | `delegate.rs` (596) | `main.rs:357` (behind `--delegate`) |
+| **sandbox** | Mirror of Python `sandbox.py`: scrubbed subprocess env, secret deny-list, offline default. Lists deliberately differ (keeps a Rust toolchain working). | `sandbox.rs` (621) | shell/oracle subprocess sites |
+| **hooks** | Mirror of Python `hooks.py`: before/after policy in dispatch, `ProtectPaths`. | `hooks.rs` (280) | tool dispatch |
+| **interject** | Mirror of Python `interject.py`: between-step steering queue. | `interject.rs` (203) | talos loop |
+| **resilience** | **Rust-only.** Retry-with-backoff + circuit breaker around `engine::complete`, so a transient 429 does not end a 20-step run. No Python equivalent (Python reconstructs an `unreachable` flag from traces instead). | `resilience.rs` (439) | `config.rs`, `engine/error.rs` |
+
+No Python component is named Themis, Mnemosyne, or Scribe. See §9. **Note (2026-08-15):
+§9.1 predates the Rust ports above and still marks Argus, Gate, LSP, MCP, ACP,
+delegation, and `serve`/`repl` as "absent in Rust" — those rows are now stale; the
+components exist and are wired. See the Drift note at the head of §11.**
 
 ---
 
@@ -1210,8 +1264,29 @@ not quietly removed.
 
 ## 11. Documentation drift
 
+> **2026-08-15 drift note — this document vs. current code.** §§1–10 were written
+> 2026-07-28/29. Two commit sets landed after and are only partially reflected:
+>
+> - **Rust ports (`8b1b390`, `2550274`, `b7158a0`, `3411fa7`, through 2026-07-30):**
+>   §9.1 still lists Argus, Gate, LSP client, MCP client, ACP server, delegation, and
+>   NDJSON `serve`/`repl` as **"absent in Rust"**. All now exist and are wired
+>   (`argus.rs`, `gate.rs`, `lsp.rs`, `mcp.rs`, `acp.rs`, `delegate.rs`; `main.rs:357/364/417`).
+>   Treat every "absent"/"present-Python-only" row in §9.1 as **needing re-check** —
+>   the Rust harness is now near-parity. §2's Rust table is corrected above; §9.1's
+>   prose rows are **not** individually rewritten this pass.
+> - **Containment layer (`e2ab40a`, 2026-07-29):** `sandbox`, `hooks`, `interject`
+>   (Python + Rust mirrors) plus Rust-only `resilience`. §4/§5's account of subprocess
+>   spawning predates `sandbox` — every subprocess now goes through `sandbox.DEFAULT.run`
+>   (scrubbed env), and a `ProtectPaths([".git"])` hook now gates writes under `.git`.
+>   §4.4's "no OS-level sandbox" is still true (env isolation ≠ process isolation), but
+>   the credential-leak-via-env vector it did not mention is now closed by `sandbox`.
+> - **Ariadne convergence:** §2's Rust row said "12/6/2"; corrected to 20/6/2. §9.2 /
+>   §11-item-21 already reflected this.
+> - **Line-number drift:** several files grew; anchors in §§1.1–1.2, §4, §5, §8 may be
+>   off by tens of lines (see header caveat).
+
 Where the docs and the code disagree. In each case the **code** is what §§1–10
-describe. Re-verified against the current tree in this pass.
+describe. Rows 1–31 were re-verified 2026-07-29 (not all re-checked this pass).
 
 | # | Claim | Where | Reality |
 |---|---|---|---|
@@ -1250,6 +1325,15 @@ describe. Re-verified against the current tree in this pass.
 ---
 
 ## 12. Not covered by this pass
+
+> **2026-08-15 pass boundary.** This pass read in full only the new containment
+> modules (`sandbox.py`, `hooks.py`, `interject.py`) and confirmed their wiring; it
+> verified the Rust module inventory + `main.rs` wiring (`lib.rs`, subcommands,
+> `run_acp`, argus/gate/delegate use) at grep/header level. It did **not** re-read the
+> Rust ports (`argus.rs`, `gate.rs`, `lsp.rs`, `mcp.rs`, `jsonrpc.rs`, `acp.rs`,
+> `delegate.rs`, `resilience.rs`) line-by-line — their rows in §2 describe purpose and
+> wiring, not internal behaviour, and their `file:line` internals are unverified. It
+> did not re-run any test/eval suite. The paragraphs below describe the **07-29** pass.
 
 Read in full this pass: `talos.py`, `oracle.py`, `codeval.py` (docstrings, case
 metadata, and everything from `materialise` onward), `scripts/coding_eval.py`,

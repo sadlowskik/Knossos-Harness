@@ -22,7 +22,9 @@ use knossos::tools::{ToolCtx, ToolOutput, ToolRegistry};
 
 /// Copy a fixture crate into a temp dir so tests can edit it freely.
 fn fixture(name: &str) -> tempfile::TempDir {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
     let dir = tempfile::tempdir().unwrap();
     copy_tree(&src, dir.path()).unwrap();
     dir
@@ -57,10 +59,19 @@ impl Harness {
         let dir = fixture(name);
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let trace = root.join("trace.jsonl");
-        Harness { _dir: dir, root, trace }
+        Harness {
+            _dir: dir,
+            root,
+            trace,
+        }
     }
 
-    fn talos(&self, scripted: Vec<knossos::engine::Response>, max_steps: usize, dry: bool) -> Talos {
+    fn talos(
+        &self,
+        scripted: Vec<knossos::engine::Response>,
+        max_steps: usize,
+        dry: bool,
+    ) -> Talos {
         let mut ctx = ToolCtx::new(&self.root);
         if dry {
             ctx = ctx.dry_run();
@@ -79,7 +90,9 @@ impl Harness {
             SymbolIndex::build(&self.root).unwrap(),
             Themis::from_text("Be correct."),
             Ariadne::new(max_steps, max_steps.saturating_sub(1).max(1)),
-            Session::new(&self.root, "mock").with_trace(&self.trace).unwrap(),
+            Session::new(&self.root, "mock")
+                .with_trace(&self.trace)
+                .unwrap(),
             1024,
             // Tier 4 needs an engine turn of its own; the tests that exercise
             // it script that turn explicitly.
@@ -89,7 +102,9 @@ impl Harness {
 
     async fn run(&self, scripted: Vec<knossos::engine::Response>, max_steps: usize) -> Outcome {
         let mut talos = self.talos(scripted, max_steps, false);
-        let plan = Plan { steps: vec!["do the thing".into()] };
+        let plan = Plan {
+            steps: vec!["do the thing".into()],
+        };
         talos.run("test task", &plan).await.unwrap()
     }
 
@@ -138,11 +153,19 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
 
     let mut talos = Talos::new(
         Box::new(MockEngine::new(vec![
-            tool_call("1", "write_file", serde_json::json!({
-                "path": "src/added.rs",
-                "content": "pub fn triple(n: i32) -> i32 { n * 3 }\n"
-            })),
-            tool_call("2", "read_file", serde_json::json!({"path": "src/added.rs"})),
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/added.rs",
+                    "content": "pub fn triple(n: i32) -> i32 { n * 3 }\n"
+                }),
+            ),
+            tool_call(
+                "2",
+                "read_file",
+                serde_json::json!({"path": "src/added.rs"}),
+            ),
             text_response("done"),
         ])),
         registry,
@@ -159,7 +182,9 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
     // Talos adopts that one rather than the queue `new` would have made.
     .with_interjections(interjections.clone());
 
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
     let outcome = talos.run("test task", &plan).await.unwrap();
 
     let interjected: Vec<_> = h
@@ -168,7 +193,11 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
         .filter(|e| e["event"] == "interjected")
         .collect();
 
-    assert_eq!(interjected.len(), 1, "exactly one delivery, not one per step");
+    assert_eq!(
+        interjected.len(),
+        1,
+        "exactly one delivery, not one per step"
+    );
     assert_eq!(
         interjected[0]["notes"][0], "actually, name it quadruple",
         "the user's words, verbatim"
@@ -179,7 +208,10 @@ async fn a_word_from_the_user_reaches_the_next_step_without_ending_the_run() {
     );
 
     // The point of interjecting rather than cancelling: the run keeps going.
-    assert!(outcome.steps_used >= 2, "the run continued past the interruption");
+    assert!(
+        outcome.steps_used >= 2,
+        "the run continued past the interruption"
+    );
     assert!(
         talos.interjections.is_empty(),
         "nothing may be left queued when the run ends"
@@ -223,39 +255,50 @@ async fn a_collected_trace_carries_the_prompt_and_the_completion() {
         false,
     );
 
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
     talos.run("add a triple function", &plan).await.unwrap();
 
     let exchanges: Vec<_> = h
         .trace_events()
         .into_iter()
-        .filter(|e| e["event"] == "exchange")
+        .filter(|e| e["event"] == "exchange_delta")
         .collect();
 
     assert!(exchanges.len() >= 2, "one exchange per engine call");
 
     let first = &exchanges[0];
     assert!(
-        first["request"]["system"].as_str().unwrap().contains("Be correct."),
+        first["system"].as_str().unwrap().contains("Be correct."),
         "the system prompt has to be the one the model actually saw"
     );
-    let opening = first["request"]["messages"].as_array().unwrap();
+    let opening = first["messages"].as_array().unwrap();
     assert!(!opening.is_empty(), "the prompt side of the pair");
     assert_eq!(
         first["response"]["content"][0]["kind"], "tool_use",
         "the completion side of the pair, verbatim"
     );
 
-    // The reconstruction check. A later step must show the history it was
-    // actually given, or the example is a different one from the one that ran.
-    let last = exchanges.last().unwrap();
-    let later = last["request"]["messages"].as_array().unwrap();
+    // The reconstruction check. Deltas must reproduce the history the later
+    // engine call actually received without storing the whole prefix each time.
+    let mut later = Vec::new();
+    for exchange in &exchanges {
+        if exchange["reset"].as_bool().unwrap_or(false) {
+            later.clear();
+        }
+        assert_eq!(
+            exchange["messages_start"].as_u64().unwrap() as usize,
+            later.len()
+        );
+        later.extend(exchange["messages"].as_array().unwrap().iter().cloned());
+    }
     assert!(
         later.len() > opening.len(),
         "step N must record the conversation as it stood at step N"
     );
     assert!(
-        serde_json::to_string(later).unwrap().contains("triple"),
+        serde_json::to_string(&later).unwrap().contains("triple"),
         "the earlier turn's work has to appear in the later prompt"
     );
 }
@@ -274,6 +317,10 @@ async fn a_trace_carries_no_prompts_unless_asked() {
     assert!(
         events.iter().all(|e| e["event"] != "exchange"),
         "collecting is opt-in"
+    );
+    assert!(
+        events.iter().all(|e| e["event"] != "exchange_delta"),
+        "delta collection is opt-in"
     );
 }
 
@@ -303,10 +350,16 @@ async fn a_verified_change_halts_done() {
     assert_eq!(outcome.changed.len(), 1);
     assert_eq!(outcome.steps_used, 2);
 
-    let verdict = outcome.verdict.expect("a Done outcome must carry a verdict");
+    let verdict = outcome
+        .verdict
+        .expect("a Done outcome must carry a verdict");
     assert!(verdict.passed);
     // The full deterministic ladder ran: syntax, check, clippy, test.
-    assert!(verdict.reached_tier >= 3, "reached tier {}", verdict.reached_tier);
+    assert!(
+        verdict.reached_tier >= 3,
+        "reached tier {}",
+        verdict.reached_tier
+    );
 }
 
 #[tokio::test]
@@ -337,7 +390,10 @@ async fn a_broken_edit_fails_verification_and_the_loop_keeps_going() {
     assert!(!verdict.passed);
 
     let failed = verdict.failure().unwrap();
-    assert_eq!(failed.tier, 1, "syntax is valid; cargo check is what must fail");
+    assert_eq!(
+        failed.tier, 1,
+        "syntax is valid; cargo check is what must fail"
+    );
     assert_eq!(failed.label, "cargo check");
     // Fail-fast: clippy and test never ran.
     assert!(!verdict.tiers.iter().any(|t| t.label == "cargo test"));
@@ -368,7 +424,11 @@ async fn tier_zero_catches_a_syntax_error_before_cargo_runs() {
     let failed = verdict.failure().unwrap();
     assert_eq!(failed.tier, 0);
     assert_eq!(failed.label, "syntax");
-    assert_eq!(verdict.tiers.len(), 1, "nothing past tier 0 should have run");
+    assert_eq!(
+        verdict.tiers.len(),
+        1,
+        "nothing past tier 0 should have run"
+    );
 }
 
 #[tokio::test]
@@ -406,6 +466,8 @@ async fn repeated_empty_steps_are_reported_as_stuck() {
                 text_response("Done."),
                 text_response("Done."),
                 text_response("Done."),
+                text_response("Done."),
+                text_response("Done."),
             ],
             8,
         )
@@ -437,7 +499,10 @@ async fn an_empty_reply_is_not_a_claim_of_completion() {
         )
         .await;
 
-    assert!(!outcome.succeeded(), "a run that said nothing did not succeed");
+    assert!(
+        !outcome.succeeded(),
+        "a run that said nothing did not succeed"
+    );
     assert_ne!(outcome.halt, Halt::Done);
     assert!(outcome.changed.is_empty());
 }
@@ -475,14 +540,22 @@ async fn a_task_that_changes_no_file_can_still_succeed() {
     let outcome = h
         .run(
             vec![
-                tool_call("1", "run", serde_json::json!({"command": "cargo --version"})),
+                tool_call(
+                    "1",
+                    "run",
+                    serde_json::json!({"command": "cargo --version"}),
+                ),
                 text_response("It builds with the stable toolchain."),
             ],
             4,
         )
         .await;
 
-    assert!(outcome.succeeded(), "running a command is real work: {}", outcome.summary);
+    assert!(
+        outcome.succeeded(),
+        "running a command is real work: {}",
+        outcome.summary
+    );
     assert!(outcome.changed.is_empty());
 }
 
@@ -510,7 +583,9 @@ async fn reading_a_file_is_not_doing_the_task() {
     let outcome = talos
         .run(
             "add a triple(x: u32) -> u32 to src/lib.rs",
-            &Plan { steps: vec!["add triple".into()] },
+            &Plan {
+                steps: vec!["add triple".into()],
+            },
         )
         .await
         .unwrap();
@@ -520,8 +595,12 @@ async fn reading_a_file_is_not_doing_the_task() {
     assert!(outcome.changed.is_empty());
 
     // And the engine was told why, rather than being left to repeat itself.
-    let conversation: String =
-        talos.messages.iter().map(|m| m.text()).collect::<Vec<_>>().join("\n");
+    let conversation: String = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         conversation.contains("nothing to verify"),
         "the engine should have been told reading is not doing: {conversation}"
@@ -564,7 +643,12 @@ async fn without_an_approver_a_run_is_unattended() {
     assert!(talos.approver.is_none());
 
     talos
-        .run("add a file", &Plan { steps: vec!["add".into()] })
+        .run(
+            "add a file",
+            &Plan {
+                steps: vec!["add".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -594,7 +678,12 @@ async fn an_approver_is_asked_only_about_consequential_calls() {
     }));
 
     talos
-        .run("read then write", &Plan { steps: vec!["do it".into()] })
+        .run(
+            "read then write",
+            &Plan {
+                steps: vec!["do it".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -631,11 +720,19 @@ async fn a_refused_call_does_not_count_as_work_done() {
     }));
 
     let outcome = talos
-        .run("add a file", &Plan { steps: vec!["add".into()] })
+        .run(
+            "add a file",
+            &Plan {
+                steps: vec!["add".into()],
+            },
+        )
         .await
         .unwrap();
 
-    assert!(!h.root.join("src/nope.rs").exists(), "a refused write happened anyway");
+    assert!(
+        !h.root.join("src/nope.rs").exists(),
+        "a refused write happened anyway"
+    );
     assert_ne!(outcome.halt, Halt::Done, "{}", outcome.summary);
     assert!(outcome.changed.is_empty());
 
@@ -676,16 +773,28 @@ async fn the_conversation_is_bounded_across_a_run() {
     let mut talos = h.talos(
         vec![
             tool_call("1", "read_file", serde_json::json!({"path": "src/huge.rs"})),
-            tool_call("2", "read_file", serde_json::json!({"path": "src/huger.rs"})),
+            tool_call(
+                "2",
+                "read_file",
+                serde_json::json!({"path": "src/huger.rs"}),
+            ),
             text_response("Done."),
         ],
         3,
         false,
     );
-    talos.lethe = knossos::lethe::Lethe { max_tokens: 4_000, ..Default::default() };
+    talos.lethe = knossos::lethe::Lethe {
+        max_tokens: 4_000,
+        ..Default::default()
+    };
 
     talos
-        .run("read the big file", &Plan { steps: vec!["read".into()] })
+        .run(
+            "read the big file",
+            &Plan {
+                steps: vec!["read".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -709,7 +818,10 @@ async fn the_conversation_is_bounded_across_a_run() {
         .flat_map(|m| &m.content)
         .filter(|c| matches!(c, knossos::engine::Content::ToolResult { .. }))
         .count();
-    assert_eq!(uses, results, "compaction split a tool call from its result");
+    assert_eq!(
+        uses, results,
+        "compaction split a tool call from its result"
+    );
 }
 
 #[tokio::test]
@@ -728,9 +840,17 @@ async fn compaction_is_visible_in_the_trace() {
         2,
         false,
     );
-    talos.lethe = knossos::lethe::Lethe { max_tokens: 4_000, ..Default::default() };
+    talos.lethe = knossos::lethe::Lethe {
+        max_tokens: 4_000,
+        ..Default::default()
+    };
     talos
-        .run("read it", &Plan { steps: vec!["read".into()] })
+        .run(
+            "read it",
+            &Plan {
+                steps: vec!["read".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -775,7 +895,10 @@ async fn the_path_jail_survives_a_hostile_tool_call() {
         .await;
 
     // The write was refused, so nothing changed and the file does not exist.
-    assert!(!outcome.succeeded(), "a refused run did not accomplish the task");
+    assert!(
+        !outcome.succeeded(),
+        "a refused run did not accomplish the task"
+    );
     assert!(outcome.changed.is_empty(), "jail must refuse the write");
     assert!(!h.root.parent().unwrap().join("escaped.rs").exists());
 
@@ -806,7 +929,10 @@ async fn disallowed_shell_commands_are_refused() {
     let refused = h.trace_events().iter().any(|e| {
         e["event"] == "tool_call"
             && e["is_error"] == true
-            && e["output"].as_str().unwrap_or("").contains("not on the allowlist")
+            && e["output"]
+                .as_str()
+                .unwrap_or("")
+                .contains("not on the allowlist")
     });
     assert!(refused, "the allowlist must reject `rm`");
     assert!(outcome.changed.is_empty());
@@ -835,8 +961,18 @@ async fn the_trace_records_the_whole_trajectory() {
     let events = h.trace_events();
     let kinds: Vec<&str> = events.iter().filter_map(|e| e["event"].as_str()).collect();
 
-    for expected in ["plan_produced", "step_started", "tool_call", "oracle_verdict", "halt", "task_finished"] {
-        assert!(kinds.contains(&expected), "trace missing `{expected}`; got {kinds:?}");
+    for expected in [
+        "plan_produced",
+        "step_started",
+        "tool_call",
+        "oracle_verdict",
+        "halt",
+        "task_finished",
+    ] {
+        assert!(
+            kinds.contains(&expected),
+            "trace missing `{expected}`; got {kinds:?}"
+        );
     }
 
     // Every event carries a timestamp, and tool calls carry their input and
@@ -870,7 +1006,12 @@ async fn a_dry_run_proposes_changes_without_writing_them() {
     );
 
     let outcome = talos
-        .run("test task", &Plan { steps: vec!["s".into()] })
+        .run(
+            "test task",
+            &Plan {
+                steps: vec!["s".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -907,7 +1048,15 @@ async fn applying_a_dry_run_writes_the_staged_content() {
         true,
     );
 
-    talos.run("t", &Plan { steps: vec!["s".into()] }).await.unwrap();
+    talos
+        .run(
+            "t",
+            &Plan {
+                steps: vec!["s".into()],
+            },
+        )
+        .await
+        .unwrap();
     assert!(!h.root.join("src/added.rs").exists());
 
     let written = talos.apply().unwrap();
@@ -948,7 +1097,12 @@ async fn resume_continues_the_same_conversation() {
     );
 
     let first = talos
-        .run("add one()", &Plan { steps: vec!["add one".into()] })
+        .run(
+            "add one()",
+            &Plan {
+                steps: vec!["add one".into()],
+            },
+        )
         .await
         .unwrap();
     assert_eq!(first.halt, Halt::Done, "{}", first.summary);
@@ -959,7 +1113,10 @@ async fn resume_continues_the_same_conversation() {
 
     // Context was kept, not restarted.
     assert!(talos.messages.len() > messages_after_first);
-    assert!(talos.task == "add one()", "the original task is retained for tier 4");
+    assert!(
+        talos.task == "add one()",
+        "the original task is retained for tier 4"
+    );
 
     // Both functions exist, so the second turn built on the first.
     let src = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
@@ -1052,7 +1209,10 @@ async fn an_engine_repeating_one_failing_call_is_stuck() {
     let outcome = h.run(script, 12).await;
 
     assert_eq!(outcome.halt, Halt::Stuck);
-    assert_eq!(outcome.steps_used, 3, "one attempt, then two repeats");
+    assert_eq!(
+        outcome.steps_used, 5,
+        "one attempt, two repeats, one redirect, two more"
+    );
 }
 
 #[tokio::test]
@@ -1067,7 +1227,10 @@ async fn an_engine_alternating_between_two_failing_calls_is_stuck() {
     let outcome = h.run(script, 20).await;
 
     assert_eq!(outcome.halt, Halt::Stuck);
-    assert_eq!(outcome.steps_used, 4, "A B then A B again: caught on the second B");
+    assert_eq!(
+        outcome.steps_used, 6,
+        "A B A B redirects, then A B forbidden is stuck"
+    );
 }
 
 #[tokio::test]
@@ -1081,7 +1244,10 @@ async fn a_three_step_ritual_that_achieves_nothing_is_stuck() {
     let outcome = h.run(script, 20).await;
 
     assert_eq!(outcome.halt, Halt::Stuck);
-    assert_eq!(outcome.steps_used, 5, "three to establish the cycle, two to confirm");
+    assert_eq!(
+        outcome.steps_used, 7,
+        "three to establish, two to confirm, redirect, two more"
+    );
 }
 
 #[tokio::test]
@@ -1089,11 +1255,16 @@ async fn a_repeated_call_is_told_it_is_repeating() {
     // Halting is the backstop; the cheaper outcome is the engine noticing it is
     // going in a circle while it still has budget left.
     let h = Harness::new("passing");
-    let script: Vec<_> = (0..4).map(|i| doomed_edit(&i.to_string(), "a")).collect();
-    let mut talos = h.talos(script, 6, false);
+    let script: Vec<_> = (0..8).map(|i| doomed_edit(&i.to_string(), "a")).collect();
+    let mut talos = h.talos(script, 8, false);
 
     talos
-        .run("edit something", &Plan { steps: vec!["edit".into()] })
+        .run(
+            "edit something",
+            &Plan {
+                steps: vec!["edit".into()],
+            },
+        )
         .await
         .unwrap();
 
@@ -1133,7 +1304,11 @@ async fn real_work_between_repeats_restarts_the_window() {
         )
         .await;
 
-    assert_ne!(outcome.halt, Halt::Stuck, "real work happened between the reads");
+    assert_ne!(
+        outcome.halt,
+        Halt::Stuck,
+        "real work happened between the reads"
+    );
 }
 
 // ----------------------------- every step sequence, not just the ones anyone
@@ -1179,10 +1354,12 @@ fn reference_halt(symbols: &str) -> (Halt, usize) {
     use std::collections::VecDeque;
     let max_steps = symbols.chars().count();
     let mut recent: VecDeque<char> = VecDeque::new();
+    let mut forbidden: Vec<char> = Vec::new();
     let mut noops = 0usize;
+    let mut redirects = 0usize;
     for (i, c) in symbols.chars().enumerate() {
         let step = i + 1;
-        let futile = recent.contains(&c) && !changes(c);
+        let futile = (recent.contains(&c) || forbidden.contains(&c)) && !changes(c);
         if changes(c) {
             recent.clear();
         }
@@ -1199,6 +1376,13 @@ fn reference_halt(symbols: &str) -> (Halt, usize) {
             return (Halt::BudgetExhausted, step);
         }
         if noops >= 2 {
+            if redirects < 1 {
+                redirects += 1;
+                forbidden.extend(recent.iter().copied());
+                noops = 0;
+                recent.clear();
+                continue;
+            }
             return (Halt::Stuck, step);
         }
     }
@@ -1222,7 +1406,11 @@ async fn sweep(alphabet: &[char], length: usize) {
             rest /= alphabet.len();
         }
         let word: String = symbols.iter().collect();
-        assert_eq!(drive(&word).await, reference_halt(&word), "disagreed on {word}");
+        assert_eq!(
+            drive(&word).await,
+            reference_halt(&word),
+            "disagreed on {word}"
+        );
     }
 }
 
@@ -1281,17 +1469,30 @@ fn context_event(h: &Harness) -> serde_json::Value {
 async fn a_task_naming_repository_code_is_given_it_unasked() {
     let h = Harness::new("passing");
     let mut talos = h.talos_with_retrieval(vec![text_response("done")]);
-    let plan = Plan { steps: vec!["look at the adder".into()] };
+    let plan = Plan {
+        steps: vec!["look at the adder".into()],
+    };
 
-    talos.run("fix the rounding in Adder::add", &plan).await.unwrap();
+    talos
+        .run("fix the rounding in Adder::add", &plan)
+        .await
+        .unwrap();
 
     let first = talos.messages[0].text();
-    assert!(first.contains("retrieved automatically"), "no context block:\n{first}");
-    assert!(first.contains("Adder"), "the named type was not retrieved:\n{first}");
+    assert!(
+        first.contains("retrieved automatically"),
+        "no context block:\n{first}"
+    );
+    assert!(
+        first.contains("Adder"),
+        "the named type was not retrieved:\n{first}"
+    );
     // The instruction has to stay last, or the injected code becomes the most
     // recent thing the model read and starts looking like the request.
     assert!(
-        first.trim_end().ends_with("verification runs automatically."),
+        first
+            .trim_end()
+            .ends_with("verification runs automatically."),
         "context displaced the instruction:\n{first}",
     );
     assert_eq!(context_event(&h)["injected"], serde_json::json!(true));
@@ -1301,12 +1502,20 @@ async fn a_task_naming_repository_code_is_given_it_unasked() {
 async fn a_general_question_is_not_given_repository_context() {
     let h = Harness::new("passing");
     let mut talos = h.talos_with_retrieval(vec![text_response("done")]);
-    let plan = Plan { steps: vec!["explain".into()] };
+    let plan = Plan {
+        steps: vec!["explain".into()],
+    };
 
-    talos.run("what is a mixture-of-experts layer, in general?", &plan).await.unwrap();
+    talos
+        .run("what is a mixture-of-experts layer, in general?", &plan)
+        .await
+        .unwrap();
 
     let first = talos.messages[0].text();
-    assert!(!first.contains("retrieved automatically"), "context was forced in:\n{first}");
+    assert!(
+        !first.contains("retrieved automatically"),
+        "context was forced in:\n{first}"
+    );
     let event = context_event(&h);
     assert_eq!(event["injected"], serde_json::json!(false));
     assert!(
@@ -1322,15 +1531,29 @@ async fn a_resumed_turn_is_gated_on_its_own_instruction() {
     let h = Harness::new("passing");
     let mut talos =
         h.talos_with_retrieval(vec![text_response("done"), text_response("done again")]);
-    let plan = Plan { steps: vec!["start".into()] };
+    let plan = Plan {
+        steps: vec!["start".into()],
+    };
 
-    talos.run("what is attention, conceptually?", &plan).await.unwrap();
+    talos
+        .run("what is attention, conceptually?", &plan)
+        .await
+        .unwrap();
     let before = talos.messages.len();
-    talos.resume("now change Adder::add to saturate").await.unwrap();
+    talos
+        .resume("now change Adder::add to saturate")
+        .await
+        .unwrap();
 
     let resumed = talos.messages[before].text();
-    assert!(resumed.contains("retrieved automatically"), "second turn got nothing:\n{resumed}");
-    assert!(resumed.starts_with("now change Adder::add"), "the instruction moved:\n{resumed}");
+    assert!(
+        resumed.contains("retrieved automatically"),
+        "second turn got nothing:\n{resumed}"
+    );
+    assert!(
+        resumed.starts_with("now change Adder::add"),
+        "the instruction moved:\n{resumed}"
+    );
 }
 
 /// Without a gate attached nothing changes — no injection, and no decision to
@@ -1339,9 +1562,14 @@ async fn a_resumed_turn_is_gated_on_its_own_instruction() {
 async fn retrieval_left_unattached_changes_nothing() {
     let h = Harness::new("passing");
     let mut talos = h.talos(vec![text_response("done")], 1, false);
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
 
-    talos.run("fix the rounding in Adder::add", &plan).await.unwrap();
+    talos
+        .run("fix the rounding in Adder::add", &plan)
+        .await
+        .unwrap();
 
     let first = talos.messages[0].text();
     assert_eq!(
@@ -1351,7 +1579,9 @@ async fn retrieval_left_unattached_changes_nothing() {
          verification runs automatically.",
     );
     assert!(
-        h.trace_events().iter().all(|e| e["event"] != "context_considered"),
+        h.trace_events()
+            .iter()
+            .all(|e| e["event"] != "context_considered"),
         "a disabled gate must not report decisions it never made",
     );
 }
@@ -1365,7 +1595,9 @@ async fn retrieval_left_unattached_changes_nothing() {
 async fn the_trace_records_what_the_model_said() {
     let h = Harness::new("passing");
     let mut talos = h.talos(vec![text_response("Looks fine to me.")], 1, false);
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
 
     talos.run("test task", &plan).await.unwrap();
 
@@ -1384,11 +1616,16 @@ async fn the_trace_records_what_the_model_said() {
 async fn an_empty_reply_is_not_recorded_as_a_message() {
     let h = Harness::new("passing");
     let mut talos = h.talos(vec![text_response("   ")], 1, false);
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
 
     talos.run("test task", &plan).await.unwrap();
 
-    assert!(h.trace_events().iter().all(|e| e["event"] != "agent_message"));
+    assert!(h
+        .trace_events()
+        .iter()
+        .all(|e| e["event"] != "agent_message"));
 }
 
 // ------------------------------------------------------------- cancellation
@@ -1402,9 +1639,13 @@ async fn an_empty_reply_is_not_recorded_as_a_message() {
 async fn a_cancelled_turn_stops_at_the_next_step_boundary() {
     let h = Harness::new("passing");
     let mut talos = h.talos(vec![text_response("working on it")], 5, false);
-    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    talos
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
     let outcome = talos.run("test task", &plan).await.unwrap();
 
     assert_eq!(outcome.halt, Halt::Cancelled);
@@ -1429,14 +1670,25 @@ async fn cancelling_one_turn_does_not_poison_the_next() {
         3,
         false,
     );
-    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    talos
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let plan = Plan { steps: vec!["do the thing".into()] };
-    assert_eq!(talos.run("first", &plan).await.unwrap().halt, Halt::Cancelled);
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
+    assert_eq!(
+        talos.run("first", &plan).await.unwrap().halt,
+        Halt::Cancelled
+    );
 
     // The flag cleared itself, so this turn reaches the engine.
     let second = talos.resume("carry on").await.unwrap();
-    assert_ne!(second.halt, Halt::Cancelled, "the flag latched into the next turn");
+    assert_ne!(
+        second.halt,
+        Halt::Cancelled,
+        "the flag latched into the next turn"
+    );
     assert!(second.steps_used >= 1);
 }
 
@@ -1445,13 +1697,21 @@ async fn cancelling_one_turn_does_not_poison_the_next() {
 async fn cancelling_is_not_reported_as_a_failure() {
     let h = Harness::new("passing");
     let mut talos = h.talos(vec![text_response("x")], 3, false);
-    talos.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    talos
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let plan = Plan { steps: vec!["do the thing".into()] };
+    let plan = Plan {
+        steps: vec!["do the thing".into()],
+    };
     let outcome = talos.run("test task", &plan).await.unwrap();
 
     assert!(!outcome.succeeded(), "cancelled is not success either");
-    assert!(outcome.summary.starts_with("Cancelled"), "{}", outcome.summary);
+    assert!(
+        outcome.summary.starts_with("Cancelled"),
+        "{}",
+        outcome.summary
+    );
     let halts: Vec<_> = h
         .trace_events()
         .into_iter()
@@ -1459,4 +1719,447 @@ async fn cancelling_is_not_reported_as_a_failure() {
         .collect();
     assert_eq!(halts.len(), 1, "exactly one halt event, not a duplicate");
     assert_eq!(halts[0]["reason"], "cancelled");
+}
+
+/// A multi-step plan is executed step by step, not pasted into one prompt.
+#[tokio::test]
+async fn a_multi_step_plan_is_driven_stepwise() {
+    let h = Harness::new("passing");
+    let valid = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
+    let mut talos = h.talos(
+        vec![
+            // Step 1: act, then ask to be verified.
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({"path": "src/lib.rs", "content": valid.clone()}),
+            ),
+            text_response("step one done"),
+            // Step 2: act again so this drive has its own `acted`.
+            tool_call(
+                "2",
+                "write_file",
+                serde_json::json!({"path": "src/lib.rs", "content": valid}),
+            ),
+            text_response("step two done"),
+            // Closing, plus a couple of spares if a drive takes an extra turn.
+            text_response("the task is done"),
+            text_response("still done"),
+            text_response("still done"),
+        ],
+        12,
+        false,
+    );
+
+    let plan = Plan {
+        steps: vec!["touch the crate".into(), "confirm it".into()],
+    };
+    let outcome = talos
+        .run("add nothing, just walk the plan", &plan)
+        .await
+        .unwrap();
+
+    let dumped = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        dumped.contains("Step 1 of 2"),
+        "step 1 was never framed:\n{dumped}"
+    );
+    assert!(
+        dumped.contains("Step 2 of 2"),
+        "step 2 was never framed:\n{dumped}"
+    );
+    assert!(
+        dumped.contains("Plan complete"),
+        "the closing drive never ran:\n{dumped}"
+    );
+    // Closing used the full ladder, not just syntax.
+    let verdict = outcome.verdict.expect("closing must verify");
+    assert!(verdict.reached_tier >= 1 || verdict.dry_run, "{verdict:?}");
+}
+
+/// A hard ceiling remains hard when there are too many plan slices to fund.
+/// In that case the rendered plan is driven flat instead of silently flooring
+/// every slice and spending more turns than the caller allowed.
+#[tokio::test]
+async fn a_short_budget_flattens_a_long_plan() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![valid_write("1"), text_response("implemented and ready")],
+        8,
+        false,
+    );
+    let plan = Plan {
+        steps: vec![
+            "read the crate".into(),
+            "add the module".into(),
+            "verify it".into(),
+        ],
+    };
+
+    let outcome = talos.run("add a harmless module", &plan).await.unwrap();
+
+    assert_eq!(outcome.halt, Halt::Done, "{}", outcome.summary);
+    assert!(
+        outcome.steps_used <= 8,
+        "hard ceiling exceeded: {outcome:?}"
+    );
+    let conversation = talos
+        .messages
+        .iter()
+        .map(|message| message.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !conversation.contains("## Step 1 of 3"),
+        "an underfunded plan must be driven flat: {conversation}"
+    );
+}
+
+/// A plan step that leaves the tree unparseable is rolled back before the
+/// next step starts, so later work is not built on broken source.
+#[tokio::test]
+async fn a_broken_plan_step_is_rewound() {
+    let h = Harness::new("passing");
+    let original = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "pub fn a( {{{ ~~~ not rust"
+                }),
+            ),
+            text_response("done"),
+            // After a failed interim verdict the drive keeps going until
+            // stuck (2 noops) or the per-step ceiling. A redirect consumes
+            // one more engine turn (Metis) and then two more noops, so
+            // pad generously.
+            text_response("still done"),
+            text_response("still done"),
+            text_response("still done"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+            text_response("ok"),
+        ],
+        12,
+        false,
+    );
+
+    let plan = Plan {
+        steps: vec!["break the crate".into(), "leave it".into()],
+    };
+    talos.run("break then stop", &plan).await.unwrap();
+
+    let now = std::fs::read_to_string(h.root.join("src/lib.rs")).unwrap();
+    assert_eq!(now, original, "the broken edit must have been rolled back");
+}
+
+// --------------------------------------------------------------- 70-point loop
+
+fn valid_write(id: &str) -> knossos::engine::Response {
+    tool_call(
+        id,
+        "write_file",
+        serde_json::json!({
+            "path": "src/added.rs",
+            "content": "pub fn extra() -> u32 { 1 }\n"
+        }),
+    )
+}
+
+#[tokio::test]
+async fn the_first_stuck_redirects_instead_of_halting() {
+    let h = Harness::new("passing");
+    let outcome = h
+        .run(
+            vec![
+                text_response("Done."),
+                text_response("Done."),
+                valid_write("w"),
+                text_response("done for real"),
+            ],
+            8,
+        )
+        .await;
+
+    let redirected: Vec<_> = h
+        .trace_events()
+        .into_iter()
+        .filter(|e| e["event"] == "redirected")
+        .collect();
+    assert_eq!(redirected.len(), 1, "exactly one redirect: {redirected:?}");
+    assert_eq!(outcome.halt, Halt::Done, "{}", outcome.summary);
+}
+
+#[tokio::test]
+async fn a_second_stuck_still_halts() {
+    let h = Harness::new("broken");
+    let outcome = h.run(vec![text_response("Done."); 6], 8).await;
+    assert_eq!(outcome.halt, Halt::Stuck, "{}", outcome.summary);
+    let redirected = h
+        .trace_events()
+        .iter()
+        .filter(|e| e["event"] == "redirected")
+        .count();
+    assert_eq!(redirected, 1);
+}
+
+#[tokio::test]
+async fn a_failed_hypothesis_survives_process_restart() {
+    let h = Harness::new("passing");
+    let first = h
+        .run(
+            (0..12).map(|i| doomed_edit(&i.to_string(), "a")).collect(),
+            12,
+        )
+        .await;
+    assert_eq!(first.halt, Halt::Stuck);
+
+    let mut talos = h.talos(vec![text_response("Done."); 6], 6, false);
+    talos
+        .run(
+            "edit something",
+            &Plan {
+                steps: vec!["edit".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    let conversation = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        conversation.contains("Previously failed"),
+        "run B must see run A's hypothesis:\n{conversation}"
+    );
+    assert!(
+        conversation.contains("edit_file"),
+        "the failed call must be named:\n{conversation}"
+    );
+}
+
+#[tokio::test]
+async fn verify_mid_loop_does_not_complete_the_run() {
+    let h = Harness::new("passing");
+    let outcome = h
+        .run(
+            vec![
+                tool_call("1", "verify", serde_json::json!({})),
+                valid_write("2"),
+                text_response("done"),
+            ],
+            6,
+        )
+        .await;
+    assert_eq!(outcome.halt, Halt::Done, "{}", outcome.summary);
+    let verifies = h
+        .trace_events()
+        .iter()
+        .filter(|e| e["event"] == "tool_call" && e["tool"] == "verify")
+        .count();
+    assert_eq!(verifies, 1);
+}
+
+#[tokio::test]
+async fn verify_report_reaches_the_engine() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            tool_call("1", "verify", serde_json::json!({"full": true})),
+            valid_write("2"),
+            text_response("done"),
+        ],
+        6,
+        false,
+    );
+    talos
+        .run(
+            "check then add",
+            &Plan {
+                steps: vec!["do".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    let conversation = format!("{:?}", talos.messages);
+    assert!(
+        conversation.contains("Verification") || conversation.contains("passed"),
+        "Oracle's report must land in a tool result: {conversation}"
+    );
+}
+
+#[tokio::test]
+async fn dry_run_verify_uses_staged_contents() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/lib.rs",
+                    "content": "pub fn a( {{{"
+                }),
+            ),
+            tool_call("2", "verify", serde_json::json!({})),
+            text_response("previewed"),
+            text_response("previewed"),
+            text_response("previewed"),
+            text_response("previewed"),
+        ],
+        8,
+        true,
+    );
+    let outcome = talos
+        .run(
+            "preview a break",
+            &Plan {
+                steps: vec!["preview".into()],
+            },
+        )
+        .await
+        .unwrap();
+    assert!(outcome.dry_run);
+    let conversation = format!("{:?}", talos.messages);
+    assert!(
+        conversation.contains("preview")
+            || conversation.contains("Syntax")
+            || conversation.contains("syntax"),
+        "staged verify must not pretend cargo ran:\n{conversation}"
+    );
+}
+
+#[tokio::test]
+async fn compaction_still_carries_a_failed_hypothesis() {
+    let h = Harness::new("passing");
+    std::fs::write(h.root.join("src/huge.rs"), "x".repeat(300_000)).unwrap();
+    let mut talos = h.talos(
+        vec![
+            doomed_edit("1", "a"),
+            tool_call("2", "read_file", serde_json::json!({"path": "src/huge.rs"})),
+            text_response("Done."),
+            text_response("Done."),
+            text_response("Done."),
+            text_response("Done."),
+            text_response("Done."),
+            text_response("Done."),
+        ],
+        10,
+        false,
+    );
+    talos.lethe = knossos::lethe::Lethe {
+        max_tokens: 4_000,
+        ..Default::default()
+    };
+    talos
+        .run(
+            "edit then read",
+            &Plan {
+                steps: vec!["edit".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    let conversation = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        conversation.contains("Previously failed"),
+        "compacted output must not erase the durable brief:\n{}",
+        &conversation[..conversation.len().min(800)]
+    );
+}
+
+#[tokio::test]
+async fn forbidden_signatures_are_in_the_redirect_prompt() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        (0..12).map(|i| doomed_edit(&i.to_string(), "a")).collect(),
+        12,
+        false,
+    );
+    talos
+        .run(
+            "edit something",
+            &Plan {
+                steps: vec!["edit".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    let conversation = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        conversation.contains("SUPERVISOR"),
+        "redirect must speak:\n{conversation}"
+    );
+    assert!(
+        conversation.contains("Already tried") || conversation.contains("edit_file"),
+        "the failed signature must be named:\n{conversation}"
+    );
+}
+
+#[tokio::test]
+async fn plan_redirect_asks_metis_for_a_new_tail() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(
+        vec![
+            text_response("Done."),
+            text_response("Done."),
+            tool_call(
+                "p",
+                "submit_plan",
+                serde_json::json!({"steps": ["try a different file"]}),
+            ),
+            text_response("still stuck"),
+            text_response("still stuck"),
+            valid_write("w"),
+            text_response("step two done"),
+            text_response("closing"),
+            text_response("closing"),
+        ],
+        20,
+        false,
+    );
+    let plan = Plan {
+        steps: vec!["first approach".into(), "original second".into()],
+    };
+    talos.run("add extra()", &plan).await.unwrap();
+
+    let dumped = talos
+        .messages
+        .iter()
+        .map(|m| m.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        dumped.contains("try a different file") || dumped.contains("SUPERVISOR"),
+        "replan or supervisor must land:\n{dumped}"
+    );
 }

@@ -479,6 +479,29 @@ tree only *after* the agent finishes — never readable, never editable. A run t
 passes everything visible and fails one of these is reported as `OVERFIT` and
 does not count as solved.
 
+The Rust runner also grades behavioral cases whose correct outcome is not
+necessarily “fix a red test.” `expected_action` may be `edit_preserve`, `no_op`,
+or `clarify`; these require a real source diff, no source diff, or a question
+with no diff respectively. `fixtures/agentic_behavior_suite.json` covers
+refactoring, configuration, dependency repair, multi-step changes, restraint,
+and clarification alongside the bug-heavy hard suite.
+
+### Curating traces for fine-tuning
+
+Collected v2 traces carry a run id, linear-size exchange deltas, and a final
+external evaluation label. Build deterministic, leakage-resistant splits with:
+
+```bash
+python scripts/curate_traces.py --traces .daedalus --out-dir corpus
+```
+
+The curator quarantines secret-shaped content, rejects malformed tool
+call/result sequences, deduplicates exact examples, assigns every variant of a
+task to one split, and admits only grader+verifier successes to SFT by default.
+DPO pairs share a byte-identical prompt and task key; recovered successes can
+be paired with early-give-up failures without crossing task boundaries. Use
+`--allow-legacy` only for an explicit migration of pre-v2 traces.
+
 **Retrieval** asks whether Argus surfaced the expected files. Deterministic and
 free, so run it after any ranking change — a regression shows up here first.
 

@@ -9,8 +9,13 @@
 //! |---|---|---|
 //! | in | `initialize` | version and capability exchange |
 //! | in | `session/new` | a workspace to work in |
+//! | in | `session/load` | replay a session's updates without re-running tools |
 //! | in | `session/prompt` | run a turn, block until it ends |
 //! | in | `session/cancel` | stop the running turn (a notification) |
+//! | in | `session/list` | ids of live sessions |
+//! | in | `session/close` | drop a session (alias: `session/delete`) |
+//! | in | `session/set_mode` | `ask` / `preview` / `write` |
+//! | in | `session/interject` | steer a running turn at the next step boundary |
 //! | out | `session/update` | what the agent is doing, as it happens |
 //! | out | `session/request_permission` | ask before something consequential |
 //!
@@ -39,7 +44,7 @@ use serde_json::{json, Value};
 
 use crate::ariadne::Halt;
 use crate::jsonrpc::{PeerHandle, RpcError, INVALID_PARAMS, METHOD_NOT_FOUND};
-use crate::metis::Plan;
+use crate::metis::{self, Plan};
 use crate::session::TraceEvent;
 use crate::talos::{Approver, Talos};
 
@@ -48,7 +53,51 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Methods that must not wait behind a running turn.
 pub fn is_fast_path(method: &str) -> bool {
-    method == "session/cancel"
+    method == "session/cancel" || method == "session/interject"
+}
+
+/// `KNOSSOS_SCRIPT` sessions start in ask/preview/write the way Python
+/// `scripted_agent.py` mapped `KNOSSOS_EXECUTE` / `KNOSSOS_WRITE`.
+fn scripted_default_mode() -> (String, bool) {
+    if std::env::var("KNOSSOS_SCRIPT")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_none()
+    {
+        return ("write".into(), false);
+    }
+    let write = std::env::var("KNOSSOS_WRITE").ok().as_deref() == Some("1");
+    let execute = std::env::var("KNOSSOS_EXECUTE").ok().as_deref() == Some("1");
+    if !execute {
+        ("ask".into(), true)
+    } else if write {
+        ("write".into(), false)
+    } else {
+        ("preview".into(), true)
+    }
+}
+
+fn mode_state(current: &str) -> Value {
+    json!({
+        "currentModeId": current,
+        "availableModes": [
+            {
+                "id": "ask",
+                "name": "Ask",
+                "description": "Investigate and answer without writing files."
+            },
+            {
+                "id": "preview",
+                "name": "Preview",
+                "description": "Stage proposed edits in memory for review."
+            },
+            {
+                "id": "write",
+                "name": "Write",
+                "description": "Apply approved edits to the workspace."
+            }
+        ]
+    })
 }
 
 /// Builds the agent for one workspace. Supplied by the binary, which is what
@@ -61,6 +110,14 @@ struct Live {
     cancel: Arc<AtomicBool>,
     /// Whether a turn has already run, which decides `run` versus `resume`.
     started: AtomicBool,
+    cwd: PathBuf,
+    mode: Mutex<String>,
+    /// Cloned handle so `session/interject` on the fast path never waits on
+    /// the Talos lock held by a running prompt.
+    interjections: crate::interject::Interjections,
+    /// Every `session/update` already sent. `session/load` replays this
+    /// list; it does not re-execute the turn.
+    history: Arc<Mutex<Vec<Value>>>,
 }
 
 /// The agent side of an ACP conversation.
@@ -79,20 +136,18 @@ pub struct Agent {
     /// The runtime must be multi-threaded, since the thread that would
     /// otherwise drive a current-thread runtime is the one blocking on it.
     runtime: tokio::runtime::Handle,
+    caps: Mutex<crate::client_io::ClientCaps>,
 }
 
 impl Agent {
-    pub fn new(
-        peer: PeerHandle,
-        build: Arc<BuildAgent>,
-        runtime: tokio::runtime::Handle,
-    ) -> Self {
+    pub fn new(peer: PeerHandle, build: Arc<BuildAgent>, runtime: tokio::runtime::Handle) -> Self {
         Agent {
             peer,
             build,
             sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU64::new(0),
             runtime,
+            caps: Mutex::new(crate::client_io::ClientCaps::default()),
         }
     }
 
@@ -100,13 +155,20 @@ impl Agent {
     pub fn handle(&self, method: &str, params: Option<Value>) -> Result<Value, RpcError> {
         let params = params.unwrap_or(Value::Null);
         match method {
-            "initialize" => Ok(self.initialize()),
+            "initialize" => Ok(self.initialize(&params)),
+            "authenticate" => Ok(json!({})),
             "session/new" => self.new_session(&params),
+            "session/load" => self.load_session(&params),
+            "session/fork" => self.fork_session(&params),
             "session/prompt" => self.prompt(&params),
             "session/cancel" => {
                 self.cancel(&params);
                 Ok(Value::Null)
             }
+            "session/list" => Ok(self.list_sessions(&params)),
+            "session/close" | "session/delete" => self.close_session(&params),
+            "session/set_mode" => self.set_mode(&params),
+            "session/interject" => self.interject(&params),
             // Answered rather than ignored: an unanswered request blocks the
             // editor for as long as it is willing to wait.
             other => Err(RpcError::new(
@@ -116,7 +178,8 @@ impl Agent {
         }
     }
 
-    fn initialize(&self) -> Value {
+    fn initialize(&self, params: &Value) -> Value {
+        *self.caps.lock().expect("caps") = crate::client_io::ClientCaps::from_initialize(params);
         json!({
             "protocolVersion": PROTOCOL_VERSION,
             "agentInfo": {
@@ -124,11 +187,16 @@ impl Agent {
                 "title": "Daedalus",
                 "version": env!("CARGO_PKG_VERSION"),
             },
-            // Nothing is claimed here. A capability is a promise to service the
-            // matching request, and the harness reads and writes through its own
-            // jailed tools rather than asking the editor to do it — so claiming
-            // `fs` would be advertising a call we never make.
-            "agentCapabilities": {"loadSession": false},
+            "agentCapabilities": {
+                "loadSession": true,
+                "unstable_forkSession": true,
+                "sessionCapabilities": {"list": {}, "close": {}, "delete": {}},
+                "promptCapabilities": {
+                    "image": false,
+                    "audio": false,
+                    "embeddedContext": true,
+                },
+            },
             "authMethods": [],
         })
     }
@@ -140,7 +208,10 @@ impl Agent {
             .ok_or_else(|| RpcError::new(INVALID_PARAMS, "session/new needs an absolute cwd"))?;
         let root = PathBuf::from(cwd);
         if !root.is_absolute() {
-            return Err(RpcError::new(INVALID_PARAMS, format!("cwd is not absolute: {cwd}")));
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                format!("cwd is not absolute: {cwd}"),
+            ));
         }
 
         let id = format!("s{}", self.next_session.fetch_add(1, Ordering::SeqCst) + 1);
@@ -153,25 +224,59 @@ impl Agent {
 
         let mut talos = (self.build)(&root, Arc::clone(&cancel), approver)
             .map_err(|e| RpcError::new(INVALID_PARAMS, format!("cannot open {cwd}: {e}")))?;
+        if scripted_default_mode().1 {
+            talos.ctx.set_dry_run(true);
+        }
+        let caps = self.caps.lock().expect("caps").clone();
+        if caps.any_fs() || caps.terminal || caps.elicit {
+            talos
+                .ctx
+                .set_client(std::sync::Arc::new(crate::client_io::ClientIo::new(
+                    self.peer.clone(),
+                    id.clone(),
+                    Arc::clone(&cancel),
+                    caps,
+                )));
+        }
 
         // Narration. Installed on the session rather than printed, because
         // stdout is the protocol channel.
-        let notifier = Notifier { peer: self.peer.clone(), session: id.clone() };
+        let history = Arc::new(Mutex::new(Vec::new()));
+        let notifier = Notifier {
+            peer: self.peer.clone(),
+            session: id.clone(),
+            root: root.clone(),
+            history: Arc::clone(&history),
+        };
         talos.session = std::mem::replace(
             &mut talos.session,
             crate::session::Session::new(&root, "placeholder"),
         )
         .with_sink(Arc::new(move |event: &TraceEvent| notifier.emit(event)));
 
+        let interjections = talos.interjections();
+        let initial_mode = scripted_default_mode().0;
         self.sessions.lock().expect("sessions").insert(
             id.clone(),
             Arc::new(Live {
                 talos: Mutex::new(talos),
                 cancel,
                 started: AtomicBool::new(false),
+                cwd: root,
+                mode: Mutex::new(initial_mode.clone()),
+                interjections,
+                history,
             }),
         );
-        Ok(json!({"sessionId": id}))
+        crate::cameo_board::report(json!({
+            "id": id,
+            "name": id,
+            "role": "executor",
+            "mode": "ask",
+            "state": "idle",
+            "model": "",
+        }));
+        Ok(json!({"sessionId": id, "modes": mode_state(&initial_mode)}))
     }
 
     fn live(&self, params: &Value) -> Result<Arc<Live>, RpcError> {
@@ -187,6 +292,95 @@ impl Agent {
             .ok_or_else(|| RpcError::new(INVALID_PARAMS, format!("no such session: {id}")))
     }
 
+    /// Replay already-sent updates. Not re-execution: files are not touched.
+    fn load_session(&self, params: &Value) -> Result<Value, RpcError> {
+        let live = self.live(params)?;
+        let id = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let history = live.history.lock().expect("history").clone();
+        for update in history {
+            self.peer.notify(
+                "session/update",
+                Some(json!({"sessionId": id, "update": update})),
+            );
+        }
+        Ok(json!({}))
+    }
+
+    fn fork_session(&self, params: &Value) -> Result<Value, RpcError> {
+        let source = self.live(params)?;
+        let cwd = params
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| source.cwd.clone());
+        if !cwd.is_absolute() {
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                "cwd must be an absolute path",
+            ));
+        }
+        let (messages, task, dry) = {
+            let t = source.talos.lock().expect("session in use");
+            (t.messages.clone(), t.task.clone(), t.ctx.is_dry_run())
+        };
+        let mode = source.mode.lock().expect("mode").clone();
+        let history = source.history.lock().expect("history").clone();
+
+        let id = format!("s{}", self.next_session.fetch_add(1, Ordering::SeqCst) + 1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let approver: Arc<dyn Approver> = Arc::new(AcpApprover {
+            peer: self.peer.clone(),
+            session: id.clone(),
+            cancel: Arc::clone(&cancel),
+        });
+        let mut talos = (self.build)(&cwd, Arc::clone(&cancel), approver)
+            .map_err(|e| RpcError::new(INVALID_PARAMS, format!("cannot fork: {e}")))?;
+        let started = !messages.is_empty();
+        talos.messages = messages;
+        talos.task = task;
+        talos.ctx.set_dry_run(dry);
+        let caps = self.caps.lock().expect("caps").clone();
+        if caps.any_fs() || caps.terminal || caps.elicit {
+            talos
+                .ctx
+                .set_client(std::sync::Arc::new(crate::client_io::ClientIo::new(
+                    self.peer.clone(),
+                    id.clone(),
+                    Arc::clone(&cancel),
+                    caps,
+                )));
+        }
+        let sink_hist = Arc::new(Mutex::new(history));
+        let notifier = Notifier {
+            peer: self.peer.clone(),
+            session: id.clone(),
+            root: cwd.clone(),
+            history: Arc::clone(&sink_hist),
+        };
+        talos.session = std::mem::replace(
+            &mut talos.session,
+            crate::session::Session::new(&cwd, "placeholder"),
+        )
+        .with_sink(Arc::new(move |event: &TraceEvent| notifier.emit(event)));
+        let interjections = talos.interjections();
+        self.sessions.lock().expect("sessions").insert(
+            id.clone(),
+            Arc::new(Live {
+                talos: Mutex::new(talos),
+                cancel,
+                started: AtomicBool::new(started),
+                cwd,
+                mode: Mutex::new(mode),
+                interjections,
+                history: sink_hist,
+            }),
+        );
+        Ok(json!({"sessionId": id}))
+    }
+
     /// Run one turn and block until it ends.
     ///
     /// Blocking is correct: ACP defines `session/prompt` as returning when the
@@ -196,7 +390,10 @@ impl Agent {
         let live = self.live(params)?;
         let text = prompt_text(params);
         if text.trim().is_empty() {
-            return Err(RpcError::new(INVALID_PARAMS, "an empty prompt has nothing to do"));
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                "an empty prompt has nothing to do",
+            ));
         }
 
         // A cancel that arrived between turns must not kill this one.
@@ -209,14 +406,56 @@ impl Agent {
         // worker, so blocking on the async loop here starves nothing.
         let outcome = self.runtime.block_on(async {
             if first {
-                let plan = Plan { steps: vec![text.clone()] };
+                // A one-word "fix it" is not worth a planner turn. Anything
+                // longer gets a real Metis plan so stepwise execution can
+                // engage — the previous ACP path stuffed the prompt in as a
+                // single step and the planner never ran.
+                // A conformance script is defined as one reply per executor
+                // turn. Spending its first reply on Metis makes the scripted
+                // wire test depend on an unrelated planner call.
+                let scripted = std::env::var("KNOSSOS_SCRIPT")
+                    .ok()
+                    .is_some_and(|value| !value.trim().is_empty());
+                let plan = if !scripted && metis::worth_planning(&text) {
+                    metis::plan(
+                        talos.engine.as_ref(),
+                        &talos.themis,
+                        &talos.scribe,
+                        &text,
+                        talos.max_tokens,
+                    )
+                    .await
+                    .unwrap_or_else(|_| Plan {
+                        steps: vec![text.clone()],
+                    })
+                } else {
+                    Plan {
+                        steps: vec![text.clone()],
+                    }
+                };
                 talos.run(&text, &plan).await
             } else {
                 talos.resume(&text).await
             }
         });
 
-        let outcome = outcome.map_err(|e| RpcError::new(-32603, format!("the turn failed: {e}")))?;
+        let outcome =
+            outcome.map_err(|e| RpcError::new(-32603, format!("the turn failed: {e}")))?;
+        let sid = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("session");
+        crate::cameo_board::report(json!({
+            "id": sid,
+            "name": sid,
+            "role": "executor",
+            "mode": "write",
+            "state": outcome.halt.label(),
+            "model": talos.engine.name(),
+            "halt": outcome.halt.label(),
+            "summary": outcome.summary,
+            "files": outcome.changed.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        }));
         Ok(json!({"stopReason": stop_reason(outcome.halt)}))
     }
 
@@ -225,6 +464,100 @@ impl Agent {
         if let Ok(live) = self.live(params) {
             live.cancel.store(true, Ordering::SeqCst);
         }
+    }
+
+    fn list_sessions(&self, params: &Value) -> Value {
+        let cwd = params.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+        let sessions = self.sessions.lock().expect("sessions");
+        let list: Vec<Value> = sessions
+            .iter()
+            .filter(|(_, live)| cwd.as_ref().is_none_or(|wanted| wanted == &live.cwd))
+            .map(|(id, live)| {
+                let talos = live.talos.lock().expect("session in use");
+                let title = talos
+                    .task
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or("New session");
+                json!({
+                    "sessionId": id,
+                    "cwd": live.cwd,
+                    "title": title,
+                })
+            })
+            .collect();
+        json!({ "sessions": list })
+    }
+
+    fn close_session(&self, params: &Value) -> Result<Value, RpcError> {
+        let id = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RpcError::new(INVALID_PARAMS, "sessionId is required"))?;
+        let mut sessions = self.sessions.lock().expect("sessions");
+        if sessions.remove(id).is_none() {
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                format!("no such session: {id}"),
+            ));
+        }
+        Ok(json!({}))
+    }
+
+    fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
+        let live = self.live(params)?;
+        let mode = params
+            .get("modeId")
+            .or_else(|| params.get("mode"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| RpcError::new(INVALID_PARAMS, "session/set_mode needs modeId"))?;
+        let dry = match mode {
+            "write" => false,
+            "preview" | "ask" => true,
+            other => {
+                return Err(RpcError::new(
+                    INVALID_PARAMS,
+                    format!("unknown mode {other:?}; want ask, preview, or write"),
+                ));
+            }
+        };
+        {
+            let mut talos = live.talos.lock().expect("session in use");
+            talos.ctx.set_dry_run(dry);
+        }
+        *live.mode.lock().expect("mode") = mode.to_string();
+        Ok(json!({ "mode": mode }))
+    }
+
+    fn interject(&self, params: &Value) -> Result<Value, RpcError> {
+        let live = self.live(params)?;
+        let text = params
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                params
+                    .get("prompt")
+                    .and_then(Value::as_array)
+                    .map(|blocks| {
+                        blocks
+                            .iter()
+                            .filter_map(|b| b.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+            })
+            .unwrap_or_default();
+        let accepted = live.interjections.push(text);
+        if !accepted {
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                "interjection refused (empty or queue full)",
+            ));
+        }
+        Ok(json!({ "ok": true }))
     }
 }
 
@@ -250,10 +583,16 @@ fn prompt_text(params: &Value) -> String {
     blocks
         .iter()
         .map(|b| match b.get("type").and_then(Value::as_str) {
-            Some("text") => b.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
-            Some("resource_link") => {
-                b.get("uri").and_then(Value::as_str).unwrap_or("").to_string()
-            }
+            Some("text") => b
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            Some("resource_link") => b
+                .get("uri")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
             other => format!("[{} content]", other.unwrap_or("unknown")),
         })
         .filter(|s| !s.is_empty())
@@ -265,10 +604,13 @@ fn prompt_text(params: &Value) -> String {
 struct Notifier {
     peer: PeerHandle,
     session: String,
+    root: PathBuf,
+    history: Arc<Mutex<Vec<Value>>>,
 }
 
 impl Notifier {
     fn send(&self, update: Value) {
+        self.history.lock().expect("history").push(update.clone());
         self.peer.notify(
             "session/update",
             Some(json!({"sessionId": self.session, "update": update})),
@@ -287,18 +629,33 @@ impl Notifier {
                 "sessionUpdate": "agent_message_chunk",
                 "content": {"type": "text", "text": text},
             })),
+            TraceEvent::Thought { text, .. } => self.send(json!({
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"type": "text", "text": text},
+            })),
             // Logged once the call has returned, so it is reported in its final
             // state rather than as pending followed by an update. An editor
             // renders one settled row instead of two.
-            TraceEvent::ToolCall { tool, input, is_error, changed, .. } => self.send(json!({
+            TraceEvent::ToolCall {
+                tool,
+                input,
+                output,
+                is_error,
+                changed,
+                ..
+            } => self.send(json!({
                 "sessionUpdate": "tool_call",
                 "toolCallId": format!("{tool}-{}", short_hash(input)),
                 "title": tool_title(tool, input),
                 "kind": tool_kind(tool),
                 "status": if *is_error { "failed" } else { "completed" },
-                "locations": changed.iter()
-                    .map(|p| json!({"path": p}))
-                    .collect::<Vec<_>>(),
+                "content": [{
+                    "type": "content",
+                    "content": {"type": "text", "text": output},
+                }],
+                "rawInput": input,
+                "rawOutput": output,
+                "locations": tool_locations(&self.root, input, changed),
             })),
             // Everything else is harness bookkeeping — verdicts, compaction,
             // context decisions. Real, but not narration an editor should
@@ -306,6 +663,25 @@ impl Notifier {
             _ => {}
         }
     }
+}
+
+fn tool_locations(root: &Path, input: &Value, changed: &[String]) -> Vec<Value> {
+    let mut paths = changed.iter().map(PathBuf::from).collect::<Vec<PathBuf>>();
+    if let Some(path) = input.get("path").and_then(Value::as_str) {
+        let path = PathBuf::from(path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            root.join(path)
+        };
+        if !paths.iter().any(|known| known == &path) {
+            paths.push(path);
+        }
+    }
+    paths
+        .into_iter()
+        .map(|path| json!({"path": crate::client_io::wire_path(&path)}))
+        .collect()
 }
 
 /// A short, stable discriminator so two calls to the same tool are two rows.
@@ -325,8 +701,8 @@ fn tool_kind(tool: &str) -> &'static str {
         "read_file" | "list_dir" => "read",
         "write_file" | "edit_file" => "edit",
         "search" | "search_code" => "search",
-        "run" => "execute",
-        "delegate" => "think",
+        "run" | "verify" => "execute",
+        "ask_user" | "delegate" => "think",
         _ => "other",
     }
 }
@@ -418,8 +794,7 @@ mod tests {
             "[package]\nname = \"acp-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .expect("manifest");
-        std::fs::write(dir.path().join("src/lib.rs"), "pub fn one() -> u32 { 1 }\n")
-            .expect("lib");
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn one() -> u32 { 1 }\n").expect("lib");
         let root = std::fs::canonicalize(dir.path()).expect("canonicalize");
         (dir, root)
     }
@@ -461,15 +836,16 @@ mod tests {
             });
 
             let rx = Box::new(BufReader::new(server.try_clone().expect("clone")));
-            let mut peer = crate::jsonrpc::Peer::new(rx, Box::new(server))
-                .with_fast_path(is_fast_path);
+            let mut peer =
+                crate::jsonrpc::Peer::new(rx, Box::new(server)).with_fast_path(is_fast_path);
             // Captured here, on a runtime thread. The worker that later calls
             // `block_on` has no runtime of its own to find.
-            let agent =
-                Arc::new(Agent::new(peer.handle(), build, tokio::runtime::Handle::current()));
-            peer.start(move |method: &str, params: Option<Value>, _| {
-                agent.handle(method, params)
-            });
+            let agent = Arc::new(Agent::new(
+                peer.handle(),
+                build,
+                tokio::runtime::Handle::current(),
+            ));
+            peer.start(move |method: &str, params: Option<Value>, _| agent.handle(method, params));
 
             Editor {
                 handle: peer.handle(),
@@ -509,11 +885,16 @@ mod tests {
         /// number blocks forever the moment the agent sends one fewer, which
         /// turns any failure in here into a hung suite instead of a failed test.
         fn turn(&mut self, session: &str, text: &str) -> (Vec<Value>, Value) {
+            self.collect(
+                "session/prompt",
+                json!({"sessionId": session, "prompt": [{"type": "text", "text": text}]}),
+            )
+        }
+
+        fn collect(&mut self, method: &str, params: Value) -> (Vec<Value>, Value) {
             self.next_id += 1;
             let id = self.next_id;
-            let msg = json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt",
-                             "params": {"sessionId": session,
-                                        "prompt": [{"type": "text", "text": text}]}});
+            let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             writeln!(self.tx, "{msg}").expect("write");
             self.tx.flush().expect("flush");
 
@@ -532,7 +913,10 @@ mod tests {
         fn open(&mut self, root: &Path) -> String {
             self.call("initialize", json!({"protocolVersion": 1}));
             let reply = self.call("session/new", json!({"cwd": root, "mcpServers": []}));
-            reply["result"]["sessionId"].as_str().expect("sessionId").to_string()
+            reply["result"]["sessionId"]
+                .as_str()
+                .expect("sessionId")
+                .to_string()
         }
     }
 
@@ -554,6 +938,14 @@ mod tests {
         assert_eq!(reply["result"]["agentInfo"]["name"], json!("daedalus"));
         // Claiming `fs` would advertise a callback this agent never makes.
         assert!(reply["result"]["agentCapabilities"].get("fs").is_none());
+        assert_eq!(
+            reply["result"]["agentCapabilities"]["loadSession"],
+            json!(true)
+        );
+        assert_eq!(
+            reply["result"]["agentCapabilities"]["unstable_forkSession"],
+            json!(true)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -587,14 +979,32 @@ mod tests {
         let (updates, _) = ed.turn(&session, "look around");
 
         assert!(
-            updates.iter().any(|u| u["sessionUpdate"] == "agent_message_chunk"
-                && u["content"]["text"] == "here is my answer"),
+            updates
+                .iter()
+                .any(|u| u["sessionUpdate"] == "agent_message_chunk"
+                    && u["content"]["text"] == "here is my answer"),
             "no agent message in {updates:#?}",
         );
         assert!(
             updates.iter().any(|u| u["sessionUpdate"] == "plan"),
             "no plan in {updates:#?}",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn load_replays_history_without_doubling_it() {
+        let (_dir, root) = workspace();
+        let mut ed = Editor::connect(vec![text_response("here is my answer"); 2]);
+        let session = ed.open(&root);
+        let (first, _) = ed.turn(&session, "look around");
+        assert!(!first.is_empty(), "a turn must produce updates to replay");
+
+        let (replayed, reply) = ed.collect("session/load", json!({"sessionId": session}));
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(replayed, first, "load must replay the same updates");
+
+        let (again, _) = ed.collect("session/load", json!({"sessionId": session}));
+        assert_eq!(again, first, "a second load must not double the history");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -620,7 +1030,46 @@ mod tests {
         // queueing it behind that prompt delivers it after the turn it was
         // meant to stop.
         assert!(is_fast_path("session/cancel"));
+        assert!(is_fast_path("session/interject"));
         assert!(!is_fast_path("session/prompt"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_and_close_sessions() {
+        let (_dir, root) = workspace();
+        let mut ed = Editor::connect(vec![]);
+        let session = ed.open(&root);
+
+        let listed = ed.call("session/list", json!({}));
+        let ids: Vec<_> = listed["result"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s["sessionId"].as_str())
+            .collect();
+        assert!(ids.contains(&session.as_str()), "{listed}");
+
+        let closed = ed.call("session/close", json!({"sessionId": session}));
+        assert!(closed.get("error").is_none(), "{closed}");
+        let listed = ed.call("session/list", json!({}));
+        assert_eq!(listed["result"]["sessions"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn set_mode_preview_stages_writes() {
+        let (_dir, root) = workspace();
+        let mut ed = Editor::connect(vec![]);
+        let session = ed.open(&root);
+        let reply = ed.call(
+            "session/set_mode",
+            json!({"sessionId": session, "mode": "preview"}),
+        );
+        assert_eq!(reply["result"]["mode"], json!("preview"), "{reply}");
+        let bad = ed.call(
+            "session/set_mode",
+            json!({"sessionId": session, "mode": "explode"}),
+        );
+        assert_eq!(bad["error"]["code"], json!(INVALID_PARAMS));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -629,7 +1078,10 @@ mod tests {
         let mut ed = Editor::connect(vec![]);
         let session = ed.open(&root);
 
-        let reply = ed.call("session/prompt", json!({"sessionId": session, "prompt": []}));
+        let reply = ed.call(
+            "session/prompt",
+            json!({"sessionId": session, "prompt": []}),
+        );
         assert_eq!(reply["error"]["code"], json!(INVALID_PARAMS));
     }
 
@@ -658,7 +1110,11 @@ mod tests {
         let a = short_hash(&json!({"path": "a.rs"}));
         let b = short_hash(&json!({"path": "b.rs"}));
         assert_ne!(a, b, "identical ids would collapse two calls into one row");
-        assert_eq!(a, short_hash(&json!({"path": "a.rs"})), "and must be stable");
+        assert_eq!(
+            a,
+            short_hash(&json!({"path": "a.rs"})),
+            "and must be stable"
+        );
     }
 
     #[test]
@@ -669,8 +1125,11 @@ mod tests {
         ]});
         let text = prompt_text(&params);
         assert!(text.contains("fix this"));
-        assert!(text.contains("[image content]"), "silently dropping it looks like nothing \
-                                                    was attached: {text}");
+        assert!(
+            text.contains("[image content]"),
+            "silently dropping it looks like nothing \
+                                                    was attached: {text}"
+        );
     }
 
     #[test]

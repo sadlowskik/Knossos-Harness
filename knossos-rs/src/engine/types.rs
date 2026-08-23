@@ -10,6 +10,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One piece of a reply, delivered while the engine is still generating.
+///
+/// Tool calls are **not** a delta. They are assembled off-stream and appear
+/// only on the finished [`Response`], so a truncated JSON argument cannot
+/// become a dispatched tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamDelta {
+    Text(String),
+    Thought(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -60,11 +71,17 @@ pub struct Message {
 
 impl Message {
     pub fn user(content: Vec<Content>) -> Self {
-        Message { role: Role::User, content }
+        Message {
+            role: Role::User,
+            content,
+        }
     }
 
     pub fn assistant(content: Vec<Content>) -> Self {
-        Message { role: Role::Assistant, content }
+        Message {
+            role: Role::Assistant,
+            content,
+        }
     }
 
     pub fn user_text(s: impl Into<String>) -> Self {
@@ -161,9 +178,7 @@ impl Response {
         self.content
             .iter()
             .filter_map(|c| match c {
-                Content::ToolUse { id, name, input } => {
-                    Some((id.as_str(), name.as_str(), input))
-                }
+                Content::ToolUse { id, name, input } => Some((id.as_str(), name.as_str(), input)),
                 _ => None,
             })
             .collect()

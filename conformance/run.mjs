@@ -34,6 +34,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = dirname(HERE);
 const MODEL = join(REPO, "model");
 const PYTHON = process.env.KNOSSOS_PYTHON || "python";
+const RUST_BIN = process.env.KNOSSOS_ACP_BIN || join(
+  REPO,
+  "knossos-rs",
+  "target",
+  "debug",
+  process.platform === "win32" ? "daedalus.exe" : "daedalus",
+);
 
 // -------------------------------------------------------------- schema checks
 
@@ -92,13 +99,24 @@ function toolCall(tool, args) {
  * `onPermission` receives the raw request so a check can both answer it and
  * assert on its shape.
  */
-function connect({ args, env = {}, onPermission, onElicit,
+function connect({ args = [], env = {}, onPermission, onElicit,
                    buffers: seedBuffers } = {}) {
-  const proc = spawn(PYTHON, args, {
-    cwd: MODEL,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, PYTHONPATH: MODEL, PYTHONUNBUFFERED: "1", ...env },
-  });
+  // Product agent is Rust. Python remains only if KNOSSOS_ACP=python.
+  const usePython = process.env.KNOSSOS_ACP === "python";
+  const proc = usePython
+    ? spawn(PYTHON, args, {
+        cwd: MODEL,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, PYTHONPATH: MODEL, PYTHONUNBUFFERED: "1", ...env },
+      })
+    // Tier 4 would consume another scripted engine reply to judge work that
+    // these protocol checks already verify directly. Keep the deterministic
+    // wire suite focused on ACP; live checks below exercise a real model.
+    : spawn(RUST_BIN, ["acp", "--no-judge"], {
+        cwd: REPO,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ...env },
+      });
 
   const stderr = [];
   proc.stderr.on("data", (d) => stderr.push(d.toString()));
@@ -156,7 +174,12 @@ function connect({ args, env = {}, onPermission, onElicit,
       if (buffers.has(params.path)) return { content: buffers.get(params.path) };
       return { content: readFileSync(params.path, "utf8") };
     },
-    // Named `unstable_` by the SDK, matching how the schema marks elicitation.
+    // Stable in ACP SDK 1.4. Keep the former name below so the suite can still
+    // be run against the lower end of package.json's compatible range.
+    async createElicitation(params) {
+      if (onElicit) return onElicit(params);
+      return { action: "decline" };
+    },
     async unstable_createElicitation(params) {
       if (onElicit) return onElicit(params);
       return { action: "decline" };
@@ -231,7 +254,15 @@ const CAPS = {
 };
 
 function retrievalAgent(opts) {
-  return connect({ args: ["-m", "knossos", "--engine", "retrieval"], ...opts });
+  if (process.env.KNOSSOS_ACP === "python") {
+    return connect({ args: ["-m", "knossos", "--engine", "retrieval"], ...opts });
+  }
+  // Rust has no RetrievalOnlyEngine: a scripted read of the fixture is the
+  // same observable (a tool_call with an absolute path) without a model.
+  return scriptedAgent(
+    [toolCall("read_file", { path: "src/halting.py" }), "halting_probability is in src/halting.py"],
+    opts,
+  );
 }
 
 function scriptedAgent(script, { execute = true, write = false, ...rest } = {}) {
@@ -246,6 +277,13 @@ function scriptedAgent(script, { execute = true, write = false, ...rest } = {}) 
     },
     ...rest,
   });
+}
+
+function refusedWriteScript(path) {
+  return [
+    toolCall("write_file", { path, content: "x = 1\n" }),
+    ...Array(10).fill("The requested write was not permitted, so I stopped."),
+  ];
 }
 
 function updatesOfKind(updates, kind) {
@@ -281,10 +319,18 @@ function liveCheck(name, fn) {
 }
 
 function liveAgent(opts) {
-  const args = ["-m", "knossos", "--engine", "api", "--provider", LIVE_PROVIDER];
-  if (LIVE_MODEL) args.push("--model", LIVE_MODEL);
-  if (opts?.execute) args.push("--execute");
-  return connect({ args, ...opts });
+  if (process.env.KNOSSOS_ACP === "python") {
+    const args = ["-m", "knossos", "--engine", "api", "--provider", LIVE_PROVIDER];
+    if (LIVE_MODEL) args.push("--model", LIVE_MODEL);
+    if (opts?.execute) args.push("--execute");
+    return connect({ args, ...opts });
+  }
+  return connect({
+    env: {
+      ...(LIVE_MODEL ? { DAEDALUS_MODEL: LIVE_MODEL } : {}),
+    },
+    ...opts,
+  });
 }
 
 check("handshake reports a valid InitializeResponse", async () => {
@@ -438,7 +484,7 @@ check("a write asks permission, and the request validates", async () => {
 });
 
 check("rejecting a write prevents it", async () => {
-  const a = scriptedAgent([toolCall("write_file", { path: "nope.py", content: "x = 1\n" }), "Done."], {
+  const a = scriptedAgent(refusedWriteScript("nope.py"), {
     write: true,
     onPermission(params) {
       const reject = params.options.find((o) => o.kind === "reject_once") || params.options[0];
@@ -460,7 +506,7 @@ check("rejecting a write prevents it", async () => {
 });
 
 check("cancelling a permission prompt is not consent", async () => {
-  const a = scriptedAgent([toolCall("write_file", { path: "nope.py", content: "x = 1\n" }), "Done."], {
+  const a = scriptedAgent(refusedWriteScript("nope.py"), {
     write: true,
     onPermission() {
       return { outcome: { outcome: "cancelled" } };
@@ -884,7 +930,7 @@ async function main() {
 
   console.log(`\nKnossos ACP conformance`);
   console.log(`  client   @agentclientprotocol/sdk (protocol v${acp.PROTOCOL_VERSION})`);
-  console.log(`  agent    ${PYTHON} -m knossos  (cwd ${MODEL})`);
+  console.log(`  agent    ${process.env.KNOSSOS_ACP === "python" ? `${PYTHON} -m knossos` : RUST_BIN}`);
   console.log(`  live     ${LIVE ? `${LIVE_PROVIDER}/${LIVE_MODEL || "default"}` : "off"}\n`);
 
   for (const c of checks) {

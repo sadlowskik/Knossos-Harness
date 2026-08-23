@@ -87,6 +87,16 @@ class RoPEAttention(nn.Module):
         self.register_buffer("cos", cos)
         self.register_buffer("sin", sin)
 
+    def init_cache(self, batch_size: int, max_len: int, *, device=None,
+                   dtype=None) -> dict:
+        """Preallocate an append-only cache; avoids concatenating every token."""
+        device = device or self.cos.device
+        dtype = dtype or self.qkv.weight.dtype
+        shape = (batch_size, self.n_kv_head, max_len, self.hd)
+        return {"k_buf": torch.empty(shape, device=device, dtype=dtype),
+                "v_buf": torch.empty(shape, device=device, dtype=dtype),
+                "length": 0}
+
     def forward(self, x: torch.Tensor, doc_ids: Optional[torch.Tensor] = None,
                 cache: Optional[dict] = None, pos_offset: int = 0) -> torch.Tensor:
         b, t, c = x.shape
@@ -106,10 +116,22 @@ class RoPEAttention(nn.Module):
         q, k = apply_rope(q, cos, sin), apply_rope(k, cos, sin)
 
         if cache is not None:
-            if cache.get("k") is not None:
+            if "k_buf" in cache:
+                start = int(cache.get("length", 0))
+                end = start + t
+                if end > cache["k_buf"].shape[2]:
+                    raise ValueError("KV cache capacity exceeded")
+                cache["k_buf"][:, :, start:end].copy_(k)
+                cache["v_buf"][:, :, start:end].copy_(v)
+                cache["length"] = end
+                k = cache["k_buf"][:, :, :end]
+                v = cache["v_buf"][:, :, :end]
+            elif cache.get("k") is not None:
                 k = torch.cat([cache["k"], k], dim=2)
                 v = torch.cat([cache["v"], v], dim=2)
-            cache["k"], cache["v"] = k, v
+                cache["k"], cache["v"] = k, v
+            else:
+                cache["k"], cache["v"] = k, v
         if self.n_rep > 1:
             k = k.repeat_interleave(self.n_rep, dim=1)
             v = v.repeat_interleave(self.n_rep, dim=1)

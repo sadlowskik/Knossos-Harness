@@ -24,6 +24,7 @@ use anyhow::Result;
 use crate::ariadne::{Ariadne, Halt, StepOutcome};
 use crate::diff::FileDiff;
 use crate::engine::{self, Content, Engine, Message, Request};
+use crate::episode::{self, EpisodeStore, Record};
 use crate::metis::Plan;
 use crate::oracle::{Oracle, Verdict};
 use crate::scribe::SymbolIndex;
@@ -60,6 +61,25 @@ const EMPTY_REPLY_NOTE: &str =
 /// would test.
 pub const FUTILE_WINDOW: usize = 4;
 
+/// Floor for a plan-step budget. A step given fewer turns cannot both act
+/// and ask to be verified, so the plan would be decorative.
+const MIN_STEP_BUDGET: usize = 3;
+
+/// First `Stuck` is a redirect, not a halt. A second one in the same drive
+/// is the honest stop the constitution requires. One, not more: extra
+/// redirects would spend the ceiling the way β=0.01 spent every loop.
+const MAX_REDIRECTS: usize = 1;
+
+/// How thoroughly a drive consults Oracle.
+#[derive(Clone, Copy)]
+enum VerifyMode {
+    /// The full ladder, plus tier 4 when the caller asked for a judge.
+    Full,
+    /// Tier 0 only — used between plan steps, where cargo test after every
+    /// step would cost more than the plan saves.
+    Quick,
+}
+
 /// Fed back when the engine repeats a call that achieved nothing.
 ///
 /// Halting is the backstop; the cheaper outcome is the engine noticing it is
@@ -89,7 +109,7 @@ const NOTHING_DONE_NOTE: &str =
 /// is enabled, which this crate does not enable, so two calls with the same
 /// arguments in a different order already serialise identically. That is what
 /// makes this comparable without a hand-rolled canonicaliser.
-fn signature(calls: &[(String, String, serde_json::Value)]) -> String {
+pub(crate) fn signature(calls: &[(String, String, serde_json::Value)]) -> String {
     let pairs: Vec<serde_json::Value> = calls
         .iter()
         .map(|(_, name, input)| serde_json::json!([name, input]))
@@ -183,6 +203,20 @@ pub struct Talos {
     pub changed: BTreeSet<PathBuf>,
     /// The original task, kept so tier 4 can still judge against it on resume.
     pub task: String,
+    /// Whether a passing verifier must be backed by a consequential action.
+    /// `None` derives the answer from task language; eval cases set it from
+    /// their explicit `expected_action` contract.
+    require_action: Option<bool>,
+    /// Failed hypotheses and attempts that survive Lethe and process restart.
+    pub episodes: EpisodeStore,
+    /// Ablation switch: when false, neither recall nor durable writes occur.
+    episodes_enabled: bool,
+    attempt_seq: usize,
+    current_attempt: String,
+    attempt_parent: Option<String>,
+    /// Unused tail of a multi-step plan. Empty on a flat drive. The supervisor
+    /// replaces this on redirect; `drive_plan` splices it back.
+    plan_remainder: Vec<String>,
 }
 
 impl Talos {
@@ -200,6 +234,7 @@ impl Talos {
         max_tokens: u32,
         judge: bool,
     ) -> Self {
+        let episodes = EpisodeStore::open(ctx.root());
         Talos {
             engine,
             tools,
@@ -220,8 +255,92 @@ impl Talos {
             messages: Vec::new(),
             changed: BTreeSet::new(),
             task: String::new(),
+            require_action: None,
+            episodes,
+            episodes_enabled: true,
+            attempt_seq: 0,
+            current_attempt: String::new(),
+            attempt_parent: None,
+            plan_remainder: Vec::new(),
         }
     }
+
+    pub fn set_require_action(&mut self, require: bool) {
+        self.require_action = Some(require);
+    }
+
+    pub fn disable_memory(&mut self) {
+        self.episodes_enabled = false;
+    }
+}
+
+fn task_requires_action(task: &str) -> bool {
+    let lower = task.to_ascii_lowercase();
+    let trimmed = lower.trim();
+    // Pronoun-only imperatives do not identify an object or desired outcome.
+    // Completing them without first asking would be a guess, so clarification
+    // itself is allowed to be the successful action.
+    if matches!(trimmed, "fix it" | "change it" | "update it" | "do it") {
+        return false;
+    }
+    if lower.contains("fix it if ")
+        || lower.contains("change it if ")
+        || lower.contains("only if reproducible")
+    {
+        return false;
+    }
+    if trimmed.ends_with('?')
+        || [
+            "where ",
+            "what ",
+            "which ",
+            "why ",
+            "how ",
+            "explain ",
+            "tell me ",
+            "read ",
+            "investigate ",
+            "find where ",
+            "locate ",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return false;
+    }
+    let words: std::collections::BTreeSet<_> = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .filter(|word| !word.is_empty())
+        .collect();
+    [
+        "add",
+        "build",
+        "change",
+        "configure",
+        "create",
+        "delete",
+        "disable",
+        "enable",
+        "extract",
+        "fix",
+        "implement",
+        "make",
+        "migrate",
+        "refactor",
+        "remove",
+        "rename",
+        "repair",
+        "replace",
+        "route",
+        "run",
+        "ship",
+        "test",
+        "update",
+        "verify",
+        "write",
+    ]
+    .iter()
+    .any(|word| words.contains(word))
 }
 
 #[derive(Debug, Clone)]
@@ -277,7 +396,10 @@ impl Talos {
 
         let context = decision
             .inject
-            .then(|| gate.argus().context(query, Self::CONTEXT_BUDGET, Self::CONTEXT_HOPS))
+            .then(|| {
+                gate.argus()
+                    .context(query, Self::CONTEXT_BUDGET, Self::CONTEXT_HOPS)
+            })
             .filter(|c| !c.hits.is_empty());
 
         self.session.log(&TraceEvent::ContextConsidered {
@@ -308,7 +430,9 @@ impl Talos {
 
     /// Start a fresh task, discarding any previous conversation.
     pub async fn run(&mut self, task: &str, plan: &Plan) -> Result<Outcome> {
-        self.session.log(&TraceEvent::PlanProduced { steps: plan.steps.clone() });
+        self.session.log(&TraceEvent::PlanProduced {
+            steps: plan.steps.clone(),
+        });
 
         self.task = task.to_string();
         self.changed.clear();
@@ -323,10 +447,29 @@ impl Talos {
             "\n\nWork through it. When everything is complete, reply with a short summary \
              and no tool calls — verification runs automatically.",
         );
+        if let Some(brief) = self.recall_brief() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&brief);
+        }
         self.messages = vec![Message::user_text(prompt)];
 
         self.mark_turn();
-        self.drive().await
+        // Stepwise execution needs enough room for every slice plus a closing
+        // verifier pass. When the configured hard ceiling cannot fund that,
+        // flatten the already-rendered plan into one ordinary drive. Flooring
+        // every slice at `MIN_STEP_BUDGET` used to turn an 8-turn ceiling and a
+        // three-step plan into as many as 12 turns, while also forcing simple
+        // read/read/edit work to stop at each artificial boundary.
+        let stepwise_min = plan
+            .steps
+            .len()
+            .saturating_add(1)
+            .saturating_mul(MIN_STEP_BUDGET);
+        if plan.steps.len() > 1 && self.ariadne.max_steps >= stepwise_min {
+            self.drive_plan(plan).await
+        } else {
+            self.drive().await
+        }
     }
 
     /// Continue the existing conversation with new instructions.
@@ -335,7 +478,9 @@ impl Talos {
     /// allowance, rather than one budget draining across a long session.
     pub async fn resume(&mut self, instruction: &str) -> Result<Outcome> {
         if self.messages.is_empty() {
-            let plan = Plan { steps: vec![instruction.to_string()] };
+            let plan = Plan {
+                steps: vec![instruction.to_string()],
+            };
             return self.run(instruction, &plan).await;
         }
         // Gated per turn, not once per session: the conversation may have moved
@@ -345,9 +490,169 @@ impl Talos {
         if let Some(context) = self.repository_context(instruction) {
             prompt.push_str(&Self::frame_context(&context));
         }
+        if let Some(brief) = self.recall_brief() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&brief);
+        }
         self.messages.push(Message::user_text(prompt));
         self.mark_turn();
         self.drive().await
+    }
+
+    /// Run each plan step under its own budget, checking as it goes.
+    ///
+    /// Two things a flat loop cannot do:
+    ///
+    /// **A step cannot spend the whole budget.** Each gets an equal slice of
+    /// the allowance minus a reserve for closing, floored at
+    /// [`MIN_STEP_BUDGET`]. One step thrashing can no longer starve the rest.
+    ///
+    /// **Breakage is caught where it happened.** Between steps only tier 0
+    /// runs. A step that leaves the tree unparseable is rolled back to the
+    /// checkpoint taken before it, so the next step is not built on broken
+    /// source. The full ladder is reserved for the closing drive.
+    async fn drive_plan(&mut self, plan: &Plan) -> Result<Outcome> {
+        let mut steps = plan.steps.clone();
+        let reserve = MIN_STEP_BUDGET.max(self.ariadne.max_steps / 4);
+        let available = MIN_STEP_BUDGET.max(self.ariadne.max_steps.saturating_sub(reserve));
+        let mut per_step = MIN_STEP_BUDGET.max(available / steps.len().max(1));
+
+        let mut used = 0usize;
+        let mut worked = false;
+        let mut index = 0usize;
+
+        while index < steps.len() {
+            if self.cancel.swap(false, Ordering::SeqCst) {
+                return Ok(self.finish(Halt::Cancelled, used, None, "cancelled by the caller"));
+            }
+
+            let step = steps[index].clone();
+            self.messages.push(Message::user_text(format!(
+                "## Step {} of {}\n{step}\n\nDo only this step. The remaining steps \
+                 are not yours to start.",
+                index + 1,
+                steps.len()
+            )));
+
+            let budget = Ariadne {
+                max_steps: per_step,
+                target_steps: per_step.saturating_sub(1).max(1),
+                stuck_after: self.ariadne.stuck_after,
+            };
+            let mark = self.ctx.checkpoint(format!("step-{}", index + 1));
+            self.plan_remainder = steps[index + 1..].to_vec();
+
+            let require_action = self
+                .require_action
+                .unwrap_or_else(|| task_requires_action(&self.task));
+            let outcome = self
+                .drive_with(budget, VerifyMode::Quick, require_action)
+                .await?;
+            used = used.saturating_add(outcome.steps_used);
+
+            // Supervisor may have replaced the unused tail.
+            let mut rebuilt = steps[..=index].to_vec();
+            rebuilt.extend(self.plan_remainder.iter().cloned());
+            steps = rebuilt;
+
+            if outcome.succeeded() {
+                worked = true;
+            } else {
+                let reverted = self.revert_broken_step(&mark, &outcome);
+                if !reverted.is_empty() {
+                    let names = reverted
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.messages.push(Message::user_text(format!(
+                        "Step {} left the tree unparseable, so it was undone: {names} \
+                         {} back to the state before that step. Nothing after it was \
+                         built on the broken version. Try a different approach.",
+                        index + 1,
+                        if reverted.len() == 1 { "is" } else { "are" }
+                    )));
+                } else {
+                    self.messages.push(Message::user_text(format!(
+                        "Step {} ended as {} rather than verified. Carry what you \
+                         learned into the next step; do not restart the plan.",
+                        index + 1,
+                        outcome.halt.label()
+                    )));
+                }
+                // Re-divide whatever budget is left if the tail is still long.
+                // Replanning is not wired yet; this keeps the arithmetic ready
+                // so a revision cannot starve every remaining step.
+                let left = steps.len().saturating_sub(index + 1).max(1);
+                per_step = MIN_STEP_BUDGET.max(available.saturating_sub(used) / left);
+            }
+
+            index += 1;
+        }
+
+        if self.cancel.swap(false, Ordering::SeqCst) {
+            return Ok(self.finish(Halt::Cancelled, used, None, "cancelled by the caller"));
+        }
+
+        self.messages.push(Message::user_text(format!(
+            "## Plan complete\nAll {} steps have been attempted. Confirm the \
+             original task is done, repair anything outstanding, then reply \
+             without a tool call so verification can run.",
+            steps.len()
+        )));
+
+        let closing = Ariadne {
+            max_steps: reserve,
+            target_steps: reserve.saturating_sub(1).max(1),
+            stuck_after: self.ariadne.stuck_after,
+        };
+        // Relaxed only when the plan actually accomplished something.
+        // Otherwise this phase is a second door onto "every step did
+        // nothing, then a verdict over an empty change set reports success."
+        let task_requires_action = self
+            .require_action
+            .unwrap_or_else(|| task_requires_action(&self.task));
+        let final_outcome = self
+            .drive_with(closing, VerifyMode::Full, task_requires_action && !worked)
+            .await?;
+
+        Ok(Outcome {
+            halt: final_outcome.halt,
+            steps_used: used.saturating_add(final_outcome.steps_used),
+            changed: final_outcome.changed,
+            verdict: final_outcome.verdict,
+            summary: final_outcome.summary,
+            dry_run: final_outcome.dry_run,
+        })
+    }
+
+    /// Undo a plan step that left the tree unparseable. Returns what moved.
+    ///
+    /// Narrow on purpose:
+    ///
+    /// * Only on a real failed verdict. A step that ran out of budget without
+    ///   reaching the verifier proves nothing about the tree.
+    /// * Only what that step wrote. The mark is a journal position.
+    /// * Only on disk. A dry run stages rather than writes, so the journal
+    ///   is empty and this is a no-op — staging is already the undo.
+    fn revert_broken_step(&mut self, mark: &str, outcome: &Outcome) -> Vec<PathBuf> {
+        let Some(verdict) = &outcome.verdict else {
+            return Vec::new();
+        };
+        if verdict.passed {
+            return Vec::new();
+        }
+        let Ok(restored) = self.ctx.rewind(mark) else {
+            return Vec::new();
+        };
+        for path in &restored {
+            let _ = self.scribe.refresh(path);
+            let gone = !path.exists() && !self.ctx.root().join(path).exists();
+            if gone {
+                self.changed.remove(path);
+            }
+        }
+        restored
     }
 
     /// The label every turn is checkpointed under.
@@ -448,7 +753,203 @@ impl Talos {
         approver.approve(name, input).await
     }
 
+    fn recall_brief(&self) -> Option<String> {
+        if !self.episodes_enabled {
+            return None;
+        }
+        let records = self.episodes.recall(&self.task, 8);
+        let brief = episode::render_brief(&records);
+        if brief.is_empty() {
+            None
+        } else {
+            Some(brief)
+        }
+    }
+
+    fn inject_recall(&mut self) {
+        if let Some(brief) = self.recall_brief() {
+            self.messages.push(Message::user_text(brief));
+        }
+    }
+
+    fn begin_attempt(&mut self) {
+        self.attempt_seq += 1;
+        let id = format!("attempt-{}", self.attempt_seq);
+        self.ctx.checkpoint(&id);
+        self.current_attempt = id;
+    }
+
+    fn record_hypothesis(&mut self, step: usize, signature: &str, detail: &str) {
+        if self.episodes_enabled {
+            self.episodes.record(Record::Hypothesis {
+                task: self.task.clone(),
+                signature: signature.to_string(),
+                detail: detail.to_string(),
+                step,
+            });
+        }
+        self.session.log(&TraceEvent::Hypothesis {
+            step,
+            signature: signature.to_string(),
+            detail: detail.to_string(),
+        });
+    }
+
+    fn persist_attempt(&mut self, halt: Halt, verdict: &Option<Verdict>) {
+        if self.current_attempt.is_empty() {
+            return;
+        }
+        let summary = match verdict {
+            Some(v) => v.summary(),
+            None => "never reached verification".to_string(),
+        };
+        if self.episodes_enabled {
+            self.episodes.record(Record::Attempt {
+                id: self.current_attempt.clone(),
+                parent: self.attempt_parent.clone(),
+                halt: halt.label().to_string(),
+                changed: self
+                    .changed
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+                summary,
+                task: self.task.clone(),
+            });
+        }
+    }
+
+    /// One redirect: remember what failed, optionally rewind a broken tree,
+    /// then keep going on a fresh attempt under the same budget.
+    async fn redirect(
+        &mut self,
+        step: usize,
+        forbidden: &[String],
+        last_verdict: &Option<Verdict>,
+    ) {
+        let from = self.current_attempt.clone();
+        self.persist_attempt(Halt::Stuck, last_verdict);
+        if self.episodes_enabled {
+            self.episodes.record(Record::Redirect {
+                from_attempt: from.clone(),
+                forbidden: forbidden.to_vec(),
+                reason: "stuck".to_string(),
+                task: self.task.clone(),
+            });
+        }
+
+        let broken = last_verdict.as_ref().is_some_and(|v| !v.passed);
+        if broken && !from.is_empty() {
+            if let Ok(restored) = self.ctx.rewind(&from) {
+                for path in &restored {
+                    let _ = self.scribe.refresh(path);
+                    self.changed.remove(path);
+                }
+            }
+        }
+
+        self.attempt_parent = Some(from.clone());
+        self.begin_attempt();
+
+        if !self.plan_remainder.is_empty() {
+            let remaining = self.plan_remainder.join("\n");
+            let forbid = if forbidden.is_empty() {
+                String::new()
+            } else {
+                format!("\nDo not retry these calls:\n{}", forbidden.join("\n"))
+            };
+            let task = format!("{}\n\nRemaining work:\n{remaining}{forbid}", self.task);
+            if let Ok(plan) = crate::metis::plan(
+                self.engine.as_ref(),
+                &self.themis,
+                &self.scribe,
+                &task,
+                self.max_tokens,
+            )
+            .await
+            {
+                if !plan.is_empty() {
+                    self.plan_remainder = plan.steps;
+                }
+            }
+        }
+
+        let mut note = String::from(
+            "SUPERVISOR: consecutive steps made no progress. Do not retry the \
+             approaches below. Take a different approach, or state plainly what \
+             is blocking you.",
+        );
+        if !forbidden.is_empty() {
+            note.push_str("\nAlready tried:\n");
+            for sig in forbidden {
+                note.push_str("- ");
+                note.push_str(sig);
+                note.push('\n');
+            }
+        }
+        if let Some(brief) = self.recall_brief() {
+            note.push('\n');
+            note.push_str(&brief);
+        }
+        self.messages.push(Message::user_text(note));
+        self.session.log(&TraceEvent::Redirected {
+            step,
+            attempt: from,
+            forbidden: forbidden.to_vec(),
+        });
+    }
+
+    async fn apply_verify(&mut self, step: usize, full: bool) -> Verdict {
+        let files: Vec<PathBuf> = self.changed.iter().cloned().collect();
+        let verdict = if self.ctx.is_dry_run() {
+            self.oracle
+                .verify_staged(self.scribe.adapter(), &self.ctx.staged_contents())
+        } else if full {
+            match self.oracle.verify(self.scribe.adapter(), &files).await {
+                Ok(v) => v,
+                Err(e) => Verdict {
+                    passed: false,
+                    reached_tier: 0,
+                    tiers: vec![crate::oracle::TierResult {
+                        tier: 0,
+                        label: "verify".into(),
+                        passed: false,
+                        detail: format!("verify failed to run: {e:#}"),
+                        skipped: false,
+                        forgiven: false,
+                    }],
+                    dry_run: false,
+                },
+            }
+        } else {
+            self.oracle.quick(self.scribe.adapter(), &files)
+        };
+        for tier in &verdict.tiers {
+            self.session.log(&TraceEvent::OracleVerdict {
+                step,
+                tier: tier.label.clone(),
+                passed: tier.passed,
+                summary: tier.detail.clone(),
+            });
+        }
+        verdict
+    }
+
     async fn drive(&mut self) -> Result<Outcome> {
+        self.plan_remainder.clear();
+        let require_action = self
+            .require_action
+            .unwrap_or_else(|| task_requires_action(&self.task));
+        self.drive_with(self.ariadne, VerifyMode::Full, require_action)
+            .await
+    }
+
+    async fn drive_with(
+        &mut self,
+        budget: Ariadne,
+        verify: VerifyMode,
+        require_action: bool,
+    ) -> Result<Outcome> {
         // Before the agent changes anything: whatever fails now is not its
         // doing, and this is the only moment at which that can be established.
         // Idempotent, so a resumed session pays for it once. Skipped in a dry
@@ -457,9 +958,14 @@ impl Talos {
             self.oracle.prepare(self.scribe.adapter()).await?;
         }
 
+        self.begin_attempt();
+
         let mut noops = 0usize;
         let mut last_verdict: Option<Verdict> = None;
         let mut last_text = String::new();
+        let mut redirects_used = 0usize;
+        let mut forbidden: Vec<String> = Vec::new();
+        let mut reusable_verdict: Option<Verdict> = None;
         // Successful calls to tools that can change something outside the
         // conversation, this turn. The discriminator between "verified" and
         // "verified nothing": every tier is satisfied vacuously by an empty
@@ -483,7 +989,7 @@ impl Talos {
         // should get a fresh idea of what "again" means.
         let mut recent: VecDeque<String> = VecDeque::with_capacity(FUTILE_WINDOW);
 
-        for step in 1..=self.ariadne.max_steps {
+        for step in 1..=budget.max_steps {
             // Checked before the engine call rather than after, so cancelling
             // stops the next request going out instead of paying for a turn
             // whose answer is already unwanted.
@@ -493,7 +999,7 @@ impl Talos {
                 return Ok(self.finish(Halt::Cancelled, step - 1, last_verdict, &last_text));
             }
 
-            if let Some(note) = self.ariadne.pressure(step) {
+            if let Some(note) = budget.pressure(step) {
                 self.messages.push(Message::user_text(note));
             }
 
@@ -507,9 +1013,10 @@ impl Talos {
                     step,
                     notes: interjected.clone(),
                 });
-                self.messages.push(Message::user_text(
-                    crate::interject::Interjections::render(&interjected),
-                ));
+                self.messages
+                    .push(Message::user_text(crate::interject::Interjections::render(
+                        &interjected,
+                    )));
             }
 
             self.session.log(&TraceEvent::StepStarted {
@@ -526,6 +1033,10 @@ impl Talos {
                     step,
                     tokens: crate::lethe::estimate_tokens(&self.messages),
                 });
+                // Compacted tool output is exactly the evidence the next step
+                // would have learned from. Put the durable remainder back
+                // after shrinking, not before: Lethe would elide it too.
+                self.inject_recall();
             }
 
             let req = Request::new(
@@ -535,26 +1046,43 @@ impl Talos {
             .with_tools(self.tools.defs())
             .with_max_tokens(self.max_tokens);
 
-            let resp = engine::complete(self.engine.as_ref(), &req).await?;
+            let streamed = std::sync::atomic::AtomicBool::new(false);
+            let resp = {
+                let session = &self.session;
+                engine::complete_stream(self.engine.as_ref(), &req, &|delta| match delta {
+                    crate::engine::StreamDelta::Text(text) if !text.is_empty() => {
+                        streamed.store(true, Ordering::SeqCst);
+                        session.log(&TraceEvent::AgentMessage { step, text });
+                    }
+                    crate::engine::StreamDelta::Thought(text) if !text.is_empty() => {
+                        session.log(&TraceEvent::Thought { step, text });
+                    }
+                    _ => {}
+                })
+                .await?
+            };
 
             // Recorded before anything downstream touches either side, so the
             // pair is exactly what crossed the wire. Guarded rather than
             // logged unconditionally: the clone copies the whole conversation,
             // and a run that is not collecting should not pay for it.
             if self.session.collects_exchanges() {
-                self.session.log(&TraceEvent::Exchange {
-                    step,
-                    request: req.clone(),
-                    response: resp.clone(),
-                });
+                self.session.log_exchange(step, &req, &resp);
             }
 
             self.messages.push(resp.as_message());
             let reply_text = resp.text();
             if !reply_text.trim().is_empty() {
                 last_text = reply_text.clone();
-                self.session
-                    .log(&TraceEvent::AgentMessage { step, text: reply_text.clone() });
+                // One-shot engines (MockEngine) never fire deltas; keep the
+                // existing single AgentMessage so halt tests and traces stay
+                // the same. Streaming engines already logged each chunk.
+                if !streamed.load(Ordering::SeqCst) {
+                    self.session.log(&TraceEvent::AgentMessage {
+                        step,
+                        text: reply_text.clone(),
+                    });
+                }
             }
 
             // Own the calls so `resp` is not borrowed across the awaits below.
@@ -570,31 +1098,44 @@ impl Talos {
                 // An engine that said nothing has not claimed to be finished,
                 // so there is nothing to verify. Verifying here is what turns a
                 // truncated reply into a *passing* run.
-                self.messages.push(Message::user_text(EMPTY_REPLY_NOTE.to_string()));
+                self.messages
+                    .push(Message::user_text(EMPTY_REPLY_NOTE.to_string()));
             } else if calls.is_empty() {
                 // The engine believes it is finished. Oracle decides.
+                // A `verify` call on the immediately previous step already ran
+                // the ladder; running it twice would tax the suite and teach
+                // the engine nothing.
                 let files: Vec<PathBuf> = self.changed.iter().cloned().collect();
-                let mut verdict = if self.ctx.is_dry_run() {
+                let mut verdict = if let Some(prior) = reusable_verdict.take() {
+                    prior
+                } else if self.ctx.is_dry_run() {
                     // Nothing is on disk, so cargo would compile the old code
                     // and report a pass about the wrong source.
                     self.oracle
                         .verify_staged(self.scribe.adapter(), &self.ctx.staged_contents())
+                } else if matches!(verify, VerifyMode::Quick) {
+                    self.oracle.quick(self.scribe.adapter(), &files)
                 } else {
                     self.oracle.verify(self.scribe.adapter(), &files).await?
                 };
 
-                for tier in &verdict.tiers {
-                    self.session.log(&TraceEvent::OracleVerdict {
-                        step,
-                        tier: tier.label.clone(),
-                        passed: tier.passed,
-                        summary: tier.detail.clone(),
-                    });
+                if last_verdict.as_ref().map(|v| v.summary()) != Some(verdict.summary()) {
+                    for tier in &verdict.tiers {
+                        self.session.log(&TraceEvent::OracleVerdict {
+                            step,
+                            tier: tier.label.clone(),
+                            passed: tier.passed,
+                            summary: tier.detail.clone(),
+                        });
+                    }
                 }
 
                 // Tier 4 is reachable only once every deterministic tier passed
                 // — which `deterministic_tiers_passed` denies for a dry run.
-                if verdict.deterministic_tiers_passed() && self.judge {
+                if matches!(verify, VerifyMode::Full)
+                    && verdict.deterministic_tiers_passed()
+                    && self.judge
+                {
                     let t4 = crate::oracle::judge(
                         self.engine.as_ref(),
                         &self.themis,
@@ -618,11 +1159,12 @@ impl Talos {
                 // A pass over a run that did nothing is not a completion. The
                 // engine may request verification at any point; it may not be
                 // told it succeeded merely by declining to act.
-                outcome.verdict_passed = Some(verdict.passed && acted > 0);
+                outcome.verdict_passed = Some(verdict.passed && (acted > 0 || !require_action));
                 if !verdict.passed {
                     self.messages.push(Message::user_text(verdict.report()));
-                } else if acted == 0 {
-                    self.messages.push(Message::user_text(NOTHING_DONE_NOTE.to_string()));
+                } else if acted == 0 && require_action {
+                    self.messages
+                        .push(Message::user_text(NOTHING_DONE_NOTE.to_string()));
                 }
                 last_verdict = Some(verdict);
             } else {
@@ -654,7 +1196,16 @@ impl Talos {
                         });
                         continue;
                     }
-                    let out = self.tools.dispatch(name, input, &self.ctx).await;
+                    let out = if name == crate::tools::verify::NAME {
+                        let full = crate::tools::verify::wants_full(input);
+                        let verdict = self.apply_verify(step, full).await;
+                        let content = verdict.report();
+                        last_verdict = Some(verdict.clone());
+                        reusable_verdict = Some(verdict);
+                        crate::tools::ToolOutput::ok(content)
+                    } else {
+                        self.tools.dispatch(name, input, &self.ctx).await
+                    };
                     outcome.tool_calls += 1;
                     outcome.files_changed += out.changed.len();
                     if !out.is_error && self.tools.is_consequential(name) {
@@ -671,13 +1222,22 @@ impl Talos {
                         }
                     }
 
+                    if out.is_error {
+                        let one = signature(&[(id.clone(), name.clone(), input.clone())]);
+                        self.record_hypothesis(step, &one, &out.content);
+                    }
+
                     self.session.log(&TraceEvent::ToolCall {
                         step,
                         tool: name.clone(),
                         input: input.clone(),
                         output: out.content.clone(),
                         is_error: out.is_error,
-                        changed: out.changed.iter().map(|p| p.display().to_string()).collect(),
+                        changed: out
+                            .changed
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect(),
                     });
 
                     results.push(Content::ToolResult {
@@ -689,7 +1249,10 @@ impl Talos {
                 self.messages.push(Message::user(results));
 
                 let sig = signature(&calls);
-                outcome.repeated = recent.contains(&sig);
+                outcome.repeated = recent.contains(&sig) || forbidden.iter().any(|f| f == &sig);
+                if outcome.files_changed > 0 {
+                    reusable_verdict = None;
+                }
                 // A step that changed something is where "again" starts over:
                 // whatever the model was circling, it is no longer circling it,
                 // and the reads that led up to the change must not be held
@@ -705,8 +1268,9 @@ impl Talos {
                 if recent.len() == FUTILE_WINDOW {
                     recent.pop_front();
                 }
-                recent.push_back(sig);
+                recent.push_back(sig.clone());
                 if outcome.is_futile() {
+                    self.record_hypothesis(step, &sig, "repeated call changed nothing");
                     self.messages
                         .push(Message::user_text(REPEATED_CALL_NOTE.to_string()));
                 }
@@ -722,7 +1286,20 @@ impl Talos {
                 noops += 1;
             }
 
-            let halt = self.ariadne.assess(step, &outcome, noops);
+            let halt = budget.assess(step, &outcome, noops);
+            if halt == Halt::Stuck && redirects_used < MAX_REDIRECTS {
+                redirects_used += 1;
+                // Snapshot the window, not every idle call of the drive:
+                // a write that made progress must still be allowed to retry
+                // an earlier read. After the redirect those signatures are
+                // the thing not to repeat.
+                let snap: Vec<String> = recent.iter().cloned().collect();
+                self.redirect(step, &snap, &last_verdict).await;
+                forbidden = snap;
+                noops = 0;
+                recent.clear();
+                continue;
+            }
             if halt.is_terminal() {
                 return Ok(self.finish(halt, step, last_verdict, &last_text));
             }
@@ -730,17 +1307,18 @@ impl Talos {
 
         // Unreachable in practice: `assess` returns BudgetExhausted at
         // max_steps. Kept so the function is total rather than relying on it.
-        let steps = self.ariadne.max_steps;
+        let steps = budget.max_steps;
         Ok(self.finish(Halt::BudgetExhausted, steps, last_verdict, &last_text))
     }
 
     fn finish(
-        &self,
+        &mut self,
         halt: Halt,
         step: usize,
         verdict: Option<Verdict>,
         last_text: &str,
     ) -> Outcome {
+        self.persist_attempt(halt, &verdict);
         let summary = self.summarize(halt, &verdict, last_text);
         self.session.log(&TraceEvent::Halt {
             step,
@@ -768,10 +1346,13 @@ impl Talos {
             None => "never reached verification".to_string(),
         };
         let base = match halt {
-            Halt::Done if self.ctx.is_dry_run() => {
-                format!("Finished (preview only, nothing written) — {verdict_line}.")
+            Halt::Done if self.ctx.is_dry_run() => format!(
+                "Finished (preview only, nothing written) — {verdict_line}. \
+                 Final answer: {last_text}"
+            ),
+            Halt::Done => {
+                format!("Completed and verified — {verdict_line}. Final answer: {last_text}")
             }
-            Halt::Done => format!("Completed and verified — {verdict_line}."),
             Halt::Stuck => format!(
                 "Stopped: consecutive steps made no progress. Verification: {verdict_line}. \
                  Last message: {last_text}"

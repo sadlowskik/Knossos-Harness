@@ -81,22 +81,24 @@ impl Verdict {
     /// A skipped tier never ran and cannot be one; a forgiven tier ran and
     /// failed, but was failing beforehand, so it is not this change's failure.
     pub fn failure(&self) -> Option<&TierResult> {
-        self.tiers.iter().find(|t| !t.passed && !t.skipped && !t.forgiven)
+        self.tiers
+            .iter()
+            .find(|t| !t.passed && !t.skipped && !t.forgiven)
     }
 
     pub fn summary(&self) -> String {
         match self.failure() {
             Some(f) => format!("FAILED at {} (tier {})", f.label, f.tier),
-            None if self.dry_run => {
-                "syntax only — cargo cannot see unwritten changes".to_string()
-            }
+            None if self.dry_run => "syntax only — cargo cannot see unwritten changes".to_string(),
             None => {
-                let (ran, skipped): (Vec<_>, Vec<_>) =
-                    self.tiers.iter().partition(|t| !t.skipped);
+                let (ran, skipped): (Vec<_>, Vec<_>) = self.tiers.iter().partition(|t| !t.skipped);
                 let mut text = format!(
                     "passed {} tier(s): {}",
                     ran.len(),
-                    ran.iter().map(|t| t.label.as_str()).collect::<Vec<_>>().join(", ")
+                    ran.iter()
+                        .map(|t| t.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 // Named, not silently folded in. "Passed 4 tiers" over a
                 // machine where three of them are not installed is the kind of
@@ -105,7 +107,11 @@ impl Verdict {
                     text.push_str(&format!(
                         " ({} skipped, not installed: {})",
                         skipped.len(),
-                        skipped.iter().map(|t| t.label.as_str()).collect::<Vec<_>>().join(", ")
+                        skipped
+                            .iter()
+                            .map(|t| t.label.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
                 text
@@ -146,7 +152,10 @@ impl Verdict {
     pub fn deterministic_tiers_passed(&self) -> bool {
         self.passed
             && !self.dry_run
-            && self.tiers.iter().any(|t| t.tier > 0 && !t.skipped && !t.forgiven)
+            && self
+                .tiers
+                .iter()
+                .any(|t| t.tier > 0 && !t.skipped && !t.forgiven)
     }
 }
 
@@ -191,24 +200,41 @@ fn tally(diags: &[diagnostics::Diagnostic]) -> std::collections::BTreeMap<(Strin
 /// Matches `#[test]`, `#[tokio::test]` and any other `path::test` attribute.
 /// `#[cfg(test)]` is not one — the attribute there is `cfg`, not `test`.
 fn count_test_fns(root: &Path) -> std::collections::BTreeMap<PathBuf, usize> {
-    let re = regex::Regex::new(r"#\[\s*(?:\w+\s*::\s*)*test\s*\]")
-        .expect("static pattern");
+    let rust_re = regex::Regex::new(r"#\[\s*(?:\w+\s*::\s*)*test\s*\]").expect("static pattern");
+    // `def test_...` / `async def test_...` at any indentation, so methods
+    // in a `TestFoo` class count too. Same pattern as `oracle.py`.
+    let py_re =
+        regex::Regex::new(r"(?m)^\s*(?:async\s+)?def\s+test\w*\s*\(").expect("static pattern");
     let mut out = std::collections::BTreeMap::new();
 
     for entry in ignore::WalkBuilder::new(root).build().flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-        let Ok(src) = std::fs::read_to_string(path) else {
-            continue;
+        let ext = path.extension().and_then(|e| e.to_str());
+        let n = match ext {
+            Some("rs") => {
+                let Ok(src) = std::fs::read_to_string(path) else {
+                    continue;
+                };
+                rust_re.find_iter(&src).count()
+            }
+            Some("py") if is_python_test_file(path) => {
+                let Ok(src) = std::fs::read_to_string(path) else {
+                    continue;
+                };
+                py_re.find_iter(&src).count()
+            }
+            _ => continue,
         };
-        let n = re.find_iter(&src).count();
         if n > 0 {
             out.insert(path.strip_prefix(root).unwrap_or(path).to_path_buf(), n);
         }
     }
     out
+}
+
+fn is_python_test_file(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    (name.starts_with("test_") && name.ends_with(".py")) || name.ends_with("_test.py")
 }
 
 /// Whether the suite lost tests, and which files lost them.
@@ -348,7 +374,15 @@ impl Oracle {
 
         let mut baseline = Baseline::default();
         for cmd in adapter.verify_commands() {
-            let Ok(finished) = self.exec(&cmd).await else {
+            // Scopable tiers get "." so they measure the whole tree. ruff
+            // walks with no arguments; mypy exits 2 with a usage message
+            // and an empty baseline, which would forgive nothing later.
+            let extra = if cmd.scopes.is_empty() {
+                Vec::new()
+            } else {
+                vec![".".into()]
+            };
+            let Ok(finished) = self.exec(&cmd, &extra).await else {
                 continue; // not installed; nothing to learn
             };
             if finished.timed_out {
@@ -358,9 +392,10 @@ impl Oracle {
                 continue;
             }
             if cmd.structured {
-                baseline
-                    .diags
-                    .insert(cmd.tier, tally(&diagnostics::parse_cargo_json(&finished.stdout)));
+                baseline.diags.insert(
+                    cmd.tier,
+                    tally(&diagnostics::parse_cargo_json(&finished.stdout)),
+                );
             }
             baseline.passed.insert(cmd.tier, finished.success());
         }
@@ -385,6 +420,23 @@ impl Oracle {
         self
     }
 
+    /// Tier 0 only: does the tree still parse?
+    ///
+    /// For running *between* plan steps, where the full ladder would cost
+    /// more than the plan saves — cargo test after every step is not a
+    /// check, it is a tax. In-process, so it answers the one question
+    /// worth asking mid-plan: did that step leave things broken.
+    pub fn quick(&self, adapter: &dyn LanguageAdapter, changed: &[PathBuf]) -> Verdict {
+        let t0 = self.tier0(adapter, changed);
+        let passed = t0.passed;
+        Verdict {
+            passed,
+            reached_tier: 0,
+            tiers: vec![t0],
+            dry_run: false,
+        }
+    }
+
     /// Run the deterministic ladder (tiers 0..3), stopping at the first failure.
     ///
     /// `changed` limits tier 0 to files the agent actually touched — parsing
@@ -402,7 +454,12 @@ impl Oracle {
         let tier0_num = t0.tier;
         tiers.push(t0);
         if !passed0 {
-            return Ok(Verdict { passed: false, reached_tier: tier0_num, tiers, dry_run: false });
+            return Ok(Verdict {
+                passed: false,
+                reached_tier: tier0_num,
+                tiers,
+                dry_run: false,
+            });
         }
 
         // Before the toolchain runs, and deliberately so: a suite that lost
@@ -426,16 +483,31 @@ impl Oracle {
         // Tiers 1.. — the adapter's command chain, cheapest first.
         let mut reached = 0u8;
         for cmd in adapter.verify_commands() {
-            let result = self.run_tier(&cmd).await?;
+            let result = self.run_tier(&cmd, changed).await?;
             reached = cmd.tier;
-            let passed = result.passed;
+            // A skipped tier produced no evidence, and a forgiven tier only
+            // reproduced a baseline failure. Neither is a new failure caused
+            // by this change, so both must let the ladder continue. The final
+            // verdict still excludes them from positive evidence through
+            // `deterministic_tiers_passed`.
+            let blocks = !result.passed && !result.skipped && !result.forgiven;
             tiers.push(result);
-            if !passed {
-                return Ok(Verdict { passed: false, reached_tier: reached, tiers, dry_run: false });
+            if blocks {
+                return Ok(Verdict {
+                    passed: false,
+                    reached_tier: reached,
+                    tiers,
+                    dry_run: false,
+                });
             }
         }
 
-        Ok(Verdict { passed: true, reached_tier: reached, tiers, dry_run: false })
+        Ok(Verdict {
+            passed: true,
+            reached_tier: reached,
+            tiers,
+            dry_run: false,
+        })
     }
 
     /// Tier 0 over in-memory content, for dry runs.
@@ -457,7 +529,7 @@ impl Oracle {
                 continue;
             }
             checked += 1;
-            if !adapter.parses_cleanly(source) {
+            if !adapter.parses_cleanly(source, path) {
                 let rel = path.strip_prefix(&self.root).unwrap_or(path);
                 broken.push(rel.display().to_string());
             }
@@ -493,12 +565,16 @@ impl Oracle {
             if !adapter.handles(path) {
                 continue;
             }
-            let full = if path.is_absolute() { path.clone() } else { self.root.join(path) };
+            let full = if path.is_absolute() {
+                path.clone()
+            } else {
+                self.root.join(path)
+            };
             let Ok(source) = std::fs::read_to_string(&full) else {
                 continue;
             };
             checked += 1;
-            if !adapter.parses_cleanly(&source) {
+            if !adapter.parses_cleanly(&source, path) {
                 broken.push(path.display().to_string());
             }
         }
@@ -531,14 +607,88 @@ impl Oracle {
     async fn exec(
         &self,
         cmd: &crate::scribe::VerifyCommand,
+        extra: &[String],
     ) -> std::io::Result<crate::sandbox::Finished> {
+        let mut args = cmd.args.clone();
+        if cmd.safe_path {
+            // `python -m` puts the child's cwd at sys.path[0]. `-P` is what
+            // stops a workspace-root `ruff.py` from shadowing the real tool.
+            if let Some(module_flag) = args.iter().position(|arg| arg == "-m") {
+                args.insert(module_flag, "-P".into());
+            }
+        }
+        args.extend_from_slice(extra);
         self.sandbox
-            .run_bounded(cmd.program, &cmd.args, &self.root, COMMAND_TIMEOUT)
+            .run_bounded(&cmd.program, &args, &self.root, COMMAND_TIMEOUT)
             .await
     }
 
-    async fn run_tier(&self, cmd: &crate::scribe::VerifyCommand) -> Result<TierResult> {
-        let finished = match self.exec(cmd).await {
+    /// Path arguments for a scopable tier, or `None` if it cannot be scoped.
+    ///
+    /// An empty `Some` is meaningful: the tier is scopable but nothing it
+    /// cares about changed, so there is nothing to check.
+    fn targets(
+        &self,
+        cmd: &crate::scribe::VerifyCommand,
+        changed: &[PathBuf],
+    ) -> Option<Vec<String>> {
+        if cmd.scopes.is_empty() {
+            return None;
+        }
+        let mut out = Vec::new();
+        for path in changed {
+            let suffix = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+            if !cmd.scopes.iter().any(|scope| scope == &suffix) {
+                continue;
+            }
+            let rel = if path.is_absolute() {
+                match path.strip_prefix(&self.root) {
+                    Ok(rel) => rel.to_path_buf(),
+                    // Outside the root: not ours, and an absolute path
+                    // would silently widen the tier's scope back out.
+                    Err(_) => continue,
+                }
+            } else {
+                path.clone()
+            };
+            out.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+        out.sort();
+        out.dedup();
+        Some(out)
+    }
+
+    async fn run_tier(
+        &self,
+        cmd: &crate::scribe::VerifyCommand,
+        changed: &[PathBuf],
+    ) -> Result<TierResult> {
+        if let Some(targets) = self.targets(cmd, changed) {
+            if targets.is_empty() {
+                return Ok(TierResult {
+                    tier: cmd.tier,
+                    label: cmd.label.clone(),
+                    passed: true,
+                    skipped: true,
+                    forgiven: false,
+                    detail: format!("skipped: no {} file changed", cmd.scopes.join("/")),
+                });
+            }
+            return self.run_tier_exec(cmd, &targets).await;
+        }
+        self.run_tier_exec(cmd, &[]).await
+    }
+
+    async fn run_tier_exec(
+        &self,
+        cmd: &crate::scribe::VerifyCommand,
+        extra: &[String],
+    ) -> Result<TierResult> {
+        let finished = match self.exec(cmd, extra).await {
             Ok(f) => f,
             Err(e) => {
                 // The program is not there. Absent cargo is not evidence of
@@ -548,10 +698,17 @@ impl Oracle {
                 return Ok(TierResult {
                     tier: cmd.tier,
                     label: cmd.label.to_string(),
-                    passed: true,
-                    skipped: true,
+                    passed: !cmd.required,
+                    skipped: !cmd.required,
                     forgiven: false,
-                    detail: format!("skipped: could not run `{}`: {e}", cmd.program),
+                    detail: if cmd.required {
+                        format!(
+                            "UNVERIFIABLE: required verifier `{}` could not run: {e}",
+                            cmd.program
+                        )
+                    } else {
+                        format!("skipped: could not run `{}`: {e}", cmd.program)
+                    },
                 });
             }
         };
@@ -604,17 +761,24 @@ impl Oracle {
 
             // Warnings do not fail a tier: clippy's advice is worth surfacing
             // but not worth blocking on, and `cargo check` warnings are noise
-            // when the build succeeded.
-            (errors == 0 && finished.success(), forgiven, detail)
+            // when the build succeeded. `fail_on_nonzero = false` is the
+            // advisory bit: a linter that exits 1 on warnings still passes
+            // if it reported no errors.
+            (
+                errors == 0 && (finished.success() || !cmd.fail_on_nonzero),
+                forgiven,
+                detail,
+            )
         } else {
             // Nothing structured to subtract, so the only question this tier
-            // can answer is whether it was already red.
+            // can answer is whether it was already red. Advisory tiers
+            // (mypy, go vet, eslint) surface output without blocking.
             let was_failing = self
                 .baseline
                 .as_ref()
                 .and_then(|b| b.passed.get(&cmd.tier))
                 .is_some_and(|ok| !ok);
-            let forgiven = !finished.success() && was_failing;
+            let forgiven = !finished.success() && was_failing && cmd.fail_on_nonzero;
 
             let mut body = stdout.to_string();
             if !stderr.trim().is_empty() {
@@ -627,7 +791,11 @@ impl Oracle {
                     "already failing before this change; not attributed to the agent\n\n",
                 );
             }
-            (finished.success(), forgiven, cap(body))
+            (
+                finished.success() || !cmd.fail_on_nonzero,
+                forgiven,
+                cap(body),
+            )
         };
 
         Ok(TierResult {
@@ -678,7 +846,11 @@ pub async fn judge(
 
     let mut body = String::new();
     for path in changed {
-        let full = if path.is_absolute() { path.clone() } else { root.join(path) };
+        let full = if path.is_absolute() {
+            path.clone()
+        } else {
+            root.join(path)
+        };
         let Ok(text) = std::fs::read_to_string(&full) else {
             continue;
         };
@@ -723,7 +895,10 @@ pub async fn judge(
         if name != "submit_verdict" {
             continue;
         }
-        let passed = input.get("passed").and_then(|v| v.as_bool()).unwrap_or(true);
+        let passed = input
+            .get("passed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let reason = input
             .get("reason")
             .and_then(|v| v.as_str())
@@ -749,7 +924,10 @@ pub async fn judge(
         passed: true,
         skipped: false,
         forgiven: false,
-        detail: format!("no structured verdict returned; engine said: {}", resp.text()),
+        detail: format!(
+            "no structured verdict returned; engine said: {}",
+            resp.text()
+        ),
     })
 }
 
@@ -785,7 +963,8 @@ mod tests {
         // every line below shifts, and a position-keyed baseline would call all
         // of them new.
         let mut b = Baseline::default();
-        b.diags.insert(1, tally(&[diag("src/lib.rs", "mismatched types", 3)]));
+        b.diags
+            .insert(1, tally(&[diag("src/lib.rs", "mismatched types", 3)]));
 
         let after_the_edit = vec![diag("src/lib.rs", "mismatched types", 47)];
         assert!(b.unforgiven(1, after_the_edit).is_empty());
@@ -822,7 +1001,10 @@ mod tests {
 
     #[test]
     fn a_forgiven_tier_neither_fails_the_verdict_nor_proves_anything() {
-        let forgiven = TierResult { forgiven: true, ..tier(1, "cargo check", false, false) };
+        let forgiven = TierResult {
+            forgiven: true,
+            ..tier(1, "cargo check", false, false)
+        };
         let v = Verdict {
             passed: true,
             reached_tier: 1,
@@ -860,8 +1042,18 @@ mod tests {
         }
 
         assert!(v.failure().is_none(), "the agent did not write this: {v:?}");
-        assert!(v.tiers.iter().any(|t| t.forgiven), "recorded as forgiven: {v:?}");
-        assert!(!v.deterministic_tiers_passed(), "still not a completed task");
+        assert!(
+            v.passed,
+            "forgiven failures must not block the verdict: {v:?}"
+        );
+        assert!(
+            v.tiers.iter().any(|t| t.forgiven),
+            "recorded as forgiven: {v:?}"
+        );
+        assert!(
+            !v.deterministic_tiers_passed(),
+            "still not a completed task"
+        );
     }
 
     #[tokio::test]
@@ -909,10 +1101,7 @@ mod tests {
 
     #[test]
     fn a_whole_test_file_going_missing_is_a_deletion() {
-        let r = suite_integrity(
-            &counts(&[("tests/it.rs", 4)]),
-            &counts(&[]),
-        );
+        let r = suite_integrity(&counts(&[("tests/it.rs", 4)]), &counts(&[]));
         assert!(!r.passed);
         assert!(r.detail.contains("tests/it.rs: 4 -> 0"), "{}", r.detail);
     }
@@ -924,7 +1113,11 @@ mod tests {
         let after = counts(&[("src/a.rs", 2), ("src/b.rs", 3)]);
 
         let r = suite_integrity(&before, &after);
-        assert!(r.passed, "a refactor must not read as a deletion: {}", r.detail);
+        assert!(
+            r.passed,
+            "a refactor must not read as a deletion: {}",
+            r.detail
+        );
     }
 
     #[test]
@@ -949,9 +1142,36 @@ mod tests {
         std::fs::write(dir.path().join("b.py"), "#[test]\n").unwrap();
 
         let found = count_test_fns(dir.path());
-        assert_eq!(found.get(&PathBuf::from("a.rs")).copied(), Some(3),
-                   "three test attributes, and `cfg(test)` is not one of them");
+        assert_eq!(
+            found.get(&PathBuf::from("a.rs")).copied(),
+            Some(3),
+            "three test attributes, and `cfg(test)` is not one of them"
+        );
         assert!(!found.contains_key(&PathBuf::from("b.py")));
+    }
+
+    #[test]
+    fn the_counter_counts_pytest_functions_in_test_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("tests/test_validate.py"),
+            "def test_a():\n    pass\nasync def test_b():\n    pass\ndef helper():\n    pass\n",
+        )
+        .unwrap();
+        // A non-test module: counted by neither convention.
+        std::fs::write(
+            dir.path().join("pkg.py"),
+            "def test_not_collected():\n    pass\n",
+        )
+        .unwrap();
+
+        let found = count_test_fns(dir.path());
+        assert_eq!(
+            found.get(&PathBuf::from("tests/test_validate.py")).copied(),
+            Some(2)
+        );
+        assert!(!found.contains_key(&PathBuf::from("pkg.py")));
     }
 
     /// End to end: an agent that makes a failing test disappear.
@@ -981,7 +1201,8 @@ mod tests {
 
     #[tokio::test]
     async fn without_a_baseline_nothing_is_compared() {
-        let dir = workspace("pub fn a() -> u32 { 1 }\n#[cfg(test)]\nmod t {\n#[test]\nfn one() {}\n}\n");
+        let dir =
+            workspace("pub fn a() -> u32 { 1 }\n#[cfg(test)]\nmod t {\n#[test]\nfn one() {}\n}\n");
         let mut oracle = Oracle::new(dir.path()).without_baseline();
         oracle.prepare(&RustAdapter).await.unwrap();
 
@@ -1003,21 +1224,66 @@ mod tests {
     async fn a_missing_program_is_skipped_not_failed() {
         let dir = workspace("pub fn f() {}\n");
         let oracle = Oracle::new(dir.path());
-        let cmd = crate::scribe::VerifyCommand {
-            tier: 1,
-            label: "absent",
-            program: "definitely-not-a-real-program-xyz",
-            args: vec![],
-            structured: false,
-        };
+        let cmd = crate::scribe::VerifyCommand::new(
+            1,
+            "absent",
+            "definitely-not-a-real-program-xyz",
+            Vec::<String>::new(),
+        );
 
-        let result = oracle.run_tier(&cmd).await.unwrap();
+        let result = oracle.run_tier(&cmd, &[]).await.unwrap();
 
         // Absent cargo is not evidence of broken code. Failing here reported
         // `FAILED at cargo` on every run on such a machine, and sent the engine
         // to repair something that was never checked.
-        assert!(result.skipped, "a program that will not spawn must be skipped");
+        assert!(
+            result.skipped,
+            "a program that will not spawn must be skipped"
+        );
         assert!(result.passed, "a skipped tier must not block");
+    }
+
+    #[tokio::test]
+    async fn an_absent_required_program_fails_closed_as_unverifiable() {
+        let dir = workspace("pub fn f() {}\n");
+        let oracle = Oracle::new(dir.path());
+        let cmd = crate::scribe::VerifyCommand::new(
+            1,
+            "required verifier",
+            "definitely-not-a-real-program-xyz",
+            Vec::<String>::new(),
+        )
+        .required();
+
+        let result = oracle.run_tier(&cmd, &[]).await.unwrap();
+
+        assert!(!result.skipped);
+        assert!(!result.passed);
+        assert!(result.detail.contains("UNVERIFIABLE"), "{}", result.detail);
+    }
+
+    #[tokio::test]
+    async fn a_scopable_tier_with_no_matching_change_is_skipped() {
+        let dir = workspace("pub fn f() {}\n");
+        let oracle = Oracle::new(dir.path());
+        let cmd = crate::scribe::VerifyCommand::new(1, "ruff", "ruff", ["check"]).scopes([".py"]);
+        let result = oracle
+            .run_tier(&cmd, &[PathBuf::from("src/lib.rs")])
+            .await
+            .unwrap();
+        assert!(result.skipped, "ruff must not walk the tree for a .rs edit");
+        assert!(result.passed);
+        assert!(result.detail.contains(".py"), "{}", result.detail);
+    }
+
+    #[test]
+    fn targets_drop_paths_outside_the_root() {
+        let dir = workspace("pub fn f() {}\n");
+        let oracle = Oracle::new(dir.path());
+        let cmd = crate::scribe::VerifyCommand::new(1, "ruff", "ruff", ["check"]).scopes([".py"]);
+        let outside = std::env::temp_dir().join("not-ours.py");
+        let got = oracle.targets(&cmd, &[outside]);
+        assert_eq!(got, Some(vec![]));
     }
 
     #[test]
@@ -1025,7 +1291,10 @@ mod tests {
         let verdict = Verdict {
             passed: true,
             reached_tier: 1,
-            tiers: vec![tier(0, "syntax", true, false), tier(1, "cargo check", true, true)],
+            tiers: vec![
+                tier(0, "syntax", true, false),
+                tier(1, "cargo check", true, true),
+            ],
             dry_run: false,
         };
 
@@ -1073,7 +1342,10 @@ mod tests {
         };
 
         assert!(verdict.failure().is_none(), "skips must not block");
-        assert!(!verdict.deterministic_tiers_passed(), "but must not license tier 4");
+        assert!(
+            !verdict.deterministic_tiers_passed(),
+            "but must not license tier 4"
+        );
     }
 
     #[test]
@@ -1097,7 +1369,10 @@ mod tests {
         let verdict = Verdict {
             passed: false,
             reached_tier: 1,
-            tiers: vec![tier(1, "cargo check", true, true), tier(2, "clippy", false, false)],
+            tiers: vec![
+                tier(1, "cargo check", true, true),
+                tier(2, "clippy", false, false),
+            ],
             dry_run: false,
         };
 
@@ -1114,6 +1389,17 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("src/lib.rs"), lib).unwrap();
         dir
+    }
+
+    #[test]
+    fn quick_is_syntax_only() {
+        let dir = workspace("pub fn a() {}\n");
+        let oracle = Oracle::new(dir.path());
+        let v = oracle.quick(&RustAdapter, &[PathBuf::from("src/lib.rs")]);
+        assert!(v.passed);
+        assert_eq!(v.reached_tier, 0);
+        assert_eq!(v.tiers.len(), 1);
+        assert_eq!(v.tiers[0].label, "syntax");
     }
 
     #[tokio::test]
@@ -1161,7 +1447,10 @@ mod tests {
         assert_eq!(failed.label, "cargo check");
         // Nothing after the failure ran.
         assert_eq!(v.tiers.last().unwrap().tier, 1);
-        assert!(!v.deterministic_tiers_passed(), "tier 4 must be unreachable");
+        assert!(
+            !v.deterministic_tiers_passed(),
+            "tier 4 must be unreachable"
+        );
     }
 
     #[test]
@@ -1191,7 +1480,10 @@ mod tests {
 
         let good = oracle.verify_staged(
             &RustAdapter,
-            &[(PathBuf::from("src/lib.rs"), "pub fn b() -> u32 { 1 }".to_string())],
+            &[(
+                PathBuf::from("src/lib.rs"),
+                "pub fn b() -> u32 { 1 }".to_string(),
+            )],
         );
         assert!(good.passed);
         assert!(good.dry_run);

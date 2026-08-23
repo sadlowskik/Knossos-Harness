@@ -10,6 +10,10 @@
 //! It is a parser, not a model: it returns ground truth, not a best guess.
 
 pub mod adapter;
+pub mod detect;
+pub mod go;
+pub mod node;
+pub mod python;
 pub mod rust;
 
 use std::collections::BTreeMap;
@@ -19,13 +23,11 @@ use anyhow::Result;
 use ignore::WalkBuilder;
 
 pub use adapter::{LanguageAdapter, Symbol, SymbolKind, VerifyCommand, Visibility};
+pub use detect::{adapter_for, detect, tiers_for, WorkspaceAdapter};
+pub use go::GoAdapter;
+pub use node::NodeAdapter;
+pub use python::PythonAdapter;
 pub use rust::RustAdapter;
-
-/// Pick an adapter for a workspace. Rust is the only one in v1.
-pub fn adapter_for(root: &Path) -> Box<dyn LanguageAdapter> {
-    let _ = root;
-    Box::new(RustAdapter)
-}
 
 pub struct SymbolIndex {
     root: PathBuf,
@@ -36,7 +38,11 @@ pub struct SymbolIndex {
 
 impl SymbolIndex {
     pub fn new(root: impl Into<PathBuf>, adapter: Box<dyn LanguageAdapter>) -> Self {
-        SymbolIndex { root: root.into(), adapter, files: BTreeMap::new() }
+        SymbolIndex {
+            root: root.into(),
+            adapter,
+            files: BTreeMap::new(),
+        }
     }
 
     /// Parse every file the adapter handles, honouring .gitignore.
@@ -201,7 +207,10 @@ mod tests {
         idx.refresh(&f).unwrap();
 
         assert_eq!(idx.lookup("delta").len(), 1);
-        assert!(idx.lookup("alpha").is_empty(), "stale symbols must be dropped");
+        assert!(
+            idx.lookup("alpha").is_empty(),
+            "stale symbols must be dropped"
+        );
     }
 
     #[test]
@@ -223,8 +232,11 @@ mod tests {
     fn render_does_not_repeat_the_declaration_keyword() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
-        std::fs::write(dir.path().join("src/lib.rs"), "pub struct Adder;\nimpl Adder {}\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "pub struct Adder;\nimpl Adder {}\n",
+        )
+        .unwrap();
         let r = SymbolIndex::build(dir.path()).unwrap().render(10_000);
         assert!(r.contains("pub struct Adder"));
         assert!(!r.contains("struct pub struct"));
@@ -238,8 +250,14 @@ mod tests {
         let r = idx.render(40);
         assert!(r.contains("truncated"));
         // Any signature present must be complete.
-        for line in r.lines().filter(|l| l.trim_start().starts_with(char::is_numeric)) {
-            assert!(line.contains("fn ") || line.contains("struct "), "partial line: {line}");
+        for line in r
+            .lines()
+            .filter(|l| l.trim_start().starts_with(char::is_numeric))
+        {
+            assert!(
+                line.contains("fn ") || line.contains("struct "),
+                "partial line: {line}"
+            );
         }
     }
 }

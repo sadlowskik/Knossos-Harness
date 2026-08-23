@@ -51,7 +51,9 @@ async fn a_real_engine_answers_a_plain_question() {
     )
     .with_max_tokens(256);
 
-    let resp = engine::complete(&eng, &req).await.expect("live request failed");
+    let resp = engine::complete(&eng, &req)
+        .await
+        .expect("live request failed");
 
     assert!(
         !resp.text().trim().is_empty(),
@@ -76,11 +78,15 @@ async fn a_real_engine_can_be_given_the_tool_schema() {
     .with_tools(ToolRegistry::standard().defs())
     .with_max_tokens(512);
 
-    let resp = engine::complete(&eng, &req).await.expect("live request failed");
+    let resp = engine::complete(&eng, &req)
+        .await
+        .expect("live request failed");
 
     // Whether the model *chooses* to call a tool is its business; that the
     // round trip survives a tools payload is ours.
-    let produced_something =
-        !resp.text().trim().is_empty() || !resp.tool_uses().is_empty();
-    assert!(produced_something, "the model returned neither text nor a tool call");
+    let produced_something = !resp.text().trim().is_empty() || !resp.tool_uses().is_empty();
+    assert!(
+        produced_something,
+        "the model returned neither text nor a tool call"
+    );
 }

@@ -1,0 +1,45 @@
+{
+  "schema": "knossos-suite-lock/v1",
+  "suites": [
+    {
+      "path": "knossos-rs/cases/core.json",
+      "sha256": "e2a8eada36b66c9a4118b0af49639ce3ab881b9552704ad97ac933b2d2226380",
+      "cases": 1,
+      "case_ids": [
+        "mean-empty"
+      ]
+    },
+    {
+      "path": "model/fixtures/hard_suite.json",
+      "sha256": "acbf577d31c5719d3c81b74bb5ca683c14895429fc97748407dcf3451c0ba3c6",
+      "cases": 12,
+      "case_ids": [
+        "the-second-call-remembers-the-first",
+        "dedupe-must-not-reorder",
+        "one-fix-is-not-enough",
+        "the-contract-is-in-the-docstring",
+        "wrong-answers-without-an-error",
+        "right-the-first-time-only",
+        "cache-invalidation-is-scoped",
+        "request-options-do-not-leak-headers",
+        "failed-transfer-leaves-no-debit",
+        "add-a-summary-field-end-to-end",
+        "rename-parser-and-update-call-sites",
+        "fix-renderer-not-generated-schema"
+      ]
+    },
+    {
+      "path": "model/fixtures/agentic_behavior_suite.json",
+      "sha256": "0b908c4098d5aeb257cf7ce149b75a1f39d7244d13c847647994a497f0b03138",
+      "cases": 6,
+      "case_ids": [
+        "refactor-duplicate-normalizers-without-changing-results",
+        "already-correct-stable-deduplication",
+        "ambiguous-retry-policy-needs-clarification",
+        "config-timeout-must-remain-a-number",
+        "repair-local-dependency-symbol-after-version-bump",
+        "ship-audit-field-through-four-layers"
+      ]
+    }
+  ]
+}

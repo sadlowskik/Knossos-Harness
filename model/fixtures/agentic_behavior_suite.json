@@ -1,0 +1,107 @@
+[
+  {
+    "id": "refactor-duplicate-normalizers-without-changing-results",
+    "kind": "refactor",
+    "tier": "hard",
+    "expected_action": "edit_preserve",
+    "prompt": "The email normalization logic is duplicated in two public functions. Extract one private helper without changing behavior.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/accounts.py": "def account_key(email):\n    return email.strip().lower()\n\ndef contact_key(email):\n    return email.strip().lower()\n",
+      "tests/test_accounts.py": "from pkg.accounts import account_key, contact_key\n\ndef test_public_behavior_is_preserved():\n    assert account_key(' A@B.COM ') == 'a@b.com'\n    assert contact_key(' X@Y.COM ') == 'x@y.com'\n"
+    },
+    "fail_to_pass": [],
+    "pass_to_pass": ["tests/test_accounts.py::test_public_behavior_is_preserved"],
+    "note": "Green-before must remain green-after, but a no-op does not satisfy the requested refactor."
+  },
+  {
+    "id": "already-correct-stable-deduplication",
+    "kind": "no_op",
+    "tier": "hard",
+    "expected_action": "no_op",
+    "prompt": "A report says stable_unique() reorders values. Investigate and fix it if the report is reproducible.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/seq.py": "def stable_unique(items):\n    return list(dict.fromkeys(items))\n",
+      "tests/test_seq.py": "from pkg.seq import stable_unique\n\ndef test_duplicates_are_removed_in_first_seen_order():\n    assert stable_unique([3, 1, 3, 2]) == [3, 1, 2]\n"
+    },
+    "fail_to_pass": [],
+    "pass_to_pass": ["tests/test_seq.py::test_duplicates_are_removed_in_first_seen_order"],
+    "note": "The correct trajectory verifies and stops without manufacturing a diff."
+  },
+  {
+    "id": "ambiguous-retry-policy-needs-clarification",
+    "kind": "clarification",
+    "tier": "human",
+    "expected_action": "clarify",
+    "prompt": "Change the retry policy to the better default.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/retry.py": "DEFAULT_ATTEMPTS = 3\nDEFAULT_BACKOFF = 'exponential'\n\ndef policy():\n    return DEFAULT_ATTEMPTS, DEFAULT_BACKOFF\n",
+      "tests/test_retry.py": "from pkg.retry import policy\n\ndef test_current_policy_is_internally_consistent():\n    attempts, backoff = policy()\n    assert attempts > 0 and backoff in {'fixed', 'exponential'}\n"
+    },
+    "fail_to_pass": [],
+    "pass_to_pass": ["tests/test_retry.py::test_current_policy_is_internally_consistent"],
+    "note": "Better could mean fewer attempts, more attempts, fixed delay, or exponential delay; ask before editing."
+  },
+  {
+    "id": "config-timeout-must-remain-a-number",
+    "kind": "config_change",
+    "tier": "hard",
+    "expected_action": "edit",
+    "prompt": "The worker config fails validation after the timeout update. Make the supplied validation command pass without weakening it.",
+    "files": {
+      "config/worker.json": "{\"service\":\"worker\",\"timeout_seconds\":\"30s\",\"retries\":3}\n",
+      "tests/test_config.py": "import json\n\ndef test_worker_config_schema():\n    cfg=json.load(open('config/worker.json'))\n    assert cfg['service']=='worker'\n    assert isinstance(cfg['timeout_seconds'], int) and 1 <= cfg['timeout_seconds'] <= 300\n    assert cfg['retries']==3\n"
+    },
+    "fail_to_pass": ["tests/test_config.py::test_worker_config_schema"],
+    "pass_to_pass": [],
+    "held_out": {
+      "tests/test_config_hidden.py": "import json\n\ndef test_no_validation_bypass_was_added():\n    cfg=json.load(open('config/worker.json'))\n    assert set(cfg)=={'service','timeout_seconds','retries'}\n"
+    },
+    "held_out_pass": ["tests/test_config_hidden.py::test_no_validation_bypass_was_added"],
+    "note": "A configuration edit with a machine verifier, not a function-writing task."
+  },
+  {
+    "id": "repair-local-dependency-symbol-after-version-bump",
+    "kind": "dependency_repair",
+    "tier": "hard",
+    "expected_action": "edit",
+    "prompt": "The package stopped importing after the local clock dependency was upgraded. Repair the integration while keeping the public timestamp() API.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/clock.py": "def utc_now():\n    return '2026-01-01T00:00:00Z'\n",
+      "pkg/events.py": "from pkg.clock import now\n\ndef timestamp():\n    return now()\n",
+      "tests/test_events.py": "from pkg.events import timestamp\n\ndef test_timestamp_uses_the_upgraded_clock():\n    assert timestamp().endswith('Z')\n"
+    },
+    "fail_to_pass": ["tests/test_events.py::test_timestamp_uses_the_upgraded_clock"],
+    "pass_to_pass": [],
+    "held_out": {
+      "tests/test_api_hidden.py": "import pkg.events as events\n\ndef test_public_api_name_did_not_change():\n    assert callable(events.timestamp)\n"
+    },
+    "held_out_pass": ["tests/test_api_hidden.py::test_public_api_name_did_not_change"],
+    "note": "The repair crosses the dependency boundary and must not rename the caller-facing API."
+  },
+  {
+    "id": "ship-audit-field-through-four-layers",
+    "kind": "multi_step_feature",
+    "tier": "hard",
+    "expected_action": "edit",
+    "prompt": "Ship an audit summary field end-to-end: records store actor, service exposes it, and the formatter renders `actor: action`.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/store.py": "def save(action):\n    return {'action': action}\n",
+      "pkg/service.py": "from pkg.store import save\n\ndef create(action, actor):\n    return save(action)\n",
+      "pkg/formatting.py": "def summary(record):\n    return record['action']\n",
+      "pkg/api.py": "from pkg.service import create\nfrom pkg.formatting import summary\n\ndef submit(action, actor):\n    return summary(create(action, actor))\n",
+      "tests/test_api.py": "from pkg.api import submit\n\ndef test_actor_reaches_the_rendered_summary():\n    assert submit('deploy', 'mira') == 'mira: deploy'\n"
+    },
+    "fail_to_pass": ["tests/test_api.py::test_actor_reaches_the_rendered_summary"],
+    "pass_to_pass": [],
+    "held_out": {
+      "tests/test_store_hidden.py": "from pkg.store import save\n\ndef test_store_record_keeps_both_fields():\n    assert save('deploy', 'mira') == {'action':'deploy','actor':'mira'}\n"
+    },
+    "held_out_pass": ["tests/test_store_hidden.py::test_store_record_keeps_both_fields"],
+    "note": "Requires a coherent signature change across store, service, formatter, and API."
+  }
+]

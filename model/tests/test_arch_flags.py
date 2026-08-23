@@ -116,6 +116,21 @@ def test_first_document_is_unaffected_by_masking():
         assert torch.allclose(a(x)[:, :4], a(x, doc_ids=doc)[:, :4], atol=1e-5)
 
 
+def test_preallocated_kv_cache_matches_concatenating_cache():
+    torch.manual_seed(0)
+    a = RoPEAttention(32, 4, 16, n_kv_head=2).eval()
+    x = torch.randn(1, 6, 32)
+    old = {"k": None, "v": None}
+    new = a.init_cache(1, 6, device=x.device, dtype=x.dtype)
+    with torch.no_grad():
+        old_out = torch.cat([a(x[:, i:i + 1], cache=old, pos_offset=i)
+                             for i in range(6)], dim=1)
+        new_out = torch.cat([a(x[:, i:i + 1], cache=new, pos_offset=i)
+                             for i in range(6)], dim=1)
+    assert torch.allclose(old_out, new_out, atol=1e-5)
+    assert new["length"] == 6
+
+
 # --------------------------------------------------------------- inject gate
 
 def test_inject_gate_is_identity_at_initialisation():

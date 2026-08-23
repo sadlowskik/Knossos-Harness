@@ -124,3 +124,58 @@ def test_only_a_done_halt_counts_as_success():
     assert not succeeded([{"event": "halt", "reason": "stuck"}])
     assert not succeeded([{"event": "halt", "reason": "budget_exhausted"}])
     assert not succeeded([{"event": "step_started", "index": 1}])
+
+
+def test_eval_labels_override_a_misleading_done_halt():
+    events = [
+        {"event": "halt", "reason": "done"},
+        {"event": "evaluation_finished", "grader_pass": False,
+         "verifier_pass": False, "provider_status": "ok",
+         "infrastructure_status": "ok", "tamper": False},
+    ]
+    assert not succeeded(events)
+
+
+def test_a_mislabelled_green_eval_cannot_override_a_stuck_agent():
+    events = [
+        {"event": "halt", "reason": "stuck"},
+        {"event": "evaluation_finished", "grader_pass": True,
+         "verifier_pass": True, "provider_status": "ok",
+         "infrastructure_status": "ok", "tamper": False},
+    ]
+    assert not succeeded(events)
+
+
+def test_a_valid_clarification_can_end_without_a_done_halt():
+    events = [
+        {"event": "experiment_metadata", "expected_action": "clarify"},
+        {"event": "halt", "reason": "stuck"},
+        {"event": "evaluation_finished", "grader_pass": True,
+         "verifier_pass": True, "provider_status": "ok",
+         "infrastructure_status": "ok", "tamper": False},
+    ]
+    assert succeeded(events)
+
+
+def test_delta_exchanges_reconstruct_the_exact_prefix():
+    events = [
+        {"event": "exchange_delta", "schema_version": "daedalus-trace/v2",
+         "run_id": "r1", "step": 1, "reset": True, "system": "system",
+         "messages_start": 0,
+         "messages": [{"role": "user", "content": [text("task")]}],
+         "response": {"content": [text("first")]}},
+        {"event": "exchange_delta", "schema_version": "daedalus-trace/v2",
+         "run_id": "r1", "step": 2, "reset": False, "messages_start": 1,
+         "messages": [
+             {"role": "assistant", "content": [text("first")]},
+             {"role": "user", "content": [text("continue")]},
+         ],
+         "response": {"content": [text("second")]}},
+    ]
+
+    first, second = list(records(events))
+    assert [m["content"] for m in first["messages"]] == ["system", "task", "first"]
+    assert [m["content"] for m in second["messages"]] == [
+        "system", "task", "first", "continue", "second"
+    ]
+    assert second["run_id"] == "r1"

@@ -4,14 +4,52 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 
-use crate::engine::{anthropic, ollama, Engine};
+use crate::engine::{anthropic, cameo, ollama, openai, Engine};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum EngineKind {
     Anthropic,
     Ollama,
+    Groq,
+    Gemini,
+    Openrouter,
+    Nvidia,
+    Cerebras,
+    Qwen,
+    Fireworks,
+    Mistral,
+    Together,
+    /// OpenAI-compatible endpoint. Pair with `--provider` / `--base-url`.
+    Openai,
+    /// Cameo node (`cameod` `/v1`). Default `http://127.0.0.1:9090/v1`.
+    Cameo,
+    /// No model. Reports retrieved excerpts and will not edit.
+    Retrieval,
     /// No engine. Lets `index` and `verify` run with nothing configured.
     None,
+}
+
+impl EngineKind {
+    /// The OpenAI-compat table entry this kind names, if any.
+    pub fn openai_provider(self) -> Option<&'static str> {
+        match self {
+            EngineKind::Groq => Some("groq"),
+            EngineKind::Gemini => Some("gemini"),
+            EngineKind::Openrouter => Some("openrouter"),
+            EngineKind::Nvidia => Some("nvidia"),
+            EngineKind::Cerebras => Some("cerebras"),
+            EngineKind::Qwen => Some("qwen"),
+            EngineKind::Fireworks => Some("fireworks"),
+            EngineKind::Mistral => Some("mistral"),
+            EngineKind::Together => Some("together"),
+            EngineKind::Openai => Some("openai"),
+            EngineKind::Cameo
+            | EngineKind::Anthropic
+            | EngineKind::Ollama
+            | EngineKind::Retrieval
+            | EngineKind::None => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +73,11 @@ pub struct Config {
     /// Whether a reasoning model should reason before answering. `None` leaves
     /// the model's own default.
     pub ollama_think: Option<bool>,
+    /// OpenAI-compat provider name (`groq`, `gemini`, …). Used when
+    /// [`EngineKind`] is `Openai` or one of the named compat presets.
+    pub provider: Option<String>,
+    /// Override the provider's base URL.
+    pub openai_base_url: Option<String>,
     pub workspace: PathBuf,
     /// Ariadne's hard ceiling — the forced halt.
     pub max_steps: usize,
@@ -53,6 +96,8 @@ impl Default for Config {
             ollama_native_tools: true,
             ollama_num_ctx: Some(ollama::DEFAULT_NUM_CTX),
             ollama_think: None,
+            provider: None,
+            openai_base_url: None,
             workspace: PathBuf::from("."),
             // Matches `Ariadne::default()` and Python's `acp.py` default. Raised
             // from 12 on measurement; `target_steps` stays where it was so
@@ -87,9 +132,12 @@ impl Config {
     pub fn build_backend(&self) -> Result<Box<dyn Engine>> {
         match self.engine {
             EngineKind::Anthropic => {
-                let key = std::env::var("ANTHROPIC_API_KEY").context(
-                    "ANTHROPIC_API_KEY is not set (use --engine ollama for a local model)",
-                )?;
+                let key = match std::env::var("ANTHROPIC_API_KEY") {
+                    Ok(k) if !k.is_empty() => k,
+                    _ => {
+                        return Ok(Box::new(crate::engine::retrieval::RetrievalEngine));
+                    }
+                };
                 let model = self
                     .model
                     .clone()
@@ -113,16 +161,53 @@ impl Config {
                 }
                 Ok(Box::new(e))
             }
+            EngineKind::Retrieval => Ok(Box::new(crate::engine::retrieval::RetrievalEngine)),
+            EngineKind::Cameo => {
+                let base = self
+                    .openai_base_url
+                    .clone()
+                    .unwrap_or_else(|| env_or("CAMEO_BASE_URL", "http://127.0.0.1:9090/v1"));
+                let model = self
+                    .model
+                    .clone()
+                    .or_else(|| std::env::var("CAMEO_MODEL").ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Cameo needs a model name (`--model` or CAMEO_MODEL). \
+                             See GET http://<node>:9090/api/engines or the dashboard."
+                        )
+                    })?;
+                let key = std::env::var("CAMEO_SERVE_KEY").ok();
+                Ok(Box::new(cameo::CameoEngine::new(
+                    model,
+                    base,
+                    key,
+                    self.max_tokens,
+                )))
+            }
             EngineKind::None => bail!("this command needs an engine; pass --engine"),
+            other => {
+                let name = other
+                    .openai_provider()
+                    .filter(|n| *n != "openai")
+                    .map(|s| s.to_string())
+                    .or_else(|| self.provider.clone())
+                    .unwrap_or_else(|| "groq".to_string());
+                Ok(Box::new(openai::OpenAICompatEngine::from_provider(
+                    &name,
+                    self.model.clone(),
+                    self.openai_base_url.clone(),
+                    self.max_tokens,
+                )?))
+            }
         }
     }
 
     /// Canonical workspace root. Every file tool is jailed inside it, so it
     /// must resolve before anything else runs.
     pub fn workspace_root(&self) -> Result<PathBuf> {
-        std::fs::canonicalize(&self.workspace).with_context(|| {
-            format!("workspace does not exist: {}", self.workspace.display())
-        })
+        std::fs::canonicalize(&self.workspace)
+            .with_context(|| format!("workspace does not exist: {}", self.workspace.display()))
     }
 }
 
@@ -155,8 +240,11 @@ fn normalise_host(raw: &str) -> Option<String> {
         return None;
     }
 
-    let with_scheme =
-        if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
+    let with_scheme = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("http://{raw}")
+    };
 
     // One colon is the scheme's own; a second means a port was given.
     Some(if with_scheme.matches(':').count() < 2 {

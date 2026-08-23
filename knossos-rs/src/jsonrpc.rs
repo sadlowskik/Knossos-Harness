@@ -62,11 +62,19 @@ pub struct RpcError {
 
 impl RpcError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        RpcError { code, message: message.into(), data: None }
+        RpcError {
+            code,
+            message: message.into(),
+            data: None,
+        }
     }
 
     pub fn with_data(code: i64, message: impl Into<String>, data: Value) -> Self {
-        RpcError { code, message: message.into(), data: Some(data) }
+        RpcError {
+            code,
+            message: message.into(),
+            data: Some(data),
+        }
     }
 
     pub fn to_json(&self) -> Value {
@@ -143,7 +151,10 @@ impl PeerHandle {
 
     fn send(&self, payload: &Value) {
         let line = serde_json::to_string(payload).expect("payload is serialisable");
-        debug_assert!(!line.contains('\n'), "framing violation: message contains a newline");
+        debug_assert!(
+            !line.contains('\n'),
+            "framing violation: message contains a newline"
+        );
         let mut tx = self.shared.tx.lock().expect("write mutex");
         if self.shared.closed.load(Ordering::SeqCst) {
             return;
@@ -182,7 +193,10 @@ impl PeerHandle {
         timeout: Option<Duration>,
         abort: Option<&Arc<AtomicBool>>,
     ) -> Result<Value, RpcError> {
-        let req_id = format!("h{}", self.shared.next_id.fetch_add(1, Ordering::SeqCst) + 1);
+        let req_id = format!(
+            "h{}",
+            self.shared.next_id.fetch_add(1, Ordering::SeqCst) + 1
+        );
         let pending = Arc::new(Pending::default());
         self.shared
             .pending
@@ -202,9 +216,16 @@ impl PeerHandle {
         match self.wait_for(&pending, timeout, abort) {
             Some(outcome) => outcome,
             None => {
-                self.shared.pending.lock().expect("pending mutex").remove(&req_id);
+                self.shared
+                    .pending
+                    .lock()
+                    .expect("pending mutex")
+                    .remove(&req_id);
                 if abort.is_some_and(|a| a.load(Ordering::SeqCst)) {
-                    Err(RpcError::new(INTERNAL_ERROR, format!("{method} was cancelled")))
+                    Err(RpcError::new(
+                        INTERNAL_ERROR,
+                        format!("{method} was cancelled"),
+                    ))
                 } else if self.shared.closed.load(Ordering::SeqCst) {
                     Err(RpcError::new(
                         INTERNAL_ERROR,
@@ -432,10 +453,19 @@ fn accept(
             log!("[jsonrpc] dropping message whose method is not a string");
             return;
         };
-        if fast_path.is_some_and(|f| f(method)) && !obj.contains_key("id") {
+        // Notifications *and* requests: `session/interject` is a request that
+        // must land during `session/prompt`, the same reason `session/cancel`
+        // is a fast-path notification. Dispatch is instant (set a flag / push
+        // a queue); it must not wait on the worker holding the turn lock.
+        if fast_path.is_some_and(|f| f(method)) {
             dispatch(handle, &**handler, &msg);
         } else {
-            let _ = handle.shared.inbox.lock().expect("inbox mutex").send(Some(msg.clone()));
+            let _ = handle
+                .shared
+                .inbox
+                .lock()
+                .expect("inbox mutex")
+                .send(Some(msg.clone()));
         }
     } else if let Some(id) = obj.get("id") {
         if id.is_array() || id.is_object() {
@@ -447,8 +477,15 @@ fn accept(
 }
 
 fn resolve(handle: &PeerHandle, msg: &Map<String, Value>) {
-    let Some(id) = msg.get("id").and_then(Value::as_str) else { return };
-    let pending = handle.shared.pending.lock().expect("pending mutex").remove(id);
+    let Some(id) = msg.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    let pending = handle
+        .shared
+        .pending
+        .lock()
+        .expect("pending mutex")
+        .remove(id);
     let Some(pending) = pending else { return };
 
     // Everything from here must reach `settle`. The request has already been
@@ -458,7 +495,10 @@ fn resolve(handle: &PeerHandle, msg: &Map<String, Value>) {
     let outcome = match msg.get("error") {
         Some(Value::Null) | None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
         Some(Value::Object(err)) => Err(RpcError {
-            code: err.get("code").and_then(Value::as_i64).unwrap_or(INTERNAL_ERROR),
+            code: err
+                .get("code")
+                .and_then(Value::as_i64)
+                .unwrap_or(INTERNAL_ERROR),
             message: err
                 .get("message")
                 .and_then(Value::as_str)
@@ -466,9 +506,10 @@ fn resolve(handle: &PeerHandle, msg: &Map<String, Value>) {
                 .to_string(),
             data: err.get("data").cloned(),
         }),
-        Some(other) => {
-            Err(RpcError::new(INTERNAL_ERROR, format!("malformed error field: {other}")))
-        }
+        Some(other) => Err(RpcError::new(
+            INTERNAL_ERROR,
+            format!("malformed error field: {other}"),
+        )),
     };
     pending.settle(outcome);
 }
@@ -504,7 +545,10 @@ fn dispatch(handle: &PeerHandle, handler: &dyn Handler, msg: &Value) {
 
     match id {
         Some(id) => handle.send(&json!({"jsonrpc": "2.0", "id": id, "error": error.to_json()})),
-        None => log!("[jsonrpc] error in notification {method}: {}", error.message),
+        None => log!(
+            "[jsonrpc] error in notification {method}: {}",
+            error.message
+        ),
     }
 }
 
@@ -665,7 +709,11 @@ mod tests {
 
         pipes.send_raw(&json!({"jsonrpc": "2.0", "id": 2, "method": "fine"}).to_string());
         let reply = pipes.read_message();
-        assert_eq!(reply["result"], json!({"ok": true}), "the worker died with the handler");
+        assert_eq!(
+            reply["result"],
+            json!({"ok": true}),
+            "the worker died with the handler"
+        );
     }
 
     // ------------------------------------------------------- the happy path
@@ -690,10 +738,16 @@ mod tests {
         let sent = pipes.read_message();
 
         settle();
-        assert!(!call.is_finished(), "an untimed request must still be waiting");
+        assert!(
+            !call.is_finished(),
+            "an untimed request must still be waiting"
+        );
 
         pipes.reply(&sent["id"], json!({"outcome": "selected"}));
-        assert_eq!(call.join().expect("caller thread"), Ok(json!({"outcome": "selected"})));
+        assert_eq!(
+            call.join().expect("caller thread"),
+            Ok(json!({"outcome": "selected"}))
+        );
     }
 
     // ----------------------------------------------------- how a wait ends
@@ -707,7 +761,10 @@ mod tests {
         pipes.read_message();
 
         abort.store(true, Ordering::SeqCst);
-        let err = call.join().expect("caller thread").expect_err("must not succeed");
+        let err = call
+            .join()
+            .expect("caller thread")
+            .expect_err("must not succeed");
         assert!(err.message.contains("cancelled"), "{err}");
     }
 
@@ -717,7 +774,10 @@ mod tests {
         let call = call_async(&pipes.handle, Some(PeerHandle::WAIT_SLICE * 2), None);
         pipes.read_message();
 
-        let err = call.join().expect("caller thread").expect_err("must not succeed");
+        let err = call
+            .join()
+            .expect("caller thread")
+            .expect_err("must not succeed");
         assert!(err.message.contains("timed out"), "{err}");
     }
 
@@ -729,7 +789,10 @@ mod tests {
         pipes.read_message();
 
         pipes.hang_up();
-        assert!(call.join().expect("caller thread").is_err(), "a dead peer must end the wait");
+        assert!(
+            call.join().expect("caller thread").is_err(),
+            "a dead peer must end the wait"
+        );
     }
 
     /// A late answer to an abandoned request must not be mistaken for a live one.
@@ -746,7 +809,11 @@ mod tests {
         pipes.reply(&sent["id"], json!({"outcome": "selected"}));
         settle();
 
-        assert_eq!(pipes.handle.pending_count(), 0, "the abandoned request must be forgotten");
+        assert_eq!(
+            pipes.handle.pending_count(),
+            0,
+            "the abandoned request must be forgotten"
+        );
     }
 
     // ------------------------------------------------------------ dispatch
@@ -772,9 +839,11 @@ mod tests {
             match method {
                 "cancel" => h_cancelled.store(true, Ordering::SeqCst),
                 // Occupies the worker exactly as a long turn would.
-                _ => while !h_release.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(5));
-                },
+                _ => {
+                    while !h_release.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
             }
             Ok(json!({}))
         });
@@ -798,7 +867,9 @@ mod tests {
     #[test]
     fn a_multiline_payload_is_still_written_as_one_line() {
         let mut pipes = Pipes::new();
-        pipes.handle.notify("log", Some(json!({"text": "two\nlines"})));
+        pipes
+            .handle
+            .notify("log", Some(json!({"text": "two\nlines"})));
 
         let mut line = String::new();
         pipes.client_rx.read_line(&mut line).expect("read");
@@ -811,7 +882,9 @@ mod tests {
     fn a_closed_peer_drops_writes_instead_of_failing() {
         let pipes = Pipes::new();
         pipes.handle.close();
-        pipes.handle.notify("log", Some(json!({"text": "into the void"})));
+        pipes
+            .handle
+            .notify("log", Some(json!({"text": "into the void"})));
         assert!(pipes.handle.is_closed());
     }
 
@@ -864,7 +937,13 @@ mod tests {
     #[test]
     fn the_standard_error_codes_are_the_ones_the_spec_names() {
         assert_eq!(
-            (PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR),
+            (
+                PARSE_ERROR,
+                INVALID_REQUEST,
+                METHOD_NOT_FOUND,
+                INVALID_PARAMS,
+                INTERNAL_ERROR
+            ),
             (-32700, -32600, -32601, -32602, -32603),
         );
     }

@@ -32,7 +32,8 @@ in the workspace root overrides this default.
    output. A partial result described accurately is worth more than a complete
    one described falsely.
 9. **Say when you are stuck.** Repeating a failing approach is worse than
-   stopping and explaining the obstacle.
+   stopping and explaining the obstacle. Do not retry a hypothesis the harness
+   has already recorded as failed unless you have new evidence.
 10. **Do not fabricate verification.** Never claim a command was run, or
     describe output you did not see.
 

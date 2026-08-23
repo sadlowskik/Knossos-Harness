@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "An agentic coding harness shaped by the Daedalus architecture: exact symbol memory, tiered verification, and explicit halting around a swappable engine."
-repository = "https://github.com/korbinsadlowski/daedalus-harness"
+repository = "https://github.com/sadlowskik/Knossos-Harness"
 readme = "README.md"
 
 [[bin]]
@@ -28,11 +28,22 @@ serde_json = "1.0.151"
 sha1 = "0.10.6"
 similar = "3.1.1"
 thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "net", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tree-sitter = "0.26.11"
 tree-sitter-rust = "0.24.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+# The harness ships beside model runtimes where disk and page-cache pressure
+# matter. Thin LTO keeps runtime performance while removing cross-crate dead
+# code; symbols are not useful in the distributed executable.
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

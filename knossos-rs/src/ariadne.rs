@@ -126,13 +126,21 @@ impl Default for Ariadne {
         // stays at 6, so pressure begins in the same place and simply has
         // further to escalate — raising the wall without raising the target
         // buys persistence on hard tasks without licensing sprawl on easy ones.
-        Ariadne { max_steps: 20, target_steps: 6, stuck_after: 2 }
+        Ariadne {
+            max_steps: 20,
+            target_steps: 6,
+            stuck_after: 2,
+        }
     }
 }
 
 impl Ariadne {
     pub fn new(max_steps: usize, target_steps: usize) -> Self {
-        Ariadne { max_steps, target_steps: target_steps.min(max_steps), ..Default::default() }
+        Ariadne {
+            max_steps,
+            target_steps: target_steps.min(max_steps),
+            ..Default::default()
+        }
     }
 
     /// Decide whether to continue after `step` (1-indexed).
@@ -229,13 +237,21 @@ mod tests {
     use super::*;
 
     fn passed() -> StepOutcome {
-        StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(true),
-                      ..Default::default() }
+        StepOutcome {
+            tool_calls: 1,
+            files_changed: 1,
+            verdict_passed: Some(true),
+            ..Default::default()
+        }
     }
 
     fn worked() -> StepOutcome {
-        StepOutcome { tool_calls: 2, files_changed: 1, verdict_passed: None,
-                      ..Default::default() }
+        StepOutcome {
+            tool_calls: 2,
+            files_changed: 1,
+            verdict_passed: None,
+            ..Default::default()
+        }
     }
 
     fn nothing() -> StepOutcome {
@@ -278,8 +294,12 @@ mod tests {
     #[test]
     fn a_failed_verdict_does_not_end_the_run() {
         let a = Ariadne::new(12, 6);
-        let failed = StepOutcome { tool_calls: 1, files_changed: 1, verdict_passed: Some(false),
-            ..Default::default() };
+        let failed = StepOutcome {
+            tool_calls: 1,
+            files_changed: 1,
+            verdict_passed: Some(false),
+            ..Default::default()
+        };
         assert_eq!(a.assess(2, &failed, 0), Halt::Continue);
     }
 
@@ -317,7 +337,11 @@ mod tests {
         let seen: Vec<String> = (7..=20).map(|s| a.pressure(s).unwrap()).collect();
         let distinct: std::collections::HashSet<&String> = seen.iter().collect();
         // Four distinct messages across the run, not one repeated.
-        assert!(distinct.len() >= 4, "only {} distinct messages", distinct.len());
+        assert!(
+            distinct.len() >= 4,
+            "only {} distinct messages",
+            distinct.len()
+        );
     }
 
     /// With most of the budget left, trying another angle is the right move.
@@ -334,7 +358,10 @@ mod tests {
         assert!(!early.contains("rather than trying another angle"));
         assert!(early.contains("Changing approach is still worth it"));
         // ...and the closing bands still say it, at the point where it is true.
-        assert!(a.pressure(17).unwrap().contains("Do not begin anything new"));
+        assert!(a
+            .pressure(17)
+            .unwrap()
+            .contains("Do not begin anything new"));
         assert!(a.pressure(20).unwrap().contains("final step"));
     }
 
@@ -344,7 +371,10 @@ mod tests {
     fn the_old_ceiling_still_bands_where_it_used_to() {
         let a = Ariadne::new(12, 6);
         assert!(a.pressure(7).unwrap().contains("Prefer finishing"));
-        assert!(a.pressure(10).unwrap().contains("Do not begin anything new"));
+        assert!(a
+            .pressure(10)
+            .unwrap()
+            .contains("Do not begin anything new"));
         assert!(a.pressure(12).unwrap().contains("final step"));
     }
 
@@ -352,8 +382,13 @@ mod tests {
     fn noop_detection_is_about_evidence_not_opinion() {
         assert!(nothing().is_noop());
         assert!(!worked().is_noop());
-        assert!(!StepOutcome { tool_calls: 1, files_changed: 0, verdict_passed: None,
-                             ..Default::default() }.is_noop());
+        assert!(!StepOutcome {
+            tool_calls: 1,
+            files_changed: 0,
+            verdict_passed: None,
+            ..Default::default()
+        }
+        .is_noop());
     }
 
     #[test]

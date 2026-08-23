@@ -167,7 +167,11 @@ impl RetrievalGate {
     }
 
     pub fn with_threshold(argus: Arc<Argus>, threshold: f64) -> Self {
-        RetrievalGate { argus, threshold, index: OnceLock::new() }
+        RetrievalGate {
+            argus,
+            threshold,
+            index: OnceLock::new(),
+        }
     }
 
     pub fn argus(&self) -> &Argus {
@@ -195,7 +199,10 @@ impl RetrievalGate {
             if !is_meta(rel) {
                 let stem = rel.rsplit('/').next().unwrap_or(rel);
                 let stem = stem.rsplit_once('.').map(|(s, _)| s).unwrap_or(stem);
-                index.entry(stem.to_lowercase()).or_default().insert(rel.clone());
+                index
+                    .entry(stem.to_lowercase())
+                    .or_default()
+                    .insert(rel.clone());
             }
             for located in rec.located() {
                 if located.in_test {
@@ -240,10 +247,9 @@ impl RetrievalGate {
             if token.len() < Self::MIN_TOKEN || !seen.insert(token) {
                 continue;
             }
-            if index
-                .get(&token.to_lowercase())
-                .is_some_and(|files| !files.is_empty() && files.len() <= Self::DISTINCTIVE_MAX_FILES)
-            {
+            if index.get(&token.to_lowercase()).is_some_and(|files| {
+                !files.is_empty() && files.len() <= Self::DISTINCTIVE_MAX_FILES
+            }) {
                 found.push(token.to_string());
             }
         }
@@ -292,8 +298,7 @@ impl RetrievalGate {
         let distinctive = self.distinctive_hits(query);
         if !distinctive.is_empty() {
             score += Self::W_DISTINCTIVE;
-            let shown: Vec<&str> =
-                distinctive.iter().take(3).map(|s| s.as_str()).collect();
+            let shown: Vec<&str> = distinctive.iter().take(3).map(|s| s.as_str()).collect();
             reasons.push(format!("names {}", shown.join(", ")));
         }
 
@@ -326,7 +331,11 @@ impl RetrievalGate {
         let veto = anchored || named_file || !proper.is_empty();
         if (general || indefinite) && !veto {
             reasons.push("no anchor, filename or proper name to override it".into());
-            return GateDecision { inject: false, confidence: score.min(0.3), reasons };
+            return GateDecision {
+                inject: false,
+                confidence: score.min(0.3),
+                reasons,
+            };
         }
         if let Some(first) = proper.first() {
             reasons.push(format!("proper name: {first}"));
@@ -334,7 +343,12 @@ impl RetrievalGate {
 
         let file_scores: Vec<f64> = match hits {
             Some(hits) => hits.iter().map(|h| h.score).collect(),
-            None => self.argus.score_files(query).into_iter().map(|(_, s)| s).collect(),
+            None => self
+                .argus
+                .score_files(query)
+                .into_iter()
+                .map(|(_, s)| s)
+                .collect(),
         };
         if Self::concentrated(&file_scores) {
             score += Self::W_CONCENTRATION;
@@ -342,7 +356,11 @@ impl RetrievalGate {
         }
 
         let score = score.clamp(0.0, 1.0);
-        GateDecision { inject: score >= self.threshold, confidence: score, reasons }
+        GateDecision {
+            inject: score >= self.threshold,
+            confidence: score,
+            reasons,
+        }
     }
 }
 
@@ -436,7 +454,10 @@ mod tests {
     fn indefinite_framing_skips() {
         let (_dir, argus) = fixture();
         let gate = RetrievalGate::new(Arc::clone(&argus));
-        let d = gate.decide("in a mixture-of-experts layer, what is expert collapse?", None);
+        let d = gate.decide(
+            "in a mixture-of-experts layer, what is expert collapse?",
+            None,
+        );
         assert!(!d.inject, "{d}");
     }
 
@@ -497,7 +518,9 @@ mod tests {
         let (_dir, argus) = fixture();
         let gate = RetrievalGate::new(Arc::clone(&argus));
         assert!(gate.name_index().contains_key("mnemosyne"));
-        assert!(!gate.distinctive_hits("how does Mnemosyne compress a segment").is_empty());
+        assert!(!gate
+            .distinctive_hits("how does Mnemosyne compress a segment")
+            .is_empty());
     }
 
     #[test]
@@ -514,12 +537,18 @@ mod tests {
     fn every_decision_explains_itself() {
         let (_dir, argus) = fixture();
         let gate = RetrievalGate::new(Arc::clone(&argus));
-        for query in ["which file defines the router", "what is attention, in general?"] {
+        for query in [
+            "which file defines the router",
+            "what is attention, in general?",
+        ] {
             let d = gate.decide(query, None);
             assert!(!d.reasons.is_empty(), "{query}");
             assert!((0.0..=1.0).contains(&d.confidence), "{query}");
             let shown = d.to_string();
-            assert!(shown.contains("inject") || shown.contains("skip"), "{shown}");
+            assert!(
+                shown.contains("inject") || shown.contains("skip"),
+                "{shown}"
+            );
         }
     }
 
@@ -527,8 +556,16 @@ mod tests {
     fn threshold_is_adjustable() {
         let (_dir, argus) = fixture();
         let query = "how is the halting probability computed here";
-        assert!(RetrievalGate::with_threshold(Arc::clone(&argus),0.0).decide(query, None).inject);
-        assert!(!RetrievalGate::with_threshold(Arc::clone(&argus),1.01).decide(query, None).inject);
+        assert!(
+            RetrievalGate::with_threshold(Arc::clone(&argus), 0.0)
+                .decide(query, None)
+                .inject
+        );
+        assert!(
+            !RetrievalGate::with_threshold(Arc::clone(&argus), 1.01)
+                .decide(query, None)
+                .inject
+        );
     }
 
     /// Passing hits should not change the ruling for a query that already

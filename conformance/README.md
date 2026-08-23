@@ -23,7 +23,12 @@ inside the SDK — a field renamed upstream fails here first.
 cd conformance && npm install && npm test
 ```
 
-`KNOSSOS_PYTHON` selects the interpreter if `python` is not the one you want.
+The agent under test is **`daedalus acp`** (`knossos-rs/target/debug/daedalus`).
+Build it first: `cargo build --manifest-path knossos-rs/Cargo.toml`.
+
+`KNOSSOS_ACP=python` drives the legacy `python -m knossos` / `scripted_agent.py`
+path. `KNOSSOS_ACP_BIN` overrides the Rust binary.
+
 Pass a substring to run one check: `node run.mjs permission`.
 
 ## Live checks

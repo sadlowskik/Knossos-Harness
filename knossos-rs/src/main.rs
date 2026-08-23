@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use sha1::{Digest, Sha1};
 
+use knossos::acp;
 use knossos::argus::Argus;
 use knossos::ariadne::Ariadne;
-use knossos::acp;
 use knossos::config::{Config, EngineKind};
 use knossos::delegate;
 use knossos::engine::{self, Message, Request};
@@ -38,12 +39,28 @@ struct Cli {
     #[arg(long, short = 'w', global = true, default_value = ".")]
     workspace: PathBuf,
 
-    #[arg(long, short = 'e', global = true, value_enum, default_value = "anthropic")]
+    #[arg(
+        long,
+        short = 'e',
+        global = true,
+        value_enum,
+        default_value = "anthropic"
+    )]
     engine: EngineKind,
 
     /// Model id. Defaults per engine; also read from DAEDALUS_MODEL.
     #[arg(long, short = 'm', global = true)]
     model: Option<String>,
+
+    /// OpenAI-compat provider (`groq`, `gemini`, `openrouter`, `qwen`, …).
+    /// Used with `--engine openai`; the named `--engine groq` forms set it
+    /// for you.
+    #[arg(long, global = true)]
+    provider: Option<String>,
+
+    /// Override the provider's base URL.
+    #[arg(long, global = true)]
+    base_url: Option<String>,
 
     #[arg(long, global = true)]
     verbose: bool,
@@ -77,6 +94,15 @@ struct LoopArgs {
     /// path, which costs an index build at startup and a gate decision per turn.
     #[arg(long)]
     no_context: bool,
+    /// Disable durable failure/attempt memory for an ablation.
+    #[arg(long)]
+    no_memory: bool,
+    /// Disable conversation compaction for an ablation.
+    #[arg(long)]
+    no_compaction: bool,
+    /// Replay provider responses from a collected trace; performs no network I/O.
+    #[arg(long)]
+    replay_responses: Option<PathBuf>,
     /// MCP server declarations. Defaults to `.daedalus/mcp.json`, if present.
     #[arg(long)]
     mcp_config: Option<PathBuf>,
@@ -89,6 +115,15 @@ struct LoopArgs {
     /// than as "it thought too long".
     #[arg(long, default_value = "8192")]
     max_tokens: u32,
+    /// Maximum logical provider calls for this task or entire eval run.
+    #[arg(long)]
+    max_requests: Option<u64>,
+    /// Strict input+maximum-output reservation across this task or eval run.
+    #[arg(long)]
+    max_total_tokens: Option<u64>,
+    /// Maximum simultaneous engine calls, including delegated work.
+    #[arg(long, default_value = "1")]
+    max_concurrency: usize,
     /// Context window for a local model, in tokens.
     ///
     /// The ceiling `--max-tokens` lives inside: prompt and completion share it.
@@ -164,6 +199,39 @@ enum Command {
         opts: LoopArgs,
     },
 
+    /// Grade coding cases (fail_to_pass / pass_to_pass / restored tests).
+    ///
+    /// Faithful port of `codeval.py`. Point at a JSON list of cases; each is
+    /// materialised, run through Talos, then graded. The agent never sees
+    /// held-out tests.
+    Eval {
+        /// JSON file of cases. Omit to run the bundled core suite.
+        #[arg(long)]
+        cases: Option<PathBuf>,
+        /// Run only these case ids. Repeat for a deterministic canary subset.
+        #[arg(long = "case-id")]
+        case_ids: Vec<String>,
+        /// Run only the first N selected cases.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Continue after an engine/agent error. By default eval stops so a bad
+        /// key, exhausted quota, or dead provider cannot burn the rest of a suite.
+        #[arg(long)]
+        continue_after_agent_error: bool,
+        /// Experiment arm written into every trace (for example
+        /// `knossos-full` or `knossos-no-context`).
+        #[arg(long, default_value = "unspecified")]
+        experiment_arm: String,
+        /// Persist completed cases here after every successful grading step.
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+        /// Resume from --checkpoint, rejecting a different suite or arm.
+        #[arg(long, requires = "checkpoint")]
+        resume: bool,
+        #[command(flatten)]
+        opts: LoopArgs,
+    },
+
     /// Speak the Agent Client Protocol on stdio, for Zed and other ACP editors.
     ///
     /// Not meant to be driven by hand. Point an editor's agent configuration at
@@ -196,19 +264,23 @@ async fn main() -> Result<()> {
     let cfg = Config {
         engine: cli.engine,
         model: cli.model.clone(),
+        provider: cli.provider.clone(),
+        openai_base_url: cli.base_url.clone(),
         workspace: cli.workspace.clone(),
         max_tokens: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
             | Command::Serve { opts }
-            | Command::Acp { opts } => opts.max_tokens,
+            | Command::Acp { opts }
+            | Command::Eval { opts, .. } => opts.max_tokens,
             _ => Config::default().max_tokens,
         },
         ollama_num_ctx: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
             | Command::Serve { opts }
-            | Command::Acp { opts } => Some(opts.num_ctx),
+            | Command::Acp { opts }
+            | Command::Eval { opts, .. } => Some(opts.num_ctx),
             _ => Config::default().ollama_num_ctx,
         },
         // `None` rather than `Some(true)` when the flag is absent, so the
@@ -217,7 +289,8 @@ async fn main() -> Result<()> {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
             | Command::Serve { opts }
-            | Command::Acp { opts } => opts.no_think.then_some(false),
+            | Command::Acp { opts }
+            | Command::Eval { opts, .. } => opts.no_think.then_some(false),
             _ => Config::default().ollama_think,
         },
         ..Config::default()
@@ -232,6 +305,29 @@ async fn main() -> Result<()> {
         Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
         Command::Serve { ref opts } => run_serve(&cfg, opts).await,
         Command::Acp { ref opts } => run_acp(&cfg, opts).await,
+        Command::Eval {
+            ref cases,
+            ref case_ids,
+            limit,
+            continue_after_agent_error,
+            ref experiment_arm,
+            ref checkpoint,
+            resume,
+            ref opts,
+        } => {
+            run_eval(
+                &cfg,
+                cases.as_deref(),
+                case_ids,
+                limit,
+                continue_after_agent_error,
+                experiment_arm,
+                checkpoint.as_deref(),
+                resume,
+                opts,
+            )
+            .await
+        }
     }
 }
 
@@ -265,7 +361,13 @@ fn index(cfg: &Config, full: bool, lookup: Option<&str>) -> Result<()> {
             std::process::exit(1);
         }
         for s in hits {
-            println!("{}:{}: {} {}", s.file.display(), s.line, s.kind.label(), s.signature);
+            println!(
+                "{}:{}: {} {}",
+                s.file.display(),
+                s.line,
+                s.kind.label(),
+                s.signature
+            );
         }
         return Ok(());
     }
@@ -328,8 +430,27 @@ async fn plan_only(cfg: &Config, task: &str) -> Result<()> {
 /// `serve` gives a front end live progress. Announcements stay on stderr in
 /// every mode, so enabling it cannot corrupt the protocol channel.
 fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, PathBuf)> {
+    let quota = knossos::engine::budget::Quota::new(
+        opts.max_requests,
+        opts.max_total_tokens,
+        opts.max_concurrency,
+    );
+    build_talos_with_quota(cfg, opts, stream, quota)
+}
+
+fn build_talos_with_quota(
+    cfg: &Config,
+    opts: &LoopArgs,
+    stream: bool,
+    quota: Arc<knossos::engine::budget::Quota>,
+) -> Result<(Talos, PathBuf)> {
     let root = cfg.workspace_root()?;
-    let eng = cfg.build_engine()?;
+    let raw: Box<dyn knossos::engine::Engine> = match &opts.replay_responses {
+        Some(path) => Box::new(knossos::engine::mock::MockEngine::from_trace(path)?),
+        None => cfg.build_engine()?,
+    };
+    let eng: Box<dyn knossos::engine::Engine> =
+        Box::new(knossos::engine::budget::BudgetedEngine::new(raw, quota));
     let engine_name = eng.name().to_string();
 
     let idx = SymbolIndex::build(&root)?;
@@ -370,7 +491,11 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     eprintln!("engine       {engine_name}");
     eprintln!("workspace    {}", root.display());
     eprintln!("constitution {}", themis.source());
-    eprintln!("symbols      {} across {} files", idx.symbol_count(), idx.file_count());
+    eprintln!(
+        "symbols      {} across {} files",
+        idx.symbol_count(),
+        idx.file_count()
+    );
     eprintln!("retrieval    {} chunks indexed", retrieval.chunk_count());
     match &gate {
         Some((_, report)) => eprintln!("context      {report}"),
@@ -379,7 +504,10 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     for line in &mcp_report {
         eprintln!("mcp          {line}");
     }
-    eprintln!("budget       {} target / {} max", opts.target_steps, opts.max_steps);
+    eprintln!(
+        "budget       {} target / {} max",
+        opts.target_steps, opts.max_steps
+    );
     if opts.dry_run {
         eprintln!("mode         DRY RUN — nothing is written to disk");
     }
@@ -405,6 +533,14 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
     if let Some((gate, _)) = gate {
         talos = talos.with_retrieval(gate);
     }
+    if opts.no_memory {
+        talos.disable_memory();
+        eprintln!("memory       off (--no-memory)");
+    }
+    if opts.no_compaction {
+        talos.lethe.max_tokens = usize::MAX;
+        eprintln!("compaction   off (--no-compaction)");
+    }
 
     Ok((talos, trace_path))
 }
@@ -414,22 +550,53 @@ fn build_talos(cfg: &Config, opts: &LoopArgs, stream: bool) -> Result<(Talos, Pa
 /// Nothing is printed. stdout is the protocol channel, so every announcement
 /// the other commands make goes to stderr here — an editor shows it as agent
 /// logs, and a stray line on stdout would corrupt the stream.
+async fn prefer_cameo(mut cfg: Config) -> Config {
+    if cfg.engine != EngineKind::Anthropic {
+        return cfg;
+    }
+    let Ok(model) = std::env::var("CAMEO_MODEL") else {
+        return cfg;
+    };
+    if model.trim().is_empty() {
+        return cfg;
+    }
+    let base =
+        std::env::var("CAMEO_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:9090/v1".into());
+    let key = std::env::var("CAMEO_SERVE_KEY").ok();
+    let cameo =
+        knossos::engine::cameo::CameoEngine::new(model.clone(), base.clone(), key, cfg.max_tokens);
+    if cameo.is_resident().await {
+        cfg.engine = EngineKind::Cameo;
+        cfg.model = Some(model);
+        cfg.openai_base_url = Some(base);
+    }
+    cfg
+}
+
 async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
+    let cfg = prefer_cameo(cfg.clone()).await;
     eprintln!(
         "daedalus acp — {:?}/{} — waiting for an editor",
         cfg.engine,
         cfg.model.as_deref().unwrap_or("default"),
     );
 
-    let cfg = cfg.clone();
     let opts = opts.clone();
+    let scripted = knossos::engine::mock::MockEngine::from_env();
+    let write = std::env::var("KNOSSOS_WRITE").ok().as_deref() == Some("1");
+    let execute = std::env::var("KNOSSOS_EXECUTE").ok().as_deref() == Some("1");
+    let default_dry = scripted.is_some() && !write;
+    let _ = execute;
+
     let build: Arc<acp::BuildAgent> = Arc::new(move |root: &Path, cancel, approver| {
         // The editor names the workspace, so everything is built per session
         // rather than once at startup.
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let idx = SymbolIndex::build(&root)?;
         let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
-        let trace = root.join(".daedalus").join(format!("acp-{}.jsonl", std::process::id()));
+        let trace = root
+            .join(".daedalus")
+            .join(format!("acp-{}.jsonl", std::process::id()));
 
         let mut registry = ToolRegistry::with_retrieval(retrieval);
         connect_mcp(&mut registry, &root, opts.mcp_config.as_deref());
@@ -440,10 +607,21 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
             )) as Box<dyn knossos::tools::Tool>]);
         }
 
+        let engine: Box<dyn knossos::engine::Engine> =
+            if let Some(scripted) = knossos::engine::mock::MockEngine::from_env() {
+                Box::new(scripted)
+            } else {
+                // Cannot await here; Cameo-if-resident is applied in `run_task`.
+                cfg.build_engine()?
+            };
+        let mut ctx = ToolCtx::new(&root);
+        if default_dry {
+            ctx.set_dry_run(true);
+        }
         let mut talos = Talos::new(
-            cfg.build_engine()?,
+            engine,
             registry,
-            ToolCtx::new(&root),
+            ctx,
             Oracle::new(&root),
             idx,
             Themis::load(&root),
@@ -565,8 +743,10 @@ fn connect_mcp(
         // server-label prefix exists to prevent — so say so rather than let the
         // second definition disappear.
         let taken: Vec<String> = registry.names().iter().map(|n| n.to_string()).collect();
-        let (fresh, clashing): (Vec<_>, Vec<_>) =
-            client.tools().into_iter().partition(|t| !taken.iter().any(|n| n == t.name()));
+        let (fresh, clashing): (Vec<_>, Vec<_>) = client
+            .tools()
+            .into_iter()
+            .partition(|t| !taken.iter().any(|n| n == t.name()));
         for tool in &clashing {
             report.push(format!("{} already exists; skipped", tool.name()));
         }
@@ -576,8 +756,363 @@ fn connect_mcp(
     report
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn run_eval(
+    cfg: &Config,
+    cases: Option<&Path>,
+    case_ids: &[String],
+    limit: Option<usize>,
+    continue_after_agent_error: bool,
+    experiment_arm: &str,
+    checkpoint_path: Option<&Path>,
+    resume: bool,
+    opts: &LoopArgs,
+) -> Result<()> {
+    let cfg = prefer_cameo(cfg.clone()).await;
+    let mut suite = match cases {
+        Some(path) => knossos::eval::load_cases(path)?,
+        None => knossos::eval::bundled_core()?,
+    };
+    if !case_ids.is_empty() {
+        let available: std::collections::BTreeSet<_> =
+            suite.iter().map(|case| case.id.as_str()).collect();
+        let missing: Vec<_> = case_ids
+            .iter()
+            .filter(|id| !available.contains(id.as_str()))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(anyhow::anyhow!(
+                "unknown eval case id(s): {}; available: {}",
+                missing.join(", "),
+                available.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        suite.retain(|case| case_ids.iter().any(|id| id == &case.id));
+    }
+    if let Some(limit) = limit {
+        if limit == 0 {
+            return Err(anyhow::anyhow!("--limit must be positive"));
+        }
+        suite.truncate(limit);
+    }
+    let suite_bytes = match cases {
+        Some(path) => std::fs::read(path)?,
+        None => include_bytes!("../cases/core.json").to_vec(),
+    };
+    let suite_digest = format!("sha1:{:x}", Sha1::digest(&suite_bytes));
+    let harness_commit = harness_revision();
+    let selected_ids: std::collections::BTreeSet<String> =
+        suite.iter().map(|case| case.id.clone()).collect();
+    let selected_total = selected_ids.len();
+    let mut checkpoint = match checkpoint_path {
+        Some(path) if resume => Some(knossos::eval_checkpoint::EvalCheckpoint::load(
+            path,
+            &suite_digest,
+            experiment_arm,
+        )?),
+        Some(_) => Some(knossos::eval_checkpoint::EvalCheckpoint::new(
+            &suite_digest,
+            experiment_arm,
+        )),
+        None => None,
+    };
+    let mut passed = checkpoint
+        .as_ref()
+        .map(|state| state.passed.intersection(&selected_ids).count())
+        .unwrap_or(0);
+    if let Some(state) = &checkpoint {
+        suite.retain(|case| !state.completed.contains(&case.id));
+    }
+    let eval_run = format!(
+        "{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
+    let persistent_root = cfg
+        .workspace_root()?
+        .join(".daedalus")
+        .join("eval")
+        .join(&eval_run);
+    std::fs::create_dir_all(&persistent_root)?;
+    println!(
+        "eval {} case(s) from {}",
+        selected_total,
+        cases
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "bundled core".into())
+    );
+    let spent = checkpoint
+        .as_ref()
+        .map(|state| knossos::engine::budget::QuotaSnapshot {
+            requests: state.requests_spent,
+            tokens: state.tokens_spent,
+        })
+        .unwrap_or_default();
+    let eval_quota = knossos::engine::budget::Quota::with_spent(
+        opts.max_requests,
+        opts.max_total_tokens,
+        opts.max_concurrency,
+        spent,
+    );
+    for case in &suite {
+        let safe_id: String = case
+            .id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let root = std::env::temp_dir().join(format!("daedalus-eval-{eval_run}-{safe_id}"));
+        let _ = std::fs::remove_dir_all(&root);
+        knossos::eval::materialise(case, &root)?;
+        let mut case_cfg = cfg.clone();
+        case_cfg.workspace = root.clone();
+        let mut case_opts = opts.clone();
+        case_opts.trace = Some(match (&opts.trace, suite.len()) {
+            (Some(path), 1) => path.clone(),
+            (Some(path), _) => {
+                let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("trace");
+                parent.join(format!("{stem}-{safe_id}.jsonl"))
+            }
+            (None, _) => persistent_root.join(format!("{safe_id}.jsonl")),
+        });
+        let (mut talos, trace_path) =
+            build_talos_with_quota(&case_cfg, &case_opts, false, Arc::clone(&eval_quota))?;
+        talos.set_require_action(matches!(
+            case.expected_action.as_str(),
+            "edit" | "edit_preserve"
+        ));
+        talos.session.log(&TraceEvent::ExperimentMetadata {
+            arm: experiment_arm.to_string(),
+            case_id: case.id.clone(),
+            expected_action: case.expected_action.clone(),
+            provider: cfg
+                .provider
+                .clone()
+                .unwrap_or_else(|| format!("{:?}", cfg.engine).to_ascii_lowercase()),
+            model: cfg
+                .model
+                .clone()
+                .unwrap_or_else(|| "provider-default".into()),
+            harness_commit: harness_commit.clone(),
+            suite_digest: suite_digest.clone(),
+            max_steps: opts.max_steps,
+            max_output_tokens: opts.max_tokens,
+            started_at: chrono::Utc::now().to_rfc3339(),
+        });
+        talos.session.log(&TraceEvent::TaskStarted {
+            task: case.prompt.clone(),
+            engine: talos.session.engine_name.clone(),
+            workspace: root.display().to_string(),
+            max_steps: opts.max_steps,
+            target_steps: opts.target_steps,
+        });
+        let result = async {
+            let plan = if knossos::metis::worth_planning(&case.prompt) {
+                knossos::metis::plan(
+                    talos.engine.as_ref(),
+                    &talos.themis,
+                    &talos.scribe,
+                    &case.prompt,
+                    case_cfg.max_tokens,
+                )
+                .await?
+            } else {
+                knossos::metis::Plan {
+                    steps: vec![case.prompt.clone()],
+                }
+            };
+            let outcome = talos.run(&case.prompt, &plan).await?;
+            anyhow::Ok(outcome)
+        }
+        .await;
+        if let Err(ref e) = result {
+            let engine_error = e.downcast_ref::<knossos::engine::EngineError>();
+            let budget_error = matches!(
+                engine_error,
+                Some(knossos::engine::EngineError::Budget { .. })
+            );
+            let provider_error = engine_error.is_some() && !budget_error;
+            talos.session.log(&TraceEvent::EvaluationFinished {
+                case_id: case.id.clone(),
+                grader_pass: false,
+                verifier_pass: false,
+                halt_reason: if budget_error {
+                    "budget_exhausted"
+                } else if provider_error {
+                    "provider_error"
+                } else {
+                    "harness_error"
+                }
+                .into(),
+                provider_status: if provider_error { "error" } else { "ok" }.into(),
+                infrastructure_status: if budget_error {
+                    "budget_exhausted"
+                } else if provider_error {
+                    "not_graded"
+                } else {
+                    "harness_error"
+                }
+                .into(),
+                tamper: false,
+            });
+            eprintln!(
+                "FAIL {} (agent: {e:#}; trace {})",
+                case.id,
+                trace_path.display()
+            );
+            if let Some(state) = &mut checkpoint {
+                let spent = eval_quota.snapshot();
+                state.requests_spent = spent.requests;
+                state.tokens_spent = spent.tokens;
+                state.save(checkpoint_path.expect("checkpoint path accompanies state"))?;
+            }
+            let _ = std::fs::remove_dir_all(&root);
+            if !continue_after_agent_error {
+                return Err(anyhow::anyhow!(
+                    "evaluation stopped after agent/provider error in {}; pass \
+                     --continue-after-agent-error only after diagnosing it",
+                    case.id
+                ));
+            }
+            continue;
+        }
+        let outcome = result.expect("handled agent error above");
+        let agent_response = talos
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == knossos::engine::Role::Assistant)
+            .map(|message| message.text());
+        let tampered = knossos::eval::restore_tests(case, &root)?;
+        let mut grade =
+            knossos::eval::grade(case, &root, tampered, agent_response.as_deref()).await?;
+        let agent_completed = knossos::eval::completion_verdict(
+            &case.expected_action,
+            outcome.halt,
+            grade.action_passed,
+        );
+        grade.passed &= agent_completed;
+        let failure_kind = if !grade.action_passed {
+            "action_violation"
+        } else if agent_completed {
+            grade.failure_kind()
+        } else {
+            outcome.halt.label()
+        };
+        let verifier_pass = knossos::eval::verdict(
+            grade.fixed,
+            grade.fixed_total,
+            grade.kept,
+            grade.kept_total,
+            grade.held,
+            grade.held_total,
+        );
+        let infrastructure_status = if grade.unverifiable > 0 {
+            "unverifiable"
+        } else if grade.timed_out > 0 {
+            "timeout"
+        } else {
+            "ok"
+        };
+        talos.session.log(&TraceEvent::EvaluationFinished {
+            case_id: case.id.clone(),
+            grader_pass: grade.passed,
+            verifier_pass,
+            halt_reason: if grade.passed { "done" } else { failure_kind }.into(),
+            provider_status: "ok".into(),
+            infrastructure_status: infrastructure_status.into(),
+            tamper: grade.tamper,
+        });
+        if grade.passed {
+            passed += 1;
+            println!(
+                "PASS {}  fixed {}/{} kept {}/{} held {}/{} tamper={} trace={}",
+                case.id,
+                grade.fixed,
+                grade.fixed_total,
+                grade.kept,
+                grade.kept_total,
+                grade.held,
+                grade.held_total,
+                grade.tamper,
+                trace_path.display()
+            );
+        } else {
+            println!(
+                "FAIL {}  fixed {}/{} kept {}/{} held {}/{} tamper={} reason={} timeout={} unverifiable={} trace={}",
+                case.id,
+                grade.fixed,
+                grade.fixed_total,
+                grade.kept,
+                grade.kept_total,
+                grade.held,
+                grade.held_total,
+                grade.tamper,
+                failure_kind,
+                grade.timed_out,
+                grade.unverifiable,
+                trace_path.display()
+            );
+        }
+        if let Some(state) = &mut checkpoint {
+            state.completed.insert(case.id.clone());
+            if grade.passed {
+                state.passed.insert(case.id.clone());
+            } else {
+                state.passed.remove(&case.id);
+            }
+            let spent = eval_quota.snapshot();
+            state.requests_spent = spent.requests;
+            state.tokens_spent = spent.tokens;
+            state.save(checkpoint_path.expect("checkpoint path accompanies state"))?;
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    println!("{passed}/{selected_total} passed");
+    if passed != selected_total {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn harness_revision() -> String {
+    if let Ok(value) = std::env::var("KNOSSOS_HARNESS_COMMIT") {
+        if !value.trim().is_empty() {
+            return value;
+        }
+    }
+    let root = env!("CARGO_MANIFEST_DIR");
+    let head = std::process::Command::new("git")
+        .args(["-C", root, "rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+    let dirty = std::process::Command::new("git")
+        .args(["-C", root, "status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| !output.stdout.is_empty());
+    if dirty {
+        format!("{head}+dirty")
+    } else {
+        head
+    }
+}
+
 async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
-    let (mut talos, trace_path) = build_talos(cfg, opts, false)?;
+    let cfg = prefer_cameo(cfg.clone()).await;
+    let (mut talos, trace_path) = build_talos(&cfg, opts, false)?;
 
     talos.session.log(&TraceEvent::TaskStarted {
         task: task.to_string(),
@@ -603,8 +1138,10 @@ async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
 
     if outcome.dry_run {
         println!("\n{}", diff::render(&talos.diffs()));
-        println!("Nothing was written. Re-run without --dry-run to apply, or use `repl` to \
-                  review and /apply interactively.");
+        println!(
+            "Nothing was written. Re-run without --dry-run to apply, or use `repl` to \
+                  review and /apply interactively."
+        );
     } else if !outcome.changed.is_empty() {
         println!("\nChanged {} file(s):", outcome.changed.len());
         for p in &outcome.changed {
@@ -655,10 +1192,7 @@ async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
         }
     });
 
-    let writer = tokio::spawn(knossos::serve::write_events(
-        event_rx,
-        std::io::stdout(),
-    ));
+    let writer = tokio::spawn(knossos::serve::write_events(event_rx, std::io::stdout()));
 
     let result = knossos::serve::run(
         talos,
@@ -690,11 +1224,14 @@ async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result
 }
 
 fn init_tracing(verbose: bool) {
-    let filter = if verbose { "knossos=debug" } else { "knossos=info" };
+    let filter = if verbose {
+        "knossos=debug"
+    } else {
+        "knossos=info"
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| filter.into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
         )
         .with_target(false)
         .without_time()

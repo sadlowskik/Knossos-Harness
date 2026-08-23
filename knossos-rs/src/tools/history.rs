@@ -48,7 +48,10 @@ impl Stamp {
     fn of(content: &str) -> Self {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         content.hash(&mut h);
-        Stamp { hash: h.finish(), len: content.len() as u64 }
+        Stamp {
+            hash: h.finish(),
+            len: content.len() as u64,
+        }
     }
 }
 
@@ -142,7 +145,9 @@ impl History {
         let mut inner = self.inner.lock().unwrap();
         match current {
             Some(content) => {
-                inner.observed.insert(path.to_path_buf(), Stamp::of(&content));
+                inner
+                    .observed
+                    .insert(path.to_path_buf(), Stamp::of(&content));
             }
             None => {
                 inner.observed.remove(path);
@@ -167,11 +172,10 @@ impl History {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => return,
         };
-        self.inner
-            .lock()
-            .unwrap()
-            .journal
-            .push(JournalEntry { path: path.to_path_buf(), before });
+        self.inner.lock().unwrap().journal.push(JournalEntry {
+            path: path.to_path_buf(),
+            before,
+        });
     }
 
     /// Note that the harness itself wrote this content.

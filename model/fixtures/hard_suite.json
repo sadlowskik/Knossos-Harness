@@ -117,5 +117,126 @@
       "tests/test_pricing.py::test_the_first_lookup_is_still_right"
     ],
     "note": "Module-level cache; the agent must notice the key, not add a clear()."
+  },
+  {
+    "id": "cache-invalidation-is-scoped",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "rename_product() succeeds, but product_label() still returns the old label afterwards. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/catalog.py": "_products = {\"chair\": \"Reading chair\", \"desk\": \"Writing desk\"}\n_labels = {}\n_loads = {}\n\n\ndef product_label(sku):\n    \"\"\"Return a product label, loading each unchanged SKU at most once.\"\"\"\n    if sku not in _labels:\n        _loads[sku] = _loads.get(sku, 0) + 1\n        _labels[sku] = _products[sku]\n    return _labels[sku]\n\n\ndef rename_product(sku, label):\n    \"\"\"Rename one product without invalidating labels for other products.\"\"\"\n    _products[sku] = label\n    _labels.pop(label, None)       # defect: cache is keyed by SKU, not label\n\n\ndef load_count(sku):\n    return _loads.get(sku, 0)\n\n\ndef reset_cache():\n    _labels.clear()\n    _loads.clear()\n",
+      "tests/__init__.py": "",
+      "tests/test_catalog.py": "from pkg.catalog import load_count, product_label, rename_product, reset_cache\n\n\ndef test_rename_is_visible_on_the_next_lookup():\n    reset_cache()\n    assert product_label(\"chair\") == \"Reading chair\"\n    rename_product(\"chair\", \"Office chair\")\n    assert product_label(\"chair\") == \"Office chair\"\n\n\ndef test_renaming_one_product_keeps_another_cached():\n    reset_cache()\n    product_label(\"desk\")\n    product_label(\"chair\")\n    rename_product(\"chair\", \"Office chair\")\n    assert product_label(\"desk\") == \"Writing desk\"\n    assert load_count(\"desk\") == 1\n"
+    },
+    "fail_to_pass": [
+      "tests/test_catalog.py::test_rename_is_visible_on_the_next_lookup"
+    ],
+    "pass_to_pass": [
+      "tests/test_catalog.py::test_renaming_one_product_keeps_another_cached"
+    ],
+    "note": "Clearing the complete cache fixes the stale chair but regresses the unrelated desk."
+  },
+  {
+    "id": "request-options-do-not-leak-headers",
+    "kind": "state_isolation",
+    "tier": "hard",
+    "prompt": "request_options() leaks a header from one request into the next. Make each call independent.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/options.py": "DEFAULT_HEADERS = {\"Accept\": \"application/json\"}\n\n\ndef request_options(extra_headers=None):\n    \"\"\"Return fresh request options without mutating defaults or caller data.\"\"\"\n    options = {\"timeout\": 5, \"headers\": DEFAULT_HEADERS}\n    if extra_headers:\n        options[\"headers\"].update(extra_headers)\n    return options\n",
+      "pkg/client.py": "from pkg.options import request_options\n\n\ndef headers_for(extra_headers=None):\n    \"\"\"The HTTP client forwards exactly the options it receives.\"\"\"\n    return request_options(extra_headers)[\"headers\"]\n",
+      "tests/__init__.py": "",
+      "tests/test_options.py": "from pkg.client import headers_for\n\n\ndef test_headers_from_one_request_do_not_reach_the_next():\n    assert headers_for({\"X-Request-ID\": \"first\"})[\"X-Request-ID\"] == \"first\"\n    assert headers_for() == {\"Accept\": \"application/json\"}\n\n\ndef test_default_timeout_and_accept_header_are_preserved():\n    from pkg.options import request_options\n    options = request_options()\n    assert options[\"timeout\"] == 5\n    assert options[\"headers\"][\"Accept\"] == \"application/json\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_options.py::test_headers_from_one_request_do_not_reach_the_next"
+    ],
+    "pass_to_pass": [
+      "tests/test_options.py::test_default_timeout_and_accept_header_are_preserved"
+    ],
+    "note": "The mutation is hidden in a nested default dictionary and appears only across calls."
+  },
+  {
+    "id": "failed-transfer-leaves-no-debit",
+    "kind": "state_transition",
+    "tier": "hard",
+    "prompt": "Ledger.transfer() debits the sender when a transfer to a frozen account fails. Make failed transfers atomic.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/ledger.py": "class Ledger:\n    def __init__(self, balances, frozen=()):\n        self.balances = dict(balances)\n        self.frozen = set(frozen)\n\n    def transfer(self, source, target, cents):\n        \"\"\"Move positive cents atomically; errors leave every balance unchanged.\"\"\"\n        if cents <= 0:\n            raise ValueError(\"amount must be positive\")\n        if self.balances[source] < cents:\n            raise ValueError(\"insufficient funds\")\n        self.balances[source] -= cents\n        if target in self.frozen:\n            raise RuntimeError(\"target account is frozen\")\n        self.balances[target] += cents\n",
+      "pkg/report.py": "def total_balance(ledger):\n    \"\"\"Audits use this after both successful and failed transfers.\"\"\"\n    return sum(ledger.balances.values())\n",
+      "tests/__init__.py": "",
+      "tests/test_ledger.py": "import pytest\n\nfrom pkg.ledger import Ledger\nfrom pkg.report import total_balance\n\n\ndef test_a_failed_transfer_does_not_debit_the_sender():\n    ledger = Ledger({\"alice\": 100, \"vault\": 20}, frozen={\"vault\"})\n    with pytest.raises(RuntimeError):\n        ledger.transfer(\"alice\", \"vault\", 30)\n    assert ledger.balances == {\"alice\": 100, \"vault\": 20}\n\n\ndef test_a_successful_transfer_keeps_the_total_and_moves_money():\n    ledger = Ledger({\"alice\": 100, \"bob\": 20})\n    ledger.transfer(\"alice\", \"bob\", 30)\n    assert ledger.balances == {\"alice\": 70, \"bob\": 50}\n    assert total_balance(ledger) == 120\n"
+    },
+    "fail_to_pass": [
+      "tests/test_ledger.py::test_a_failed_transfer_does_not_debit_the_sender"
+    ],
+    "pass_to_pass": [
+      "tests/test_ledger.py::test_a_successful_transfer_keeps_the_total_and_moves_money"
+    ],
+    "note": "Checking the frozen target before changing either balance is simpler than compensating later."
+  },
+  {
+    "id": "add-a-summary-field-end-to-end",
+    "kind": "feature",
+    "tier": "hard",
+    "prompt": "Add an `open_count` field to the project summary returned by the public API.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/projects.py": "def project_summary(project):\n    \"\"\"Return the JSON-ready summary for one project.\"\"\"\n    return {\"name\": project[\"name\"], \"task_count\": len(project[\"tasks\"])}\n",
+      "pkg/api.py": "from pkg.projects import project_summary\n\n\ndef get_project(project):\n    \"\"\"HTTP handlers return this dictionary unchanged.\"\"\"\n    return project_summary(project)\n",
+      "tests/__init__.py": "",
+      "tests/test_api.py": "from pkg.api import get_project\n\n\ndef test_summary_includes_the_number_of_open_tasks():\n    project = {\"name\": \"Roadmap\", \"tasks\": [{\"done\": False}, {\"done\": True}, {\"done\": False}]}\n    assert get_project(project)[\"open_count\"] == 2\n\n\ndef test_existing_summary_fields_are_preserved():\n    assert get_project({\"name\": \"Roadmap\", \"tasks\": []})[\"name\"] == \"Roadmap\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_api.py::test_summary_includes_the_number_of_open_tasks"
+    ],
+    "pass_to_pass": [
+      "tests/test_api.py::test_existing_summary_fields_are_preserved"
+    ],
+    "note": "The feature is small but must travel through the implementation seam the public API uses."
+  },
+  {
+    "id": "rename-parser-and-update-call-sites",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "Rename parse_record() to parse_event() and update the application to use the new public symbol.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/parser.py": "def parse_record(text):\n    \"\"\"Parse a `kind:value` event line.\"\"\"\n    kind, value = text.split(\":\", 1)\n    return {\"kind\": kind, \"value\": value}\n",
+      "pkg/service.py": "from pkg.parser import parse_record\n\n\ndef ingest(text):\n    return parse_record(text)\n",
+      "tests/__init__.py": "",
+      "tests/test_service.py": "from pkg.service import ingest\n\n\ndef test_ingest_uses_the_renamed_public_parser():\n    assert ingest(\"note:hello\") == {\"kind\": \"note\", \"value\": \"hello\"}\n",
+      "tests/test_public_api.py": "def test_old_parser_symbol_is_not_left_as_a_compatibility_alias():\n    import pkg.parser as parser\n    assert hasattr(parser, \"parse_event\")\n    assert not hasattr(parser, \"parse_record\")\n"
+    },
+    "fail_to_pass": [
+      "tests/test_public_api.py::test_old_parser_symbol_is_not_left_as_a_compatibility_alias"
+    ],
+    "pass_to_pass": [
+      "tests/test_service.py::test_ingest_uses_the_renamed_public_parser"
+    ],
+    "note": "A correct migration updates both definition and import; retaining an alias evades the requested API change."
+  },
+  {
+    "id": "fix-renderer-not-generated-schema",
+    "kind": "boundary",
+    "tier": "hard",
+    "prompt": "The displayed task title is always upper-case. Fix the renderer; do not edit generated schema files.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/generated_schema.py": "# GENERATED FILE -- changes are overwritten by the schema compiler.\nTITLE_STYLE = \"upper\"\n",
+      "pkg/render.py": "from pkg.generated_schema import TITLE_STYLE\n\n\ndef render_title(title):\n    \"\"\"Render source titles exactly as users entered them.\"\"\"\n    return title.upper() if TITLE_STYLE == \"upper\" else title\n",
+      "tests/__init__.py": "",
+      "tests/test_render.py": "from pkg.render import render_title\n\n\ndef test_titles_keep_their_original_case():\n    assert render_title(\"Ship v2\") == \"Ship v2\"\n",
+      "tests/test_boundary.py": "from pathlib import Path\n\n\ndef test_generated_schema_was_not_edited():\n    text = Path(\"pkg/generated_schema.py\").read_text(encoding=\"utf-8\")\n    assert text == '# GENERATED FILE -- changes are overwritten by the schema compiler.\\nTITLE_STYLE = \"upper\"\\n'\n"
+    },
+    "fail_to_pass": [
+      "tests/test_render.py::test_titles_keep_their_original_case"
+    ],
+    "pass_to_pass": [
+      "tests/test_boundary.py::test_generated_schema_was_not_edited"
+    ],
+    "note": "Changing the generated constant is the easy shortcut; the renderer must own the policy."
   }
 ]
