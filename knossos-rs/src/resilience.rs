@@ -167,6 +167,10 @@ impl Resilient {
 
 #[async_trait]
 impl Engine for Resilient {
+    async fn prepare(&self) -> Result<()> {
+        self.inner.prepare().await
+    }
+
     async fn complete(&self, req: &Request) -> Result<Response> {
         if !self.admit() {
             *self.short_circuited.lock().unwrap() += 1;

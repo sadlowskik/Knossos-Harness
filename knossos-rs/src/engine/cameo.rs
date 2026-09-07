@@ -131,9 +131,7 @@ impl CameoEngine {
         if let Some((status, body)) = self.operator_get("/api/engines").await? {
             if (200..300).contains(&status) {
                 validate_engine_contract(&body)?;
-                if let Some(window) = context_from_engines(&body, &self.model) {
-                    self.inner.bound_context_window(window);
-                }
+                self.apply_negotiated_features(&body);
                 return Ok(Some(models_from_engines(&body)));
             }
         }
@@ -143,9 +141,7 @@ impl CameoEngine {
         let (status, body) = http_get(&self.client, &url, discovery_key).await?;
         if (200..300).contains(&status) {
             validate_engine_contract(&body)?;
-            if let Some(window) = context_from_engines(&body, &self.model) {
-                self.inner.bound_context_window(window);
-            }
+            self.apply_negotiated_features(&body);
             return Ok(Some(models_from_engines(&body)));
         }
         Ok(None)
@@ -212,6 +208,39 @@ impl CameoEngine {
         }
     }
 
+    fn apply_negotiated_features(&self, body: &str) {
+        if let Some(window) = context_from_engines(body, &self.model) {
+            self.inner.bound_context_window(window);
+        }
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            self.inner.bound_native_tools(false);
+            return;
+        };
+        if value.get("contract_version").is_none() {
+            self.inner.bound_native_tools(false);
+            return;
+        }
+        let native = value
+            .pointer("/capabilities/tool_calls/native")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.inner.bound_native_tools(native);
+        if let Some(max) = value
+            .pointer("/limits/max_completion_tokens")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+        {
+            self.inner.bound_max_completion_tokens(max);
+        }
+        if let Some(max) = value
+            .pointer("/limits/max_request_bytes")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+        {
+            self.inner.bound_max_request_bytes(max);
+        }
+    }
+
     #[cfg(unix)]
     fn socket_path(&self) -> Option<PathBuf> {
         if let Some(p) = &self.socket {
@@ -224,6 +253,10 @@ impl CameoEngine {
 
 #[async_trait]
 impl Engine for CameoEngine {
+    async fn prepare(&self) -> Result<()> {
+        self.ensure().await
+    }
+
     async fn complete(&self, req: &Request) -> Result<Response> {
         self.ensure().await?;
         self.inner.complete(req).await
@@ -294,20 +327,100 @@ fn models_from_engines(body: &str) -> Vec<String> {
 fn validate_engine_contract(body: &str) -> Result<()> {
     let value: Value = serde_json::from_str(body)
         .map_err(|e| anyhow::anyhow!("{PROVIDER} engine descriptor is not JSON: {e}"))?;
-    if let Some(version) = value.get("contract_version").and_then(Value::as_str) {
-        if version != "cameo-engine/v1" {
+    if let Some(version) = value.get("contract_version") {
+        if version.as_str() != Some("cameo-engine/v1") {
             bail!(
                 "{PROVIDER} engine contract '{version}' is unsupported; expected cameo-engine/v1"
             );
         }
     }
-    if let Some(path) = value.get("openai_base_path").and_then(Value::as_str) {
-        if path != "/v1" {
+    if let Some(path) = value.get("openai_base_path") {
+        if path.as_str() != Some("/v1") {
             bail!("{PROVIDER} engine descriptor advertises unsupported base path '{path}'");
         }
     }
-    if !value.get("models").is_some_and(Value::is_array) {
-        bail!("{PROVIDER} engine descriptor is missing the models array");
+    let models = value
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            anyhow::anyhow!("{PROVIDER} engine descriptor is missing the models array")
+        })?;
+    let mut seen = std::collections::HashSet::new();
+    for model in models {
+        let model = model
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("{PROVIDER} engine model IDs must be nonempty strings")
+            })?;
+        if !seen.insert(model) {
+            bail!("{PROVIDER} engine descriptor contains duplicate model IDs");
+        }
+    }
+    // Legacy nodes predate the full discovery schema. A node declaring v1 must
+    // meet it: malformed v1 must not be downgraded to permissive legacy parsing.
+    if value.get("contract_version").is_some() {
+        if !value
+            .get("node")
+            .and_then(Value::as_str)
+            .is_some_and(|node| !node.is_empty())
+            || value.get("openai_base_path").and_then(Value::as_str) != Some("/v1")
+            || !value.get("auth_required").is_some_and(Value::is_boolean)
+            || !matches!(
+                value.get("engine_state").and_then(Value::as_str),
+                Some("idle" | "ready")
+            )
+        {
+            bail!(
+                "{PROVIDER} engine descriptor has invalid v1 identity, route, auth or state fields"
+            );
+        }
+        let capabilities = value
+            .get("capabilities")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                anyhow::anyhow!("{PROVIDER} engine descriptor is missing v1 capabilities")
+            })?;
+        if capabilities
+            .get("chat_completions")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            bail!("{PROVIDER} engine does not advertise chat completions required by Knossos");
+        }
+        let profiles = value
+            .get("model_profiles")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                anyhow::anyhow!("{PROVIDER} engine descriptor is missing model profiles")
+            })?;
+        for profile in profiles {
+            if !profile
+                .get("model")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.is_empty())
+                || !profile
+                    .get("context_tokens")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|n| n > 0)
+            {
+                bail!("{PROVIDER} engine descriptor contains an invalid model profile");
+            }
+        }
+        let limits = value
+            .get("limits")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("{PROVIDER} engine descriptor is missing limits"))?;
+        if !limits
+            .get("max_request_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+            || limits
+                .get("max_completion_tokens")
+                .is_some_and(|n| !n.is_null() && !n.as_u64().is_some_and(|n| n > 0))
+        {
+            bail!("{PROVIDER} engine descriptor contains invalid limits");
+        }
     }
     Ok(())
 }
@@ -455,6 +568,29 @@ mod tests {
     use tokio::net::TcpListener;
 
     #[test]
+    fn cameo_does_not_claim_native_tools_until_discovery_says_so() {
+        let engine = CameoEngine::new("qwen", "http://127.0.0.1:9/v1", None, 128);
+        assert!(
+            !engine.supports_native_tools(),
+            "Cameo v1 advertises agent-managed tools"
+        );
+        engine.apply_negotiated_features(
+            r#"{
+            "contract_version":"cameo-engine/v1",
+            "capabilities":{"chat_completions":true,"tool_calls":{"native":false}},
+            "limits":{"max_request_bytes":1024,"max_completion_tokens":256},
+            "model_profiles":[{"model":"qwen","context_tokens":2048}]
+        }"#,
+        );
+        assert!(!engine.supports_native_tools());
+        assert_eq!(engine.context_window(), Some(2048));
+        engine.apply_negotiated_features(
+            r#"{"contract_version":"cameo-engine/v1","capabilities":{"tool_calls":{"native":true}}}"#,
+        );
+        assert!(engine.supports_native_tools());
+    }
+
+    #[test]
     fn origin_strips_v1_and_trailing_slash() {
         assert_eq!(
             origin_from_v1("http://127.0.0.1:9090/v1"),
@@ -483,8 +619,14 @@ mod tests {
     fn versioned_contract_is_validated_and_legacy_is_still_readable() {
         let v1 = r#"{
             "contract_version":"cameo-engine/v1",
+            "node":"fixture",
             "openai_base_path":"/v1",
-            "models":[]
+            "auth_required":true,
+            "engine_state":"idle",
+            "models":[],
+            "model_profiles":[],
+            "capabilities":{"chat_completions":true},
+            "limits":{"max_request_bytes":1048576,"max_completion_tokens":null}
         }"#;
         assert!(validate_engine_contract(v1).is_ok());
         assert!(validate_engine_contract(r#"{"models":[]}"#).is_ok());
@@ -496,6 +638,69 @@ mod tests {
             r#"{"contract_version":"cameo-engine/v1","openai_base_path":"/other","models":[]}"#
         )
         .is_err());
+        let descriptor: Value = serde_json::from_str(v1).unwrap();
+        for (field, invalid) in [
+            ("contract_version", json!(1)),
+            ("contract_version", Value::Null),
+            ("node", json!("")),
+            ("openai_base_path", json!(false)),
+            ("auth_required", json!("false")),
+            ("engine_state", json!("starting")),
+            ("models", json!(["model", "model"])),
+            ("models", json!(["model", 7])),
+            (
+                "model_profiles",
+                json!([{"model":"model","context_tokens":0}]),
+            ),
+            ("capabilities", json!({"chat_completions":false})),
+            ("limits", json!({"max_request_bytes":-1})),
+            (
+                "limits",
+                json!({"max_request_bytes":1,"max_completion_tokens":0}),
+            ),
+        ] {
+            let mut broken = descriptor.clone();
+            broken[field] = invalid;
+            assert!(
+                validate_engine_contract(&broken.to_string()).is_err(),
+                "accepted invalid {field}"
+            );
+        }
+        for field in [
+            "node",
+            "openai_base_path",
+            "auth_required",
+            "engine_state",
+            "model_profiles",
+            "capabilities",
+            "limits",
+        ] {
+            let mut broken = descriptor.clone();
+            broken.as_object_mut().unwrap().remove(field);
+            assert!(
+                validate_engine_contract(&broken.to_string()).is_err(),
+                "accepted missing {field}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_v1_discovery_never_starts_a_model_or_falls_back() {
+        let origin = spawn_http(|method, path, _| {
+            assert_eq!(method, "GET");
+            assert_eq!(path, "/api/engines");
+            (
+                200,
+                json!({"contract_version":false,"models":[]}).to_string(),
+            )
+        })
+        .await;
+        let engine = CameoEngine::new("model", format!("{origin}/v1"), None, 512)
+            .with_operator(Some("operator".into()), None);
+        let error = engine.ensure().await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("engine contract 'false' is unsupported"));
     }
 
     #[test]

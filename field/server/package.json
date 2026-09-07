@@ -1,0 +1,17 @@
+{
+  "name": "knossos-field-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
+    "start": "node --disable-warning=ExperimentalWarning src/index.js"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "ignore": "^7.0.8",
+    "ws": "^8.18.0",
+    "yaml": "^2.7.0"
+  }
+}

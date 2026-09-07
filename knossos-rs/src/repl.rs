@@ -195,7 +195,7 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
         talos.interjections(),
     ));
 
-    println!("Daedalus interactive session. /help for commands, /quit to leave.");
+    println!("Knossos interactive session. /help for commands, /quit to leave.");
     println!("Type while it is working to steer it without stopping it.");
     if talos.ctx.is_dry_run() {
         println!("DRY RUN — nothing will be written until you /apply.");
@@ -210,7 +210,7 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
     }
 
     loop {
-        print!("daedalus> ");
+        print!("knossos> ");
         std::io::stdout().flush()?;
 
         // Already cleaned and non-empty: the router does both, because it has
@@ -443,6 +443,7 @@ mod routing {
 }
 
 async fn first_task(talos: &mut Talos, task: &str, max_tokens: u32) -> Result<()> {
+    talos.capture_environment()?;
     let plan = metis::plan(
         talos.engine.as_ref(),
         &talos.themis,

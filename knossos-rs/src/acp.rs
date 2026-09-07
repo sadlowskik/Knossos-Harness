@@ -168,6 +168,7 @@ impl Agent {
             "session/list" => Ok(self.list_sessions(&params)),
             "session/close" | "session/delete" => self.close_session(&params),
             "session/set_mode" => self.set_mode(&params),
+            "session/set_context" => self.set_context(&params),
             "session/interject" => self.interject(&params),
             // Answered rather than ignored: an unanswered request blocks the
             // editor for as long as it is willing to wait.
@@ -183,14 +184,19 @@ impl Agent {
         json!({
             "protocolVersion": PROTOCOL_VERSION,
             "agentInfo": {
-                "name": "daedalus",
-                "title": "Daedalus",
+                "name": "knossos",
+                "title": "Knossos",
                 "version": env!("CARGO_PKG_VERSION"),
             },
             "agentCapabilities": {
                 "loadSession": true,
                 "unstable_forkSession": true,
                 "sessionCapabilities": {"list": {}, "close": {}, "delete": {}},
+                "daedalusCapabilities": {
+                    "contextPolicy": true,
+                    "interject": true,
+                    "checkpointReplay": true,
+                },
                 "promptCapabilities": {
                     "image": false,
                     "audio": false,
@@ -224,6 +230,9 @@ impl Agent {
 
         let mut talos = (self.build)(&root, Arc::clone(&cancel), approver)
             .map_err(|e| RpcError::new(INVALID_PARAMS, format!("cannot open {cwd}: {e}")))?;
+        if let Some((window, compact_at)) = context_overrides(params)? {
+            talos.set_context_limits(window, compact_at);
+        }
         if scripted_default_mode().1 {
             talos.ctx.set_dry_run(true);
         }
@@ -255,6 +264,7 @@ impl Agent {
         .with_sink(Arc::new(move |event: &TraceEvent| notifier.emit(event)));
 
         let interjections = talos.interjections();
+        let context = talos.context_budget();
         let initial_mode = scripted_default_mode().0;
         self.sessions.lock().expect("sessions").insert(
             id.clone(),
@@ -275,8 +285,15 @@ impl Agent {
             "mode": "ask",
             "state": "idle",
             "model": "",
+            "native_context": context.engine_tokens,
+            "context_window": context.assigned_tokens,
+            "compact_at": context.compact_at_tokens,
         }));
-        Ok(json!({"sessionId": id, "modes": mode_state(&initial_mode)}))
+        Ok(json!({
+            "sessionId": id,
+            "modes": mode_state(&initial_mode),
+            "context": context_json(context),
+        }))
     }
 
     fn live(&self, params: &Value) -> Result<Arc<Live>, RpcError> {
@@ -406,6 +423,7 @@ impl Agent {
         // worker, so blocking on the async loop here starves nothing.
         let outcome = self.runtime.block_on(async {
             if first {
+                talos.capture_environment()?;
                 // A one-word "fix it" is not worth a planner turn. Anything
                 // longer gets a real Metis plan so stepwise execution can
                 // engage — the previous ACP path stuffed the prompt in as a
@@ -455,6 +473,9 @@ impl Agent {
             "halt": outcome.halt.label(),
             "summary": outcome.summary,
             "files": outcome.changed.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "native_context": talos.context_budget().engine_tokens,
+            "context_window": talos.context_budget().assigned_tokens,
+            "compact_at": talos.context_budget().compact_at_tokens,
         }));
         Ok(json!({"stopReason": stop_reason(outcome.halt)}))
     }
@@ -531,6 +552,24 @@ impl Agent {
         Ok(json!({ "mode": mode }))
     }
 
+    fn set_context(&self, params: &Value) -> Result<Value, RpcError> {
+        let live = self.live(params)?;
+        let (context_window, compact_at) = context_overrides(params)?.ok_or_else(|| {
+            RpcError::new(
+                INVALID_PARAMS,
+                "session/set_context needs contextWindow or compactAt",
+            )
+        })?;
+        let mut talos = live.talos.try_lock().map_err(|_| {
+            RpcError::new(
+                INVALID_PARAMS,
+                "session is busy; change context between turns",
+            )
+        })?;
+        let context = talos.set_context_limits(context_window, compact_at);
+        Ok(json!({"context": context_json(context)}))
+    }
+
     fn interject(&self, params: &Value) -> Result<Value, RpcError> {
         let live = self.live(params)?;
         let text = params
@@ -572,6 +611,50 @@ fn stop_reason(halt: Halt) -> &'static str {
         Halt::BudgetExhausted => "max_turn_requests",
         Halt::Cancelled => "cancelled",
     }
+}
+
+fn context_value(params: &Value, key: &str) -> Result<Option<u32>, RpcError> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let number = value.as_u64().filter(|number| *number > 0).ok_or_else(|| {
+                RpcError::new(
+                    INVALID_PARAMS,
+                    format!("{key} must be a positive 32-bit integer or null"),
+                )
+            })?;
+            let number = u32::try_from(number).map_err(|_| {
+                RpcError::new(
+                    INVALID_PARAMS,
+                    format!("{key} must be a positive 32-bit integer or null"),
+                )
+            })?;
+            Ok(Some(number))
+        }
+    }
+}
+
+type ContextOverrides = (Option<u32>, Option<u32>);
+
+fn context_overrides(params: &Value) -> Result<Option<ContextOverrides>, RpcError> {
+    if params.get("contextWindow").is_none() && params.get("compactAt").is_none() {
+        return Ok(None);
+    }
+    Ok(Some((
+        context_value(params, "contextWindow")?,
+        context_value(params, "compactAt")?,
+    )))
+}
+
+fn context_json(context: crate::context::ContextBudget) -> Value {
+    json!({
+        "nativeContext": context.engine_tokens,
+        "assignedContext": context.assigned_tokens,
+        "inputLimit": context.input_limit_tokens,
+        "compactAt": context.compact_at_tokens,
+        "completionReserve": context.completion_reserve,
+        "protocolReserve": context.protocol_reserve,
+    })
 }
 
 /// Flatten an ACP prompt into text. Non-text blocks are named rather than
@@ -935,7 +1018,7 @@ mod tests {
         let reply = ed.call("initialize", json!({"protocolVersion": 1}));
 
         assert_eq!(reply["result"]["protocolVersion"], json!(PROTOCOL_VERSION));
-        assert_eq!(reply["result"]["agentInfo"]["name"], json!("daedalus"));
+        assert_eq!(reply["result"]["agentInfo"]["name"], json!("knossos"));
         // Claiming `fs` would advertise a callback this agent never makes.
         assert!(reply["result"]["agentCapabilities"].get("fs").is_none());
         assert_eq!(
@@ -955,6 +1038,36 @@ mod tests {
 
         let reply = ed.call("session/new", json!({"cwd": "relative/path"}));
         assert_eq!(reply["error"]["code"], json!(INVALID_PARAMS));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn context_limits_are_clamped_and_change_only_between_turns() {
+        let (_dir, root) = workspace();
+        let mut editor = Editor::connect(vec![]);
+        editor.call("initialize", json!({"protocolVersion": 1}));
+        let opened = editor.call(
+            "session/new",
+            json!({"cwd": root, "contextWindow": 8_000, "compactAt": 7_000}),
+        );
+        let session = opened["result"]["sessionId"].as_str().unwrap().to_string();
+        assert_eq!(opened["result"]["context"]["assignedContext"], json!(8_000));
+        assert_eq!(opened["result"]["context"]["compactAt"], json!(6_464));
+
+        let changed = editor.call(
+            "session/set_context",
+            json!({"sessionId": session, "contextWindow": 4_000, "compactAt": 99_000}),
+        );
+        assert_eq!(
+            changed["result"]["context"]["assignedContext"],
+            json!(4_000)
+        );
+        assert_eq!(changed["result"]["context"]["compactAt"], json!(2_488));
+
+        let bad = editor.call(
+            "session/set_context",
+            json!({"sessionId": session, "contextWindow": 0}),
+        );
+        assert_eq!(bad["error"]["code"], json!(INVALID_PARAMS));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

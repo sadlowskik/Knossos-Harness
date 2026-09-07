@@ -59,7 +59,7 @@ def _events(case_id, passed, *, provider="ok", infrastructure="ok",
         {"event": "task_started", "task": "fix it", "engine": "openrouter:ox"},
         {
             "event": "exchange",
-            "schema_version": "daedalus-trace/v2",
+            "schema_version": "knossos-trace/v2",
             "request": {
                 "system": "be correct",
                 "messages": [{

@@ -7,7 +7,7 @@ model, and it does not care which one.
 | Module | What it is |
 |---|---|
 | `argus.py` | Repo-wide index and retrieval — which parts of the codebase belong in the context window |
-| `acp.py` | [Agent Client Protocol](https://agentclientprotocol.com) server, so editors can spawn Daedalus as an agent |
+| `acp.py` | [Agent Client Protocol](https://agentclientprotocol.com) server, so editors can spawn Knossos as an agent |
 | `jsonrpc.py` | Bidirectional JSON-RPC 2.0 over newline-delimited stdio |
 | `engine.py` | The swappable engine slot — retrieval-only, any OpenAI-compatible endpoint, or local weights |
 | `gate.py` | Decides whether repository context belongs in the prompt at all |
@@ -171,7 +171,7 @@ In `settings.json`:
 ```json
 {
   "agent_servers": {
-    "Daedalus": {
+    "Knossos": {
       "type": "custom",
       "command": "C:/Users/you/AppData/Local/Python/pythoncore-3.14-64/python.exe",
       "args": ["-m", "harness", "--engine", "api", "--provider", "groq"],
@@ -492,7 +492,7 @@ Collected v2 traces carry a run id, linear-size exchange deltas, and a final
 external evaluation label. Build deterministic, leakage-resistant splits with:
 
 ```bash
-python scripts/curate_traces.py --traces .daedalus --out-dir corpus
+python scripts/curate_traces.py --traces .knossos --out-dir corpus
 ```
 
 The curator quarantines secret-shaped content, rejects malformed tool

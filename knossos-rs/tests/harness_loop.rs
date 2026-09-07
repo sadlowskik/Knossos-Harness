@@ -579,7 +579,6 @@ async fn reading_a_file_is_not_doing_the_task() {
         4,
         false,
     );
-
     let outcome = talos
         .run(
             "add a triple(x: u32) -> u32 to src/lib.rs",
@@ -623,7 +622,7 @@ impl knossos::talos::Approver for Recording {
 
 #[tokio::test]
 async fn without_an_approver_a_run_is_unattended() {
-    // The default, and it is the right one for `daedalus task`: a one-shot CLI
+    // The default, and it is the right one for `knossos task`: a one-shot CLI
     // is non-interactive by design, and prompting there hangs CI and every
     // scripted use. Pinned so it cannot drift into a silent full-allow that
     // nobody chose.
@@ -982,6 +981,82 @@ async fn the_trace_records_the_whole_trajectory() {
     assert_eq!(tool["tool"], "write_file");
     assert!(tool["input"]["path"].is_string());
     assert_eq!(tool["changed"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_live_loop_hands_off_only_current_hashed_mission_evidence() {
+    let h = Harness::new("passing");
+    let sensitive_source = "pub const PRIVATE_CANARY: &str = \"mission-secret-canary\";\n";
+    let mut talos = h.talos(
+        vec![
+            tool_call(
+                "write-1",
+                "write_file",
+                serde_json::json!({
+                    "path": "src/mission_added.rs",
+                    "content": sensitive_source,
+                }),
+            ),
+            text_response("Implemented and ready for verification."),
+        ],
+        6,
+        false,
+    );
+    let outcome = talos
+        .run(
+            "add a valid Rust source file",
+            &Plan {
+                steps: vec!["write the requested source file".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(outcome.succeeded());
+    let state = talos.mission_state().expect("mission state");
+    assert_eq!(state.focus.phase, knossos::mission::MissionPhase::Handoff);
+    assert_eq!(state.workspace.revision, 1);
+    assert_eq!(state.environment.as_ref().unwrap().adapter, "host");
+    assert_eq!(
+        state.environment.as_ref().unwrap().setup_status,
+        "not_run_requires_explicit_capability"
+    );
+    assert_eq!(
+        state.environment.as_ref().unwrap().verification_status,
+        "passed"
+    );
+    assert!(state
+        .environment
+        .as_ref()
+        .unwrap()
+        .verification_evidence_hash
+        .is_some());
+    assert_eq!(
+        state.environment.as_ref().unwrap().verification_recipe,
+        ["cargo test --locked"]
+    );
+    assert!(state.pending_actions.is_empty());
+    assert_eq!(
+        state.verification.final_verdict,
+        knossos::mission::FinalVerdict::Verified
+    );
+
+    let journal = h
+        .root
+        .join(".knossos/missions")
+        .join(talos.mission_id().unwrap())
+        .join("journal.jsonl");
+    let persisted = std::fs::read_to_string(journal).unwrap();
+    assert!(persisted.contains("consequential_intent"));
+    assert!(persisted.contains("consequential_result"));
+    assert!(persisted.contains("cargo test --locked"));
+    assert!(
+        !persisted.contains("mission-secret-canary"),
+        "raw tool input leaked into MissionState"
+    );
+    let replayed = knossos::mission::MissionStore::open(&h.root, talos.mission_id().unwrap())
+        .expect("environment record must replay with the mission");
+    assert_eq!(replayed.state().environment, state.environment);
 }
 
 #[tokio::test]

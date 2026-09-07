@@ -1,4 +1,4 @@
-"""The ACP server -- Daedalus as an agent any compatible editor can spawn.
+"""The ACP server -- Knossos as an agent any compatible editor can spawn.
 
 The Agent Client Protocol (Zed Industries, Aug 2025) is what Claude Code, Gemini
 CLI and Codex use to appear inside Zed's agent panel; JetBrains adopted it across
@@ -52,10 +52,10 @@ from .oracle import Oracle
 from .talos import Event, Talos
 from .workspace import Workspace
 
-__all__ = ["DaedalusAgent", "Session", "PROTOCOL_VERSION", "AGENT_NAME"]
+__all__ = ["KnossosAgent", "DaedalusAgent", "Session", "PROTOCOL_VERSION", "AGENT_NAME"]
 
 PROTOCOL_VERSION = 1
-AGENT_NAME = "daedalus"
+AGENT_NAME = "knossos"
 AGENT_VERSION = "0.1.0"
 
 #: ACP renders tool calls by kind, so a read looks different from an edit.
@@ -228,7 +228,7 @@ class EditorFiles:
     advertises the capability and then fails still gets a working agent.
     """
 
-    def __init__(self, agent: "DaedalusAgent", session: "Session",
+    def __init__(self, agent: "KnossosAgent", session: "Session",
                  can_read: bool, can_write: bool) -> None:
         self.agent = agent
         self.session = session
@@ -278,7 +278,7 @@ class EditorTerminal:
     open for the rest of the session.
     """
 
-    def __init__(self, agent: "DaedalusAgent", session: "Session") -> None:
+    def __init__(self, agent: "KnossosAgent", session: "Session") -> None:
         self.agent = agent
         self.session = session
 
@@ -342,7 +342,7 @@ class EditorElicitation:
     to ask.
     """
 
-    def __init__(self, agent: "DaedalusAgent", session: "Session") -> None:
+    def __init__(self, agent: "KnossosAgent", session: "Session") -> None:
         self.agent = agent
         self.session = session
 
@@ -380,7 +380,7 @@ class EditorElicitation:
         return None if value is None else str(value)
 
 
-class DaedalusAgent:
+class KnossosAgent:
     """ACP method handlers. Transport-free, so tests can drive it over a pipe."""
 
     def __init__(self, engine: Optional[Engine] = None, budget: int = 8000,
@@ -468,7 +468,7 @@ class DaedalusAgent:
             },
             "agentInfo": {
                 "name": AGENT_NAME,
-                "title": "Daedalus",
+                "title": "Knossos",
                 "version": AGENT_VERSION,
             },
             "authMethods": [],
@@ -956,7 +956,7 @@ class DaedalusAgent:
         what the Rust harness has always done (`themis/mod.rs`).
 
         Both halves of that were previously broken, in opposite directions. The
-        `DaedalusAgent.constitution` field was never filled (no CLI flag sets it,
+        `KnossosAgent.constitution` field was never filled (no CLI flag sets it,
         `main()` never passed one), and it was the value handed to `Metis` --
         so the planner ran with an empty constitution. The workspace file was
         read only for `Talos`, so a caller who *did* pass `constitution=`
@@ -1338,6 +1338,10 @@ class DaedalusAgent:
         return peer
 
 
+# Compatibility alias for callers of the v0.1 Python reference implementation.
+DaedalusAgent = KnossosAgent
+
+
 def _headline(outcome: Any) -> str:
     """The summary minus anything the editor has already been shown.
 
@@ -1392,7 +1396,7 @@ def _parser():
 
     parser = argparse.ArgumentParser(
         prog="python -m knossos",
-        description="Daedalus as an ACP agent. Speaks JSON-RPC over stdio; "
+        description="Knossos as an ACP agent. Speaks JSON-RPC over stdio; "
                     "spawn it from Zed, JetBrains, or any ACP client.")
     parser.add_argument("--engine", choices=("retrieval", "api", "transformers"),
                         default="retrieval", help="what fills the engine slot")
@@ -1424,7 +1428,7 @@ def _parser():
                         help="execute mode: where budget pressure begins")
     # Both default on, and both spend engine turns. Anyone measuring the loop
     # itself needs to be able to subtract them; until these flags existed the
-    # off-switch was reachable only by constructing `DaedalusAgent` in Python,
+    # off-switch was reachable only by constructing `KnossosAgent` in Python,
     # which is not available to someone running the binary.
     parser.add_argument("--no-planning", action="store_true",
                         help="execute mode: skip the planning turn and execute "
@@ -1448,11 +1452,11 @@ def _engine_from(args) -> Engine:
     return RetrievalOnlyEngine()
 
 
-def build_agent(args) -> "DaedalusAgent":
+def build_agent(args) -> "KnossosAgent":
     """Turn parsed arguments into an agent. Separate from `main` for the same
     reason `_parser` is: this is where a flag stops being a string and starts
     being behaviour, and it is the half that was never covered."""
-    return DaedalusAgent(engine=_engine_from(args),
+    return KnossosAgent(engine=_engine_from(args),
                          budget=args.budget, hops=args.hops,
                          gate=not args.no_gate, execute=args.execute,
                          dry_run=not args.write, max_steps=args.max_steps,

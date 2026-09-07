@@ -60,7 +60,7 @@ that share a design but not a line of code:
 | | Python | Rust |
 |---|---|---|
 | Path | `model/knossos/` (~12,900 lines) | `knossos-rs/src/` (~18,655 lines) |
-| Front end | ACP server over stdio (`python -m knossos`) | CLI: `chat`/`index`/`verify`/`plan`/`task`/`repl`/`serve` **and `acp`** (`daedalus`) — Rust now speaks ACP too (`acp.rs`) |
+| Front end | ACP server over stdio (`python -m knossos`) | CLI: `chat`/`index`/`verify`/`plan`/`task`/`repl`/`serve` **and `acp`** (`knossos`) — Rust now speaks ACP too (`acp.rs`) |
 | Target language | Python, Rust, Go, Node (adapter-detected, §5) | Rust only (cargo ladder) |
 
 *(2026-08-15: the earlier line figures — Python ~8,000, Rust ~4,700 — were from
@@ -221,7 +221,7 @@ Greek names are opaque by design. Plain descriptions below.
 | **Workspace** | Path jail + write staging + undo journal + optional editor/LSP delegation. | `workspace.py` (409) | `resolve/read/write/edit/exists/apply/discard/staged/checkpoint/rewind/journal/original/display`; `PathEscape` | stdlib only |
 | **tools** | The tool registry, the prompted-JSON call protocol, and every local tool. | `tools.py` (894) | `ToolRegistry.default/combined/without/dispatch/render/openai_schema/parallel_safe`, `parse_calls()`, `tokenize()` | `workspace` |
 | **codeval** | The coding evaluation: 12 fixture repositories, SWE-bench-shaped grading, trace writing, external-suite loading. **New since the last version of this document.** | `codeval.py` (1251) | `CodingCase`, `CaseResult`, `CODING_CASES`, `load_cases`, `materialise`, `restore_tests`, `run_tests`, `grade`, `run_case`, `run_best_of`, `run_suite` | stdlib only (deliberately — see §8.4) |
-| **acp** | The ACP server. Session lifecycle, retrieval narration, execute narration, permission prompts, mode switching, fork/list/close/delete/load. | `acp.py` (1386) | `DaedalusAgent.handle/serve`, `Session`, `main()` | everything |
+| **acp** | The ACP server. Session lifecycle, retrieval narration, execute narration, permission prompts, mode switching, fork/list/close/delete/load. | `acp.py` (1386) | `KnossosAgent.handle/serve`, `Session`, `main()` | everything |
 | **jsonrpc** | Bidirectional JSON-RPC 2.0 over NDJSON stdio: reader thread + worker thread + a fast path. | `jsonrpc.py` (337) | `Peer.request/notify/start/serve_forever/close`, `RpcError`, `log()` | stdlib only |
 | **lsp** | LSP client, **Content-Length framed** (deliberately not reusing `Peer`, `lsp.py:15-18`). Auto-selects a server by counting file extensions. | `lsp.py` (403) | `for_workspace()`, `LspClient.workspace_symbols/references/definition/stop` | `jsonrpc.log` only |
 | **mcp** | MCP client: spawns declared servers, handshakes, lists tools, wraps each as a `Tool`. | `mcp.py` (253) | `connect_all()`, `McpClient.connect/call_tool/close`, `McpTool` | `jsonrpc.Peer`, `tools.Tool` |
@@ -298,7 +298,7 @@ components exist and are wired. See the Drift note at the head of §11.**
 editor --stdio--> Peer._read_loop (jsonrpc.py:193)
                     │  fast-path method? → dispatch on the reader thread (jsonrpc.py:253)
                     └─ else → _inbox queue → Peer._work_loop (jsonrpc.py:288)
-                                             └─ DaedalusAgent.handle (acp.py:410)
+                                             └─ KnossosAgent.handle (acp.py:410)
 ```
 
 1. **`initialize`** (`acp.py:433`). Stores `clientCapabilities` verbatim. Advertises
@@ -412,7 +412,7 @@ back to that step's journal mark, and only on disk (a dry run stages, so the
 journal is empty and the rewind is a no-op). Paths the step *created* no longer
 exist and are dropped from `self.changed` (`talos.py:786`).
 
-The re-planner installed in production is `DaedalusAgent._replan` (`acp.py:861`),
+The re-planner installed in production is `KnossosAgent._replan` (`acp.py:861`),
 which builds a brief describing the part-executed plan and calls a **fresh**
 `Metis` — it holds no state between calls. Returns `[]` on every unhappy path.
 
@@ -452,7 +452,7 @@ tool result is marked `is_error` when the child did not verify (`talos.py:227`).
 
 `Talos.delegation` still defaults to `False` (`talos.py:408`) — the executor does
 not hand itself a `delegate` tool unless a caller asks. What changed is that a
-caller now asks: `DaedalusAgent.delegation` defaults to `True` (`acp.py:384`) and
+caller now asks: `KnossosAgent.delegation` defaults to `True` (`acp.py:384`) and
 `_talos_for` forwards it (`acp.py:874`), so the tool **is** in the registry in the
 shipped ACP path. It is a flag rather than always-on for the same reason `planning`
 is one: delegating spends engine turns, and a caller measuring the loop needs to be
@@ -462,7 +462,7 @@ Two honest limits on that:
 
 - **Turning it off is a CLI flag**, `--no-delegation` (and `--no-planning` for the
   same reason). Both were previously reachable only by constructing
-  `DaedalusAgent` in Python. `main()` now builds the agent through `build_agent`
+  `KnossosAgent` in Python. `main()` now builds the agent through `build_agent`
   (`acp.py:1394`), which is separate from `main` precisely so a test can drive the
   flag end to end — `main` ends in `serve_forever()`, so nothing that only wants to
   know what a flag does can afford to call it.
@@ -511,7 +511,7 @@ Permission is decided for a **whole turn, up front, in order**, before any dispa
 starts (`talos.py:1353-1359`); a refusal becomes a `ToolResult(..., is_error=True)`
 so the engine gets another turn rather than the run collapsing.
 
-The callback is `DaedalusAgent._ask_permission` (`acp.py:1207`). It fails closed on
+The callback is `KnossosAgent._ask_permission` (`acp.py:1207`). It fails closed on
 every path: name in `session.always_allowed` → allow; no peer → refuse; cancel set
 → refuse; RPC exception → refuse; `outcome != "selected"` → refuse;
 `optionId == "allow_always"` → remember and allow; `"allow_once"` → allow; anything
@@ -546,7 +546,7 @@ matching Python.
 
 | Front end | Gated | Where | Why |
 |---|---|---|---|
-| `daedalus task` | **no** | `main.rs:278` `run_task` — no approver is ever assigned | Non-interactive by design; a prompt hangs CI |
+| `knossos task` | **no** | `main.rs:278` `run_task` — no approver is ever assigned | Non-interactive by design; a prompt hangs CI |
 | `repl` | yes | `repl.rs:92` (`PromptApprover`) | Reads a command then runs it, so stdin is idle; EOF and any non-`y` deny |
 | `serve` | **opt-in** | `serve.rs:352` (`FrontEndApprover`), armed by `Command::Capabilities{permissions}` at `serve.rs:282-286` | An unannounced `permission_request` would be dropped by existing front ends and the agent would wait forever — turning the gate into a hang |
 
@@ -586,7 +586,7 @@ What the jail does **not** stop:
    outside the `run_command` allowlist, and outside `ask_permission`. Tier 3 is
    `pytest -q` rooted at the workspace, so any `conftest.py` executes during
    collection; Rust `cargo check` runs `build.rs` and proc macros and is reachable
-   from `daedalus verify` with no agent in the loop.
+   from `knossos verify` with no agent in the loop.
    `Tier.safe_path` (`oracle.py:203`) inserts `-P` so the workspace stays off
    `sys.path[0]` — but it is `False` for pytest (`oracle.py:251`), because pytest's
    standard layout imports the package via the cwd entry `-P` removes.
@@ -604,7 +604,7 @@ What the jail does **not** stop:
 
 ### 4.5 The constitution
 
-**Python: now real, and sourced from inside the jail.** `DaedalusAgent._constitution`
+**Python: now real, and sourced from inside the jail.** `KnossosAgent._constitution`
 (`acp.py:915`) reads `constitution.md` from the workspace root and `_talos_for`
 forwards it to `Talos` (`acp.py:860`), so the `if self.constitution:` branch at
 `talos.py:858` is reachable. Deliberately **no** compiled-in default: an absent file
@@ -620,7 +620,7 @@ standing instructions. It resolves once per session and caches on `Session`
 roles apart, and the load is logged once rather than three times a turn.
 
 Both halves of that were broken until this pass, in opposite directions. `Metis`
-got `self.constitution` — the raw `DaedalusAgent` field, which no CLI flag sets and
+got `self.constitution` — the raw `KnossosAgent` field, which no CLI flag sets and
 `main()` never passed — so **the planner planned with an empty constitution while
 the executor was held to the workspace's**, which is how you get a plan the executor
 is forbidden to carry out. And the workspace file was read only for `Talos`, so a
@@ -771,7 +771,7 @@ configuration** — `acp.py:830` and `scripts/coding_eval.py:368` both construct
 | **Provider HTTP** | `engine.py:867` | agent → provider | HTTPS, OpenAI `/chat/completions` SSE | Streamed `delta.content`, `delta.reasoning`, `delta.tool_calls`, `finish_reason`. Malformed SSE JSON skipped. Native tool calls with unparseable arguments are dropped, not guessed. |
 | **External harness** | `scripts/coding_eval.py:264` | eval → third-party CLI | argv (`shlex`, never a shell, `:352`) | Exit status as the harness's own success claim; stdout scanned for a turn count (`:329`). File changes are **measured** by before/after SHA-1 snapshot (`:235`), never taken on the harness's word. |
 
-`DaedalusAgent.FAST_PATH` (`acp.py:1257`) contains only `session/cancel`; it runs on
+`KnossosAgent.FAST_PATH` (`acp.py:1257`) contains only `session/cancel`; it runs on
 the reader thread and must not block. Everything else is serialised through one
 worker thread, so **two sessions cannot prompt concurrently**.
 
@@ -783,7 +783,7 @@ worker thread, so **two sessions cannot prompt concurrently**.
 |---|---|---|---|
 | Argus index | `<workspace>/.argus/index.json` | Across processes | Version mismatch forces a rebuild; `scan()` re-parses on SHA mismatch and drops vanished files. `.argus/` is gitignored. |
 | Gate name index | `RetrievalGate._index` (`gate.py:119`) | Per instance | **Never** — built once on first `decide`, never invalidated after a rescan |
-| ACP sessions | `DaedalusAgent.sessions` | Process lifetime | `session/delete` only (`acp.py:673`). `session/close` (`acp.py:657`) releases subprocesses but **keeps the entry**. Nothing ages sessions out. |
+| ACP sessions | `KnossosAgent.sessions` | Process lifetime | `session/delete` only (`acp.py:673`). `session/close` (`acp.py:657`) releases subprocesses but **keeps the entry**. Nothing ages sessions out. |
 | ACP replay history | `Session.history` (`acp.py:132`) | Session lifetime | Nothing. **Per-entry strings are now bounded** to `HISTORY_MAX_STRING = 2000` by `_bounded` (`acp.py:94`/`:97`, applied at `acp.py:812`) — the *count* is still unbounded. Replayed verbatim by `session/load` with `record=False`. |
 | Talos transcript | `Talos.transcript` (`talos.py:457`) | Session lifetime; survives `run`/`resume` | `Lethe.compact` via `_prompt`/`_history` on every step. Budget is **derived per turn** from `engine.context_window` by `_size_transcript_budget` (`talos.py:1021`): `window − OUTPUT_RESERVE(4096) − tokens(preamble)`, × `SAFETY_MARGIN(0.9)`, floored at `MIN_TRANSCRIPT_BUDGET(1000)` with a one-time warning, and never raised above Lethe's configured 24 000. |
 | Staged writes | `Workspace._staged` (`workspace.py:123`) | Until `apply()`/`discard()` | Never persisted. A dry-run session's staged edits are lost if the process dies. `session/set_mode` to `write` deliberately does not apply them; `session/fork` deliberately does not copy them. |
@@ -791,7 +791,7 @@ worker thread, so **two sessions cannot prompt concurrently**.
 | Permission grants | `Session.always_allowed` (`acp.py:138`) | Session lifetime | Nothing; not persisted, not copied on fork |
 | LSP / MCP subprocesses | `Session.lsp`, `Session.mcp` | Session lifetime | `_release` (`acp.py:685`) — calls `client.close()`, the method `McpClient` actually defines (`mcp.py:152`) |
 | Coding-eval traces | `<trace-dir>/<case>.jsonl` (`codeval.py:1225`) | Forever | Nothing. Header carries `passed`, `halt`, `harness_said_done`, `fixed`, `kept`, `tamper`, `error`, `api_errors`, **`unreachable`**. |
-| Rust trace log | `<root>/.daedalus/trace-<pid>.jsonl` (`main.rs:238`) | Forever, append-only | Nothing |
+| Rust trace log | `<root>/.knossos/trace-<pid>.jsonl` (`main.rs:238`) | Forever, append-only | Nothing |
 | Rust staged writes | `ToolCtx.staged` (`Arc<Mutex<BTreeMap<…>>>`) | Process lifetime | `apply_staged`, `apply_hunks` (partial), `discard_staged` |
 | Rust conversation | `Talos.messages` | Process lifetime | `/reset` or `Command::Reset`; and **`Lethe::compact` per step** (`talos.rs:270`) — the Rust side is now bounded |
 | Rust Scribe / Mnemosyne | In-memory | Process lifetime | Scribe refreshed per changed file (`talos.rs:401`); **Mnemosyne built once in `build_talos` (`main.rs:235`) and never rebuilt**, so `search_code` goes stale after the first write |
@@ -1046,7 +1046,7 @@ that inflates the score rather than measuring spread.
   (`run.mjs:290`–`:772`) plus 2 `liveCheck(...)` (`run.mjs:797`, `:819`), driven by
   `@agentclientprotocol/sdk` and validating every agent→client message against the
   SDK's published schema. Skips are loud and fail under `KNOSSOS_STRICT=1`
-  (`run.mjs:270`). `scripted_agent.py` runs the *real* `DaedalusAgent`, loop, jail
+  (`run.mjs:270`). `scripted_agent.py` runs the *real* `KnossosAgent`, loop, jail
   and permission gate — only the engine is scripted.
 - **CI** (`.github/workflows/ci.yml`) — Python, Rust, conformance and the Lapce ACP
   client on `ubuntu-latest`; the `live` job requires a self-hosted runner labelled
@@ -1301,7 +1301,7 @@ describe. Rows 1–31 were re-verified 2026-07-29 (not all re-checked this pass)
 | 9 | "Currently **18/19 (95%)** on the labelled eval set" | `model/knossos/README.md:371` | `CASES` holds 28 and `report_gate` iterates all of them. The figure describes the pre-held-out set. |
 | 10 | Zed registration example uses `"args": ["-m", "harness", …]` and `PYTHONPATH: "…/Recurring Transformer Model"` | `model/knossos/README.md:139-140` | The package is `knossos`; `-m harness` does not exist. Stale from before commit `2965193`, "Name the harness Knossos". |
 | 11 | "Retrieval runs regardless — … its file locations are useful even when the excerpts are withheld." | `acp.py:1143-1145` | On a gate skip the handler returns `[]` at `acp.py:1163` before emitting any `locations`, so the locations are discarded too. |
-| 12 | "Both safety defaults are opt-out, not opt-in." | `model/knossos/README.md:33` | True of the Python ACP path. Not true of `daedalus task`, which is ungated by design, nor of Rust `serve` before a `capabilities` handshake, nor of any directly-constructed `Talos` — including the one the coding eval builds. |
+| 12 | "Both safety defaults are opt-out, not opt-in." | `model/knossos/README.md:33` | True of the Python ACP path. Not true of `knossos task`, which is ungated by design, nor of Rust `serve` before a `capabilities` handshake, nor of any directly-constructed `Talos` — including the one the coding eval builds. |
 | 13 | "The executor does not report which step it is on, so claiming per-step progress would be invention." | `acp.py:1102-1103` | It does: `Event(kind="plan_step")` (`talos.py:639`) is handled sixty lines above the comment (`acp.py:1038`) and advances the checklist. The comment describes the pre-`plan_step` design. |
 | 14 | REPORT.md Part 4: "one operational item remains" | `REPORT.md:424-428` | Accurate as an inventory of *that session's* items. It predates the coding eval, `codeval.py`, external harnesses, and the saturation finding, none of which it mentions. |
 | 15 | "Every route to a vacuous pass found so far is closed" | `REPORT.md:365` | Two further routes were found and closed after it was written: deleting the failing test (closed by `_suite_integrity`) and `acted` counting any successful call including `read_file` (closed by restricting it to `CONSEQUENTIAL`). Note the phrase that keeps being true — *found so far*. Both were found by running the thing, not by reading it. |

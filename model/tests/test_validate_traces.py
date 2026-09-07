@@ -11,7 +11,7 @@ from validate_traces import validate  # noqa: E402
 def _event(kind, **extra):
     return {
         "at": "2026-01-01T00:00:00+00:00",
-        "schema_version": "daedalus-trace/v2",
+        "schema_version": "knossos-trace/v2",
         "run_id": "run",
         "event": kind,
         **extra,
@@ -24,6 +24,16 @@ def test_complete_v2_trace_validates(tmp_path):
         _event("task_started"),
         _event("exchange_delta", response={}),
         _event("evaluation_finished"),
+    ]
+    path.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+    assert validate(path) == []
+
+
+def test_legacy_daedalus_v2_trace_still_validates(tmp_path):
+    path = tmp_path / "legacy.jsonl"
+    events = [
+        _event("task_started", schema_version="daedalus-trace/v2"),
+        _event("evaluation_finished", schema_version="daedalus-trace/v2"),
     ]
     path.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
     assert validate(path) == []

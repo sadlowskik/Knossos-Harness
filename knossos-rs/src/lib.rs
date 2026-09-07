@@ -1,4 +1,4 @@
-//! # Daedalus Harness
+//! # Knossos Harness
 //!
 //! An agentic coding harness whose components are the system-level form of the
 //! mechanisms in the Daedalus model architecture.
@@ -23,9 +23,11 @@ pub mod ariadne;
 pub mod cameo_board;
 pub mod client_io;
 pub mod config;
+pub mod context;
 pub mod delegate;
 pub mod diff;
 pub mod engine;
+pub mod environment;
 pub mod episode;
 pub mod eval;
 pub mod eval_checkpoint;
@@ -37,6 +39,7 @@ pub mod lethe;
 pub mod lsp;
 pub mod mcp;
 pub mod metis;
+pub mod mission;
 pub mod mnemosyne;
 pub mod oracle;
 pub mod repl;

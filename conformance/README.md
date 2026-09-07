@@ -23,7 +23,7 @@ inside the SDK — a field renamed upstream fails here first.
 cd conformance && npm install && npm test
 ```
 
-The agent under test is **`daedalus acp`** (`knossos-rs/target/debug/daedalus`).
+The agent under test is **`knossos acp`** (`knossos-rs/target/debug/knossos`).
 Build it first: `cargo build --manifest-path knossos-rs/Cargo.toml`.
 
 `KNOSSOS_ACP=python` drives the legacy `python -m knossos` / `scripted_agent.py`
@@ -45,7 +45,7 @@ green suite over a path no model has ever taken.
 
 ## The scripted agent
 
-`scripted_agent.py` serves the real `DaedalusAgent`, the real `Talos` loop, the
+`scripted_agent.py` serves the real `KnossosAgent`, the real `Talos` loop, the
 real workspace jail and the real permission gate, with a fixed list of engine
 replies. Only the model is faked, because a conformance suite whose result
 depends on whether a model felt like calling a tool is measuring the model.

@@ -2,6 +2,7 @@
 **/target
 Cargo.lock.orig
 
-# Trajectory logs written by `daedalus task`
+# Trajectory logs written by `knossos task`
+.knossos/
 .daedalus/
 *.jsonl

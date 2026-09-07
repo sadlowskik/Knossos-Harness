@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::engine::Message;
 
-pub const TRACE_SCHEMA_VERSION: &str = "daedalus-trace/v2";
+pub const TRACE_SCHEMA_VERSION: &str = "knossos-trace/v2";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -139,6 +139,21 @@ pub enum TraceEvent {
     ContextCompacted {
         step: usize,
         tokens: usize,
+        assigned_tokens: u32,
+        input_limit_tokens: u32,
+        compact_at_tokens: u32,
+        engine_tokens: Option<u32>,
+    },
+    /// Effective per-agent allocation for a model turn, including reserves.
+    ContextBudgeted {
+        step: usize,
+        estimated_tokens: usize,
+        assigned_tokens: u32,
+        input_limit_tokens: u32,
+        compact_at_tokens: u32,
+        completion_reserve: u32,
+        protocol_reserve: u32,
+        engine_tokens: Option<u32>,
     },
     /// The user said something to a run that was already going.
     ///
@@ -192,7 +207,7 @@ pub struct Session {
     /// The running conversation handed to the engine each turn.
     pub messages: Vec<Message>,
     trace_path: Option<PathBuf>,
-    /// Also write each event to stdout, for `daedalus serve`.
+    /// Also write each event to stdout, for `knossos serve`.
     ///
     /// The trace format already *is* an event stream, so a front end that
     /// wants live progress needs no second mechanism — it reads the same

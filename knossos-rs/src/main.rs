@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use sha1::{Digest, Sha1};
 
@@ -11,6 +11,7 @@ use knossos::ariadne::Ariadne;
 use knossos::config::{Config, EngineKind};
 use knossos::delegate;
 use knossos::engine::{self, Message, Request};
+use knossos::environment::EnvironmentFingerprint;
 use knossos::gate::RetrievalGate;
 use knossos::mcp;
 use knossos::mnemosyne::Mnemosyne;
@@ -24,9 +25,9 @@ use knossos::{diff, metis, repl};
 
 #[derive(Parser)]
 #[command(
-    name = "daedalus",
+    name = "knossos",
     version,
-    about = "An agentic coding harness shaped by the Daedalus architecture",
+    about = "The Knossos agentic coding harness",
     long_about = "Exact symbol memory (Scribe), an always-on constitution (Themis), \
                   tiered verification (Oracle) and an explicit halting policy (Ariadne) \
                   around a swappable engine."
@@ -48,7 +49,7 @@ struct Cli {
     )]
     engine: EngineKind,
 
-    /// Model id. Defaults per engine; also read from DAEDALUS_MODEL.
+    /// Model id. Defaults per engine; also read from KNOSSOS_MODEL.
     #[arg(long, short = 'm', global = true)]
     model: Option<String>,
 
@@ -79,7 +80,7 @@ struct LoopArgs {
     /// Where budget pressure begins.
     #[arg(long, default_value = "6")]
     target_steps: usize,
-    /// JSONL trajectory log. Defaults to `.daedalus/trace-<pid>.jsonl`.
+    /// JSONL trajectory log. Defaults to `.knossos/trace-<pid>.jsonl`.
     #[arg(long)]
     trace: Option<PathBuf>,
     /// Stage edits in memory and show diffs instead of writing to disk.
@@ -103,7 +104,7 @@ struct LoopArgs {
     /// Replay provider responses from a collected trace; performs no network I/O.
     #[arg(long)]
     replay_responses: Option<PathBuf>,
-    /// MCP server declarations. Defaults to `.daedalus/mcp.json`, if present.
+    /// MCP server declarations. Defaults to `.knossos/mcp.json`, if present.
     #[arg(long)]
     mcp_config: Option<PathBuf>,
     /// Output-token ceiling per engine turn.
@@ -115,6 +116,13 @@ struct LoopArgs {
     /// than as "it thought too long".
     #[arg(long, default_value = "8192")]
     max_tokens: u32,
+    /// Assign this agent a context window. Defaults to a safe fraction of the
+    /// engine/server window discovered at turn time.
+    #[arg(long)]
+    context_window: Option<u32>,
+    /// Compact the working transcript at this many prompt tokens.
+    #[arg(long)]
+    compact_at: Option<u32>,
     /// Maximum logical provider calls for this task or entire eval run.
     #[arg(long)]
     max_requests: Option<u64>,
@@ -161,10 +169,21 @@ struct LoopArgs {
     /// a corpus.
     #[arg(long)]
     collect_exchanges: bool,
+    /// Write the discovered mission environment and explicit recipes as JSON.
+    /// Discovery never runs those commands or installs dependencies.
+    #[arg(long)]
+    environment_export: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Launch Knossos Field, the local Roman multi-agent command surface.
+    Field {
+        /// Field installation root. Otherwise use KNOSSOS_FIELD_DIR or discover a sibling bundle.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+
     /// One turn against the configured engine. Smoke test for the engine slot.
     Chat { prompt: String },
 
@@ -187,6 +206,12 @@ enum Command {
     /// Plan and execute a task, verifying as it goes.
     Task {
         task: String,
+        /// Retain prompts/tool results in an owner-private portable checkpoint.
+        #[arg(long)]
+        persist_conversation: bool,
+        /// Continue a checkpointed mission; requires the same provider/policy settings.
+        #[arg(long)]
+        resume_mission: Option<String>,
         #[command(flatten)]
         opts: LoopArgs,
     },
@@ -275,6 +300,22 @@ async fn main() -> Result<()> {
             | Command::Eval { opts, .. } => opts.max_tokens,
             _ => Config::default().max_tokens,
         },
+        context_window: match &cli.command {
+            Command::Task { opts, .. }
+            | Command::Repl { opts, .. }
+            | Command::Serve { opts }
+            | Command::Acp { opts }
+            | Command::Eval { opts, .. } => opts.context_window,
+            _ => None,
+        },
+        compact_at: match &cli.command {
+            Command::Task { opts, .. }
+            | Command::Repl { opts, .. }
+            | Command::Serve { opts }
+            | Command::Acp { opts }
+            | Command::Eval { opts, .. } => opts.compact_at,
+            _ => None,
+        },
         ollama_num_ctx: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
@@ -297,11 +338,26 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
+        Command::Field { ref dir } => run_field(dir.as_deref()),
         Command::Chat { ref prompt } => chat(&cfg, prompt).await,
         Command::Index { full, ref lookup } => index(&cfg, full, lookup.as_deref()),
         Command::Verify => verify(&cfg).await,
         Command::Plan { ref task } => plan_only(&cfg, task).await,
-        Command::Task { ref task, ref opts } => run_task(&cfg, task, opts).await,
+        Command::Task {
+            ref task,
+            ref opts,
+            persist_conversation,
+            ref resume_mission,
+        } => {
+            run_task(
+                &cfg,
+                task,
+                opts,
+                persist_conversation,
+                resume_mission.as_deref(),
+            )
+            .await
+        }
         Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
         Command::Serve { ref opts } => run_serve(&cfg, opts).await,
         Command::Acp { ref opts } => run_acp(&cfg, opts).await,
@@ -331,10 +387,102 @@ async fn main() -> Result<()> {
     }
 }
 
+fn field_root(explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        return validate_field_root(path).with_context(|| {
+            format!(
+                "--dir does not point to a Knossos Field installation: {}",
+                path.display()
+            )
+        });
+    }
+    if let Some(path) = std::env::var_os("KNOSSOS_FIELD_DIR").filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        return validate_field_root(&path).with_context(|| {
+            format!(
+                "KNOSSOS_FIELD_DIR does not point to a Knossos Field installation: {}",
+                path.display()
+            )
+        });
+    }
+
+    let executable = std::env::current_exe().context("cannot locate the knossos executable")?;
+    let mut candidates = Vec::new();
+    for ancestor in executable.ancestors().take(8) {
+        candidates.push(ancestor.to_path_buf());
+        candidates.push(ancestor.join("field"));
+    }
+    if let Some(prefix) = executable.parent().and_then(Path::parent) {
+        candidates.push(prefix.join("share").join("knossos").join("field"));
+    }
+    for candidate in candidates {
+        if let Ok(root) = validate_field_root(&candidate) {
+            return Ok(root);
+        }
+    }
+    bail!(
+        "Knossos Field is not installed beside this binary; extract the knossos-field release and run `knossos field --dir <path>`, or set KNOSSOS_FIELD_DIR"
+    )
+}
+
+fn validate_field_root(path: &Path) -> Result<PathBuf> {
+    let package_path = path.join("package.json");
+    let server_path = path.join("server").join("src").join("index.js");
+    let package: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&package_path)
+            .with_context(|| format!("missing {}", package_path.display()))?,
+    )
+    .with_context(|| format!("invalid {}", package_path.display()))?;
+    if package.get("name").and_then(serde_json::Value::as_str) != Some("knossos-field") {
+        bail!(
+            "{} is not the knossos-field package",
+            package_path.display()
+        );
+    }
+    if !server_path.is_file() {
+        bail!(
+            "missing Field server entry point: {}",
+            server_path.display()
+        );
+    }
+    path.canonicalize()
+        .with_context(|| format!("cannot resolve Field installation: {}", path.display()))
+}
+
+fn run_field(explicit: Option<&Path>) -> Result<()> {
+    let root = field_root(explicit)?;
+    let dependency = root.join("node_modules").join("yaml");
+    if !dependency.is_dir() {
+        bail!(
+            "Field dependencies are not installed in {}; run `npm ci --omit=dev` there first",
+            root.display()
+        );
+    }
+    let node = std::env::var_os("KNOSSOS_NODE_BIN").unwrap_or_else(|| "node".into());
+    let executable = std::env::current_exe()
+        .context("cannot locate the knossos executable")?
+        .canonicalize()
+        .context("cannot resolve the knossos executable")?;
+    eprintln!("Launching Knossos Field from {}", root.display());
+    let status = std::process::Command::new(node)
+        .args([
+            "--disable-warning=ExperimentalWarning",
+            "server/src/index.js",
+        ])
+        .current_dir(&root)
+        .env("FIELD_KNOSSOS_BIN", executable)
+        .status()
+        .context("failed to start Node.js; install Node 20+ or set KNOSSOS_NODE_BIN")?;
+    if !status.success() {
+        bail!("Knossos Field exited with {status}");
+    }
+    Ok(())
+}
+
 async fn chat(cfg: &Config, prompt: &str) -> Result<()> {
     let eng = cfg.build_engine()?;
     let req = Request::new(
-        "You are Daedalus, a precise coding assistant.",
+        "You are Knossos, a precise coding assistant.",
         vec![Message::user_text(prompt)],
     )
     .with_max_tokens(cfg.max_tokens);
@@ -449,8 +597,9 @@ fn build_talos_with_quota(
         Some(path) => Box::new(knossos::engine::mock::MockEngine::from_trace(path)?),
         None => cfg.build_engine()?,
     };
-    let eng: Box<dyn knossos::engine::Engine> =
-        Box::new(knossos::engine::budget::BudgetedEngine::new(raw, quota));
+    let eng: Box<dyn knossos::engine::Engine> = Box::new(
+        knossos::engine::budget::BudgetedEngine::new(raw, quota.clone()),
+    );
     let engine_name = eng.name().to_string();
 
     let idx = SymbolIndex::build(&root)?;
@@ -459,7 +608,7 @@ fn build_talos_with_quota(
     let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
 
     let trace_path = opts.trace.clone().unwrap_or_else(|| {
-        root.join(".daedalus")
+        root.join(".knossos")
             .join(format!("trace-{}.jsonl", std::process::id()))
     });
     let mut session = Session::new(&root, &engine_name).with_trace(&trace_path)?;
@@ -529,7 +678,9 @@ fn build_talos_with_quota(
         session,
         cfg.max_tokens,
         !opts.no_judge,
-    );
+    )
+    .with_context_limits(cfg.context_window, cfg.compact_at);
+    talos.attach_quota(quota);
     if let Some((gate, _)) = gate {
         talos = talos.with_retrieval(gate);
     }
@@ -538,7 +689,7 @@ fn build_talos_with_quota(
         eprintln!("memory       off (--no-memory)");
     }
     if opts.no_compaction {
-        talos.lethe.max_tokens = usize::MAX;
+        talos.disable_compaction();
         eprintln!("compaction   off (--no-compaction)");
     }
 
@@ -576,7 +727,7 @@ async fn prefer_cameo(mut cfg: Config) -> Config {
 async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
     let cfg = prefer_cameo(cfg.clone()).await;
     eprintln!(
-        "daedalus acp — {:?}/{} — waiting for an editor",
+        "knossos acp — {:?}/{} — waiting for an editor",
         cfg.engine,
         cfg.model.as_deref().unwrap_or("default"),
     );
@@ -595,7 +746,7 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
         let idx = SymbolIndex::build(&root)?;
         let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
         let trace = root
-            .join(".daedalus")
+            .join(".knossos")
             .join(format!("acp-{}.jsonl", std::process::id()));
 
         let mut registry = ToolRegistry::with_retrieval(retrieval);
@@ -629,7 +780,8 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
             Session::new(&root, "acp").with_trace(&trace)?,
             cfg.max_tokens,
             !opts.no_judge,
-        );
+        )
+        .with_context_limits(cfg.context_window, cfg.compact_at);
         talos.cancel = cancel;
         talos.approver = Some(approver);
         if !opts.no_context {
@@ -705,6 +857,7 @@ fn child_factory(
             // once the child's work is folded into it.
             false,
         )
+        .with_context_limits(cfg.context_window, cfg.compact_at)
         .with_role(req.role.prompt.clone()))
     })
 }
@@ -719,9 +872,15 @@ fn connect_mcp(
     root: &std::path::Path,
     configured: Option<&std::path::Path>,
 ) -> Vec<String> {
-    let path = configured
-        .map(PathBuf::from)
-        .unwrap_or_else(|| root.join(".daedalus").join("mcp.json"));
+    let path = configured.map(PathBuf::from).unwrap_or_else(|| {
+        let canonical = root.join(".knossos").join("mcp.json");
+        let legacy = root.join(".daedalus").join("mcp.json");
+        if canonical.exists() || !legacy.exists() {
+            canonical
+        } else {
+            legacy
+        }
+    });
     if !path.exists() {
         // Silence when nobody asked for MCP; an explicit path that is missing is
         // a mistake worth naming.
@@ -768,7 +927,8 @@ async fn run_eval(
     resume: bool,
     opts: &LoopArgs,
 ) -> Result<()> {
-    let cfg = prefer_cameo(cfg.clone()).await;
+    let mut cfg = prefer_cameo(cfg.clone()).await;
+    cfg.workspace = cfg.workspace_root()?;
     let mut suite = match cases {
         Some(path) => knossos::eval::load_cases(path)?,
         None => knossos::eval::bundled_core()?,
@@ -831,7 +991,7 @@ async fn run_eval(
     );
     let persistent_root = cfg
         .workspace_root()?
-        .join(".daedalus")
+        .join(".knossos")
         .join("eval")
         .join(&eval_run);
     std::fs::create_dir_all(&persistent_root)?;
@@ -867,7 +1027,7 @@ async fn run_eval(
                 }
             })
             .collect();
-        let root = std::env::temp_dir().join(format!("daedalus-eval-{eval_run}-{safe_id}"));
+        let root = std::env::temp_dir().join(format!("knossos-eval-{eval_run}-{safe_id}"));
         let _ = std::fs::remove_dir_all(&root);
         knossos::eval::materialise(case, &root)?;
         let mut case_cfg = cfg.clone();
@@ -1110,9 +1270,43 @@ fn harness_revision() -> String {
     }
 }
 
-async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
+async fn run_task(
+    cfg: &Config,
+    task: &str,
+    opts: &LoopArgs,
+    persist_conversation: bool,
+    resume_mission: Option<&str>,
+) -> Result<()> {
     let cfg = prefer_cameo(cfg.clone()).await;
+    if persist_conversation || resume_mission.is_some() {
+        // Arbitrary MCP programs and delegated runtime state need their own
+        // durable identity/capsule adapters before they can be restored.
+        anyhow::ensure!(
+            !opts.delegate
+                && opts.mcp_config.is_none()
+                && !cfg.workspace_root()?.join(".knossos/mcp.json").exists(),
+            "conversation restore does not yet support MCP or delegated tools"
+        );
+        anyhow::ensure!(
+            !opts.dry_run,
+            "preview overlays cannot yet be restored from conversation checkpoints"
+        );
+    }
     let (mut talos, trace_path) = build_talos(&cfg, opts, false)?;
+    if persist_conversation || resume_mission.is_some() {
+        let identity = format!("{cfg:?};steps={};target={};requests={:?};tokens={:?};concurrency={};memory={};context={};compact={}",
+            opts.max_steps, opts.target_steps, opts.max_requests, opts.max_total_tokens, opts.max_concurrency,
+            !opts.no_memory, !opts.no_context, !opts.no_compaction);
+        talos.enable_conversation_checkpoints(identity)?;
+    }
+    // This occurs before Metis consumes any prompt budget. The record says
+    // plainly that this task runs on the host; it is not a sandbox claim.
+    let environment = EnvironmentFingerprint::discover(talos.ctx.root())?;
+    if let Some(path) = &opts.environment_export {
+        environment.export(path)?;
+        eprintln!("Environment recipe exported to {}", path.display());
+    }
+    talos.set_environment(environment.into_record());
 
     talos.session.log(&TraceEvent::TaskStarted {
         task: task.to_string(),
@@ -1122,17 +1316,28 @@ async fn run_task(cfg: &Config, task: &str, opts: &LoopArgs) -> Result<()> {
         target_steps: opts.target_steps,
     });
 
-    let plan = metis::plan(
-        talos.engine.as_ref(),
-        &talos.themis,
-        &talos.scribe,
-        task,
-        cfg.max_tokens,
-    )
-    .await?;
-    eprintln!("Plan:\n{}\n", plan.render());
+    let outcome = if let Some(mission_id) = resume_mission {
+        talos.restore_conversation(mission_id)?;
+        talos.resume(task).await?
+    } else {
+        let plan = metis::plan(
+            talos.engine.as_ref(),
+            &talos.themis,
+            &talos.scribe,
+            task,
+            cfg.max_tokens,
+        )
+        .await?;
+        eprintln!("Plan:\n{}\n", plan.render());
 
-    let outcome = talos.run(task, &plan).await?;
+        talos.run(task, &plan).await?
+    };
+    if persist_conversation || resume_mission.is_some() {
+        eprintln!(
+            "Conversation checkpoint retained for mission {}",
+            talos.mission_id().unwrap_or("unknown")
+        );
+    }
 
     println!("\n{}", outcome.summary);
 
@@ -1237,4 +1442,47 @@ fn init_tracing(verbose: bool) {
         .without_time()
         .with_writer(std::io::stderr)
         .init();
+}
+
+#[cfg(test)]
+mod field_tests {
+    use super::*;
+
+    fn fixture() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("server/src")).unwrap();
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"name":"knossos-field"}"#,
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("server/src/index.js"), "").unwrap();
+        temp
+    }
+
+    #[test]
+    fn explicit_field_root_requires_the_product_marker_and_entry_point() {
+        let valid = fixture();
+        assert_eq!(
+            field_root(Some(valid.path())).unwrap(),
+            valid.path().canonicalize().unwrap()
+        );
+
+        let invalid = tempfile::tempdir().unwrap();
+        std::fs::write(
+            invalid.path().join("package.json"),
+            r#"{"name":"someone-elses-field"}"#,
+        )
+        .unwrap();
+        assert!(field_root(Some(invalid.path())).is_err());
+    }
+
+    #[test]
+    fn field_subcommand_accepts_an_explicit_bundle() {
+        let cli = Cli::try_parse_from(["knossos", "field", "--dir", "bundle"]).unwrap();
+        match cli.command {
+            Command::Field { dir } => assert_eq!(dir, Some(PathBuf::from("bundle"))),
+            _ => panic!("field subcommand parsed as a different command"),
+        }
+    }
 }

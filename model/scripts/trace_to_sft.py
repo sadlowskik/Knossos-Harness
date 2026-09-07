@@ -1,6 +1,6 @@
 """Turn collected traces into supervised fine-tuning records.
 
-    python scripts/trace_to_sft.py --traces .daedalus --out corpus.jsonl
+    python scripts/trace_to_sft.py --traces .knossos --out corpus.jsonl
 
 Input is JSONL written by `knossos-rs` with `--collect-exchanges`: one
 `exchange_delta` event per engine call, carrying only the request suffix and
@@ -212,7 +212,7 @@ def records(events: Iterable[Dict[str, Any]]) -> Iterator[Dict[str, Any]]:
             "messages": messages,
             "step": event.get("step"),
             "run_id": event.get("run_id"),
-            "trace_schema": event.get("schema_version", "daedalus-trace/v1"),
+            "trace_schema": event.get("schema_version", "knossos-trace/v1"),
         }
 
 

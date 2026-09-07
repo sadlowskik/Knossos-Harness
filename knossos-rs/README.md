@@ -1,7 +1,7 @@
 # Knossos
 
 An agentic coding harness whose components are the **system-level form of the
-mechanisms in the [Daedalus](https://github.com/korbinsadlowski/daedalus) model
+mechanisms in the [Daedalus](https://github.com/sadlowskik/Daedalus) model
 architecture**.
 
 The engine is a swappable slot. Everything around it — exact symbol memory, an
@@ -11,13 +11,13 @@ the model architecture is a long research project, and the harness is the half
 that can have real capability today, because it is not compute-bound.
 
 ```bash
-daedalus task "add a triple() function next to double()" -w ./my-crate
-daedalus acp                          # editor agent (ACP on stdio)
-daedalus eval --cases suite.json      # fail_to_pass / pass_to_pass grader
+knossos task "add a triple() function next to double()" -w ./my-crate
+knossos acp                          # editor agent (ACP on stdio)
+knossos eval --cases suite.json      # fail_to_pass / pass_to_pass grader
 ```
 
-`python -m knossos` is training/legacy. The product binary is `daedalus`.
-With no API key, `daedalus acp` still starts (retrieval-only: search the
+`python -m knossos` is training/legacy. The product binary is `knossos`.
+With no API key, `knossos acp` still starts (retrieval-only: search the
 tree, no edits). Pass `--engine ollama` or `--engine cameo` for a local
 model, or set `ANTHROPIC_API_KEY`. Editors that advertise `fs`, `terminal`,
 or elicitation get those channels; everyone else stays on the workspace jail.
@@ -95,33 +95,35 @@ Tier 4  model vs constitution   expensive, gated on all of the above
 ## Install
 
 ```bash
-git clone <this-repo> && cd daedalus-harness && cargo build --release
+git clone https://github.com/sadlowskik/Knossos-Harness.git
+cd Knossos-Harness/knossos-rs
+cargo build --release
 ```
 
 ## Usage
 
 ```bash
 # exact symbol index — no engine required
-daedalus index -w ./my-crate
-daedalus index -w ./my-crate --lookup Adder
+knossos index -w ./my-crate
+knossos index -w ./my-crate --lookup Adder
 
 # verification ladder — no engine required
-daedalus verify -w ./my-crate
+knossos verify -w ./my-crate
 
 # plan without executing
-daedalus plan "add a --json flag" -w ./my-crate
+knossos plan "add a --json flag" -w ./my-crate
 
 # plan and execute, verifying as it goes
-daedalus task "add a --json flag" -w ./my-crate --max-steps 12 --target-steps 6
+knossos task "add a --json flag" -w ./my-crate --max-steps 12 --target-steps 6
 
 # propose changes without writing them, and print unified diffs
-daedalus task "add a --json flag" -w ./my-crate --dry-run
+knossos task "add a --json flag" -w ./my-crate --dry-run
 
 # interactive session that keeps context between turns
-daedalus repl -w ./my-crate --dry-run
+knossos repl -w ./my-crate --dry-run
 
 # Agent Client Protocol — this is what an editor spawns (no Python)
-daedalus acp --engine cameo --model qwen2.5-0.5b
+knossos acp --engine cameo --model qwen2.5-0.5b
 ```
 
 ### In a code editor (ACP)
@@ -129,7 +131,7 @@ daedalus acp --engine cameo --model qwen2.5-0.5b
 You do **not** need the Python agent. Any editor that speaks [ACP](https://agentclientprotocol.com) (Zed, JetBrains ACP, VS Code ACP, this repo's Lapce fork) can spawn the Rust binary on stdio:
 
 ```
-command: /absolute/path/to/daedalus
+command: /absolute/path/to/knossos
 args:    acp
 env:     CAMEO_BASE_URL=http://127.0.0.1:9090/v1
          CAMEO_MODEL=qwen2.5-0.5b
@@ -143,8 +145,8 @@ Zed-style agent server (shape; field names follow your editor's schema):
 
 ```json
 {
-  "name": "daedalus",
-  "command": "/absolute/path/to/daedalus",
+  "name": "knossos",
+  "command": "/absolute/path/to/knossos",
   "args": ["acp"],
   "env": { "CAMEO_BASE_URL": "http://127.0.0.1:9090/v1" }
 }
@@ -164,7 +166,7 @@ reach tier 4**, and every message it produces says "preview, not verification".
 
 ### Interactive session
 
-`daedalus repl` keeps the conversation, the symbol index and the staged changes
+`knossos repl` keeps the conversation, the symbol index and the staged changes
 alive between turns, so you can redirect the agent without losing what it
 already worked out.
 
@@ -195,7 +197,7 @@ there, so the editor cannot drift from the CLI.
 cd editor/vscode && npm install && npm run compile
 ```
 
-Then open that folder in VS Code and press F5. **Daedalus: Preview Task** is the
+Then open that folder in VS Code and press F5. **Knossos: Preview Task** is the
 command worth reaching for first — it gives you the accept/reject step that
 makes an agent safe to point at a real repository.
 
@@ -203,10 +205,10 @@ makes an agent safe to point at a real repository.
 
 ```bash
 export ANTHROPIC_API_KEY=...
-daedalus task "..." --engine anthropic --model claude-opus-5
+knossos task "..." --engine anthropic --model claude-opus-5
 
 # or fully local
-daedalus task "..." --engine ollama --model qwen3-coder:30b
+knossos task "..." --engine ollama --model qwen3-coder:30b
 ```
 
 Anthropic has native tool use. Ollama's varies by model, so engines declare
@@ -285,7 +287,7 @@ evidence or on a budget. That is a working agent, not a frontier one.
 ladder. Lethe shrinks oversized tool results in place. Failed hypotheses
 land in `{workspace}/.knossos/episodes.jsonl` and are injected after compact
 and on the next run. First `Stuck` redirects once; the second is an honest
-halt. Product spawn is `daedalus acp` (stdio JSON-RPC). `session/load`
+halt. Product spawn is `knossos acp` (stdio JSON-RPC). `session/load`
 replays already-sent updates; it does not re-run tools.
 
 **Not implemented, deliberately:**

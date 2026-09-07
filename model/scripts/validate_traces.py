@@ -1,4 +1,4 @@
-"""Fail-closed validation for raw Daedalus v2 training traces."""
+"""Fail-closed validation for raw Knossos v2 training traces."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,8 @@ from pathlib import Path
 from curate_traces import contains_secret
 
 
-SCHEMA = "daedalus-trace/v2"
+SCHEMA = "knossos-trace/v2"
+LEGACY_SCHEMAS = {"daedalus-trace/v2"}
 EVENTS = {
     "experiment_metadata", "task_started", "plan_produced", "step_started",
     "agent_message", "thought", "context_considered", "exchange",
@@ -35,7 +36,7 @@ def validate(path: Path) -> list[str]:
         for field in ("at", "schema_version", "run_id", "event"):
             if field not in event:
                 errors.append(f"line {number}: missing {field}")
-        if event.get("schema_version") != SCHEMA:
+        if event.get("schema_version") not in {SCHEMA, *LEGACY_SCHEMAS}:
             errors.append(f"line {number}: unsupported schema {event.get('schema_version')!r}")
         if event.get("event") not in EVENTS:
             errors.append(f"line {number}: unknown event {event.get('event')!r}")
@@ -68,7 +69,7 @@ def main() -> int:
         for error in validate(path):
             print(f"ERROR {path}: {error}")
             failed = True
-    print(json.dumps({"schema": "daedalus-trace-validation/v1", "files": len(files),
+    print(json.dumps({"schema": "knossos-trace-validation/v1", "files": len(files),
                       "unique": len(seen), "valid": not failed}))
     return int(failed)
 

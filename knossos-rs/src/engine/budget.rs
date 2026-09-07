@@ -8,10 +8,17 @@ use tokio::sync::Semaphore;
 
 use super::{Engine, EngineError, Request, Response, StreamDelta};
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QuotaSnapshot {
     pub requests: u64,
     pub tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecoveryQuota {
+    pub max_requests: Option<u64>,
+    pub max_tokens: Option<u64>,
+    pub spent: QuotaSnapshot,
 }
 
 #[derive(Debug, Default)]
@@ -66,6 +73,37 @@ impl Quota {
             requests: state.requests,
             tokens: state.tokens,
         }
+    }
+
+    pub fn recovery_snapshot(&self) -> Result<RecoveryQuota> {
+        let state = self.state.lock().expect("quota");
+        anyhow::ensure!(
+            state.reserved_tokens == 0,
+            "provider work is still in flight"
+        );
+        Ok(RecoveryQuota {
+            max_requests: self.max_requests,
+            max_tokens: self.max_tokens,
+            spent: QuotaSnapshot {
+                requests: state.requests,
+                tokens: state.tokens,
+            },
+        })
+    }
+
+    pub fn restore_spent(&self, saved: &RecoveryQuota) -> Result<()> {
+        anyhow::ensure!(
+            saved.max_requests == self.max_requests && saved.max_tokens == self.max_tokens,
+            "checkpoint quota limits differ from the configured limits"
+        );
+        let mut state = self.state.lock().expect("quota");
+        anyhow::ensure!(
+            state.reserved_tokens == 0,
+            "cannot restore an in-flight quota"
+        );
+        state.requests = state.requests.max(saved.spent.requests);
+        state.tokens = state.tokens.max(saved.spent.tokens);
+        Ok(())
     }
 
     fn reserve(&self, request: &Request) -> Result<u64> {
@@ -127,6 +165,10 @@ impl BudgetedEngine {
 
 #[async_trait]
 impl Engine for BudgetedEngine {
+    async fn prepare(&self) -> Result<()> {
+        self.inner.prepare().await
+    }
+
     async fn complete(&self, request: &Request) -> Result<Response> {
         let _permit = self
             .quota
@@ -204,5 +246,29 @@ mod tests {
         let engine = BudgetedEngine::new(Box::new(MockEngine::text("never")), quota);
         let request = Request::new("system", vec![Message::user_text("user")]).with_max_tokens(8);
         assert!(engine.complete(&request).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn restored_quota_does_not_grant_a_fresh_request_budget() {
+        let original = Quota::new(Some(1), None, 1);
+        let engine = BudgetedEngine::new(Box::new(MockEngine::text("spent")), original.clone());
+        let request = Request::new("s", vec![Message::user_text("u")]).with_max_tokens(8);
+        engine.complete(&request).await.unwrap();
+        let saved = original.recovery_snapshot().unwrap();
+        let restored = Quota::new(Some(1), None, 1);
+        restored.restore_spent(&saved).unwrap();
+        let engine = BudgetedEngine::new(Box::new(MockEngine::text("must not execute")), restored);
+        assert!(engine.complete(&request).await.is_err());
+        assert!(Quota::new(Some(2), None, 1).restore_spent(&saved).is_err());
+    }
+
+    #[test]
+    fn in_flight_quota_cannot_be_checkpointed() {
+        let quota = Quota::new(None, None, 1);
+        let request = Request::new("s", vec![Message::user_text("u")]).with_max_tokens(8);
+        let reservation = quota.reserve(&request).unwrap();
+        assert!(quota.recovery_snapshot().is_err());
+        quota.finish(reservation, None);
+        assert!(quota.recovery_snapshot().is_ok());
     }
 }

@@ -1,38 +1,48 @@
-# Daedalus
+# Knossos
 
-A from-scratch coding model and the agentic harness built around it.
+An engine-agnostic coding harness with exact symbol memory, retrieval, a
+constitution, tiered verification, explicit halting, and the Field command
+surface for operating many agents.
 
-The premise is a **swappable engine slot**. The model architecture is a long
-research project; the harness is the half that can have real capability today,
-because it is not compute-bound. Everything around the slot — exact symbol
-memory, retrieval, a constitution, tiered verification, an explicit halting
-policy — is engine-agnostic by construction and survives an engine swap.
+The premise is a **swappable engine slot**. Knossos is the system around that
+slot; Cameo, Ollama, Anthropic, and OpenAI-compatible providers can all power
+it. Daedalus is the model architecture that inspired several of Knossos's
+mechanisms, not the name of the harness or its CLI.
+
+```bash
+knossos task "add a --json flag" -w ./my-project
+knossos field
+knossos acp
+knossos eval --cases suite.json
+```
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `model/` | The architecture (`daedalus/`) and Knossos in Python (`knossos/`) |
-| `knossos-rs/` | Knossos in Rust — Metis, Themis, Mnemosyne, Scribe, a VS Code extension |
+| `knossos-rs/` | The Knossos product: Rust library, `knossos` CLI, ACP/serve protocols, and VS Code extension |
+| `field/` | Knossos Field: the Roman multi-agent command surface, server, web client, policies, and release bundle |
+| `model/` | Daedalus model research and the legacy Python Knossos reference implementation |
 | `conformance/` | Knossos driven by the ACP authors' own client and schema |
 | `fixtures/scratch-crate/` | A minimal cargo library, used as a target for exercising Knossos against real Rust |
 | `editor/` | Your Lapce fork, as a submodule |
 
-**Daedalus** is the model. **Knossos** is the system around it — the palace
-contains the Labyrinth, which is the same relationship the harness has to the
-engine slot. The CLI stays `daedalus`, because you address the craftsman rather
-than the workshop.
+Run `knossos field` from a source checkout, or point a released binary at the
+separately downloadable Field bundle with `knossos field --dir <path>`. The command
+starts the loopback-only server and prints its one-time authenticated bootstrap URL.
 
-Two Knossos implementations exist deliberately. They are kept side by side while
-the question of which line continues is still open:
+## Naming
 
-- **Python** (`model/knossos/`) speaks the [Agent Client Protocol](https://agentclientprotocol.com),
-  so it runs in Zed and JetBrains today without forking anything. It is the one
-  with measured results — retrieval ranking, a gate, and a 19-case evaluation set
-  — and the one verified against the protocol's own client and published schema
-  (`conformance/`, 12 of 12).
-- **Rust** (`knossos-rs/`) is architecturally further along and could be linked
-  directly into an editor fork rather than spawned as a subprocess.
+- **Knossos** is the harness, crate, CLI, editor integration, and release name.
+- **Field** is Knossos's Roman command surface for multi-agent operations.
+- **Cameo** is an optional local inference runtime and operating environment.
+- **Daedalus** is the model/research lineage.
+
+Two Knossos implementations remain in the history, but their roles are settled:
+
+- **Rust** (`knossos-rs/`) is the product implementation and the one releases build.
+- **Python** (`model/knossos/`) is retained for research, training, and historical
+  cross-implementation checks.
 
 ## Adding the editor fork
 
@@ -81,7 +91,7 @@ This repository is a consolidation of three that were developed separately.
 Their histories are preserved via `git subtree`, so `git log` reaches back
 through all of them.
 
-The upstream model repository remains at
+The Daedalus model research repository remains at
 [sadlowskik/Daedalus](https://github.com/sadlowskik/Daedalus).
 
 ## Licence

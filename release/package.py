@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a reproducible, self-contained Daedalus release archive."""
+"""Create a reproducible, self-contained Knossos release archive."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def package(binary: Path, version: str, platform: str, out_dir: Path) -> Path:
     if not binary.is_file():
         raise FileNotFoundError(f"binary does not exist: {binary}")
 
-    archive_stem = f"daedalus-{version}-{platform}"
+    archive_stem = f"knossos-{version}-{platform}"
     out_dir.mkdir(parents=True, exist_ok=True)
     archive_path = out_dir / f"{archive_stem}.zip"
 

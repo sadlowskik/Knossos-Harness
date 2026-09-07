@@ -8,7 +8,7 @@ repository = "https://github.com/sadlowskik/Knossos-Harness"
 readme = "README.md"
 
 [[bin]]
-name = "daedalus"
+name = "knossos"
 path = "src/main.rs"
 
 [lib]
@@ -26,6 +26,8 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "r
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha1 = "0.10.6"
+sha2 = "0.10.9"
+fs2 = "0.4"
 similar = "3.1.1"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "net", "time"] }

@@ -159,12 +159,12 @@ def test_a_valid_clarification_can_end_without_a_done_halt():
 
 def test_delta_exchanges_reconstruct_the_exact_prefix():
     events = [
-        {"event": "exchange_delta", "schema_version": "daedalus-trace/v2",
+        {"event": "exchange_delta", "schema_version": "knossos-trace/v2",
          "run_id": "r1", "step": 1, "reset": True, "system": "system",
          "messages_start": 0,
          "messages": [{"role": "user", "content": [text("task")]}],
          "response": {"content": [text("first")]}},
-        {"event": "exchange_delta", "schema_version": "daedalus-trace/v2",
+        {"event": "exchange_delta", "schema_version": "knossos-trace/v2",
          "run_id": "r1", "step": 2, "reset": False, "messages_start": 1,
          "messages": [
              {"role": "assistant", "content": [text("first")]},

@@ -1,0 +1,21 @@
+{
+  "name": "knossos-field",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Field â€” a real multi-agent operating environment with RTS command semantics.",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=server & npm run dev --workspace=web",
+    "server": "npm run dev --workspace=server",
+    "web": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "assets:audit": "node scripts/audit-assets.mjs",
+    "release:audit": "node scripts/audit-assets.mjs --release",
+    "start": "npm run start --workspace=server",
+    "test": "npm run assets:audit && node server/test/security.test.mjs && node server/test/body.test.mjs && node server/test/markdown-security.test.mjs && node server/test/browser-url.test.mjs && node server/test/workspace-path.test.mjs && node server/test/terminal-policy.test.mjs && node server/test/child-env.test.mjs && node server/test/glob.test.mjs && node server/test/tools.test.mjs && node server/test/campaign.test.mjs && node server/test/transitions.test.mjs && node server/test/graph.test.mjs && node server/test/director.test.mjs && node server/test/reports.test.mjs && node server/test/knossos-session.test.mjs && node server/test/session-usage.test.mjs && node server/test/process-generation.test.mjs && node server/test/budget-ledger.test.mjs && node server/test/permission-policy.test.mjs && node server/test/scenario-matrix.test.mjs && node server/test/edge-cases.test.mjs && node server/test/registry-resilience.test.mjs && node server/test/routines.test.mjs && node server/test/routine-queue-recovery.test.mjs && node server/test/git-state.test.mjs && node server/test/eventlog.test.mjs && node server/test/api-pagination.test.mjs && node server/test/replay.test.mjs && node server/test/ws.test.mjs && node server/test/simulation.test.mjs && node server/test/world.test.mjs && node server/test/stress.test.mjs"
+  }
+}

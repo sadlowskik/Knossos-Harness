@@ -442,7 +442,7 @@ impl Sandbox {
 
     /// The names that would be dropped from the current environment.
     ///
-    /// For explaining the policy — `daedalus` has no way to show its own
+    /// For explaining the policy — `knossos` has no way to show its own
     /// guardrails otherwise, and a sandbox nobody can inspect is one nobody
     /// trusts.
     pub fn withheld(&self) -> Vec<String> {

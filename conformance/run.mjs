@@ -39,7 +39,7 @@ const RUST_BIN = process.env.KNOSSOS_ACP_BIN || join(
   "knossos-rs",
   "target",
   "debug",
-  process.platform === "win32" ? "daedalus.exe" : "daedalus",
+  process.platform === "win32" ? "knossos.exe" : "knossos",
 );
 
 // -------------------------------------------------------------- schema checks
@@ -327,7 +327,7 @@ function liveAgent(opts) {
   }
   return connect({
     env: {
-      ...(LIVE_MODEL ? { DAEDALUS_MODEL: LIVE_MODEL } : {}),
+      ...(LIVE_MODEL ? { KNOSSOS_MODEL: LIVE_MODEL } : {}),
     },
     ...opts,
   });

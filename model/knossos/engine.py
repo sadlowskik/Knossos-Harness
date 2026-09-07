@@ -591,7 +591,7 @@ class OpenAICompatEngine:
 
     #: Used when retrieval supplied context.
     SYSTEM = (
-        "You are Daedalus, a coding assistant. You are given excerpts retrieved "
+        "You are Knossos, a coding assistant. You are given excerpts retrieved "
         "from the user's repository, each labelled with its file, line range, and "
         "the reason it was retrieved. Cite file:line when you refer to code. If "
         "the excerpts do not contain the answer, say so instead of guessing."
@@ -603,7 +603,7 @@ class OpenAICompatEngine:
     #: benefit of retrieval. The two prompts differ only in what they claim is
     #: available.
     SYSTEM_NO_CONTEXT = (
-        "You are Daedalus, a coding assistant. Answer the question as directly as "
+        "You are Knossos, a coding assistant. Answer the question as directly as "
         "you can from what you already know. Cite file:line if you are confident "
         "of a location. If you do not know, say so instead of guessing."
     )
@@ -1635,7 +1635,7 @@ class TransformersEngine:
     name = "transformers"
 
     SYSTEM = (
-        "You are Daedalus, a coding assistant. You are given excerpts retrieved "
+        "You are Knossos, a coding assistant. You are given excerpts retrieved "
         "from the user's repository, each labelled with its file, line range, and "
         "the reason it was retrieved. Cite file:line when you refer to code. If "
         "the excerpts do not contain the answer, say so instead of guessing."

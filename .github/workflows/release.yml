@@ -18,15 +18,15 @@ jobs:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64
-            binary: daedalus
+            binary: knossos
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             platform: windows-x86_64
-            binary: daedalus.exe
+            binary: knossos.exe
           - runner: macos-14
             target: aarch64-apple-darwin
             platform: macos-arm64
-            binary: daedalus
+            binary: knossos
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +36,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: knossos-rs -> target
-      - name: Build Daedalus
+      - name: Verify the exact release source
         working-directory: knossos-rs
-        run: cargo build --release --locked --bin daedalus --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --all-targets --locked
+      - name: Build Knossos
+        working-directory: knossos-rs
+        run: cargo build --release --locked --bin knossos --target ${{ matrix.target }}
       - name: Package release
         run: >-
           python release/package.py
@@ -51,15 +60,53 @@ jobs:
           --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: daedalus-${{ matrix.platform }}
+          name: knossos-${{ matrix.platform }}
           path: |
             dist/*.zip
             dist/*.sha256
           if-no-files-found: error
 
+  field:
+    name: Build Knossos Field
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: field/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked dependencies
+        working-directory: field
+        run: npm ci
+      - name: Verify Field
+        working-directory: field
+        run: npm test
+      - name: Verify redistribution provenance
+        working-directory: field
+        run: npm run release:audit
+      - name: Build Field
+        working-directory: field
+        run: npm run build
+      - name: Package Field
+        run: >-
+          python release/package_field.py
+          --version ${{ github.ref_name }}
+          --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knossos-field
+          path: |
+            dist/knossos-field-*.zip
+            dist/knossos-field-*.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [build, field]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -67,7 +114,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: daedalus-*
+          pattern: knossos-*
           merge-multiple: true
       - name: Create aggregate checksum
         working-directory: dist
@@ -78,7 +125,7 @@ jobs:
         run: >-
           gh release create "${GITHUB_REF_NAME}"
           --repo "${GITHUB_REPOSITORY}"
-          --title "Daedalus ${GITHUB_REF_NAME}"
+          --title "Knossos ${GITHUB_REF_NAME}"
           --prerelease
           --generate-notes
           dist/*.zip

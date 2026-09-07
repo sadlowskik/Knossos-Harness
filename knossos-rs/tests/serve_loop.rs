@@ -605,6 +605,34 @@ async fn declaring_permissions_false_is_the_same_as_not_declaring() {
 }
 
 #[tokio::test]
+async fn context_policy_is_visible_and_mutable_between_server_turns() {
+    let mut server = Server::start(Vec::new(), false);
+    server.until(is_idle).await;
+
+    server.send(r#"{"cmd":"set_context","context_window":4000,"compact_at":99999}"#);
+    let (state, _) = server
+        .until(|event| matches!(event, Event::State { .. }))
+        .await;
+    let Event::State {
+        assigned_context_tokens,
+        input_limit_tokens,
+        compact_at_tokens,
+        compaction_enabled,
+        mission_id,
+        ..
+    } = state
+    else {
+        unreachable!()
+    };
+    assert_eq!(assigned_context_tokens, 4_000);
+    assert_eq!(input_limit_tokens, 2_488);
+    assert_eq!(compact_at_tokens, 2_488);
+    assert!(compaction_enabled);
+    assert!(mission_id.is_none());
+    server.until(is_idle).await;
+}
+
+#[tokio::test]
 async fn shutdown_ends_the_loop() {
     let mut server = Server::start(vec![text_response("fine")], false);
     server.until(is_idle).await;

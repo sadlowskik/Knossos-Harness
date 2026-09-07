@@ -1,7 +1,7 @@
-// Daedalus Harness — VS Code front end.
+// Knossos Harness — VS Code front end.
 //
 // Two surfaces over the same binary:
-//   * a sidebar session panel backed by `daedalus serve` (see panel.ts)
+//   * a sidebar session panel backed by `knossos serve` (see panel.ts)
 //   * one-shot command-palette entries for index / verify / lookup
 //
 // Deliberately thin. No harness logic is reimplemented here, so the editor
@@ -26,7 +26,7 @@ let channel: vscode.OutputChannel;
 let secrets: vscode.SecretStorage;
 
 export function activate(context: vscode.ExtensionContext): void {
-  channel = vscode.window.createOutputChannel("Daedalus");
+  channel = vscode.window.createOutputChannel("Knossos");
   context.subscriptions.push(channel);
   secrets = context.secrets;
 
@@ -49,20 +49,20 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.registerCommand(id, () => fn().catch(reportError))
     );
 
-  register("daedalus.openPanel", async () => {
-    await vscode.commands.executeCommand("daedalus.session.focus");
+  register("knossos.openPanel", async () => {
+    await vscode.commands.executeCommand("knossos.session.focus");
   });
-  register("daedalus.task", () => runTask(panel));
-  register("daedalus.preview", previewTask);
-  register("daedalus.verify", verifyWorkspace);
-  register("daedalus.index", showIndex);
-  register("daedalus.lookup", lookupSymbol);
-  register("daedalus.setApiKey", setApiKey);
-  register("daedalus.clearApiKey", clearApiKey);
-  register("daedalus.locateBinary", async () => {
+  register("knossos.task", () => runTask(panel));
+  register("knossos.preview", previewTask);
+  register("knossos.verify", verifyWorkspace);
+  register("knossos.index", showIndex);
+  register("knossos.lookup", lookupSymbol);
+  register("knossos.setApiKey", setApiKey);
+  register("knossos.clearApiKey", clearApiKey);
+  register("knossos.locateBinary", async () => {
     const chosen = await promptForBinary();
     if (chosen) {
-      void vscode.window.showInformationMessage(`Daedalus: using ${chosen}`);
+      void vscode.window.showInformationMessage(`Knossos: using ${chosen}`);
     }
   });
 }
@@ -85,19 +85,19 @@ async function setApiKey(): Promise<void> {
   }
   const trimmed = key.trim();
   if (!trimmed) {
-    void vscode.window.showWarningMessage("Daedalus: no key entered.");
+    void vscode.window.showWarningMessage("Knossos: no key entered.");
     return;
   }
 
   await secrets.store(API_KEY_SECRET, trimmed);
   void vscode.window.showInformationMessage(
-    "Daedalus: API key saved. Reload the session panel to use it."
+    "Knossos: API key saved. Reload the session panel to use it."
   );
 }
 
 async function clearApiKey(): Promise<void> {
   await secrets.delete(API_KEY_SECRET);
-  void vscode.window.showInformationMessage("Daedalus: stored API key removed.");
+  void vscode.window.showInformationMessage("Knossos: stored API key removed.");
 }
 
 export function deactivate(): void {
@@ -122,7 +122,7 @@ async function run(
   cwd: string,
   token?: vscode.CancellationToken
 ): Promise<RunResult> {
-  const binary = resolveBinary(workspaceRoot()) ?? "daedalus";
+  const binary = resolveBinary(workspaceRoot()) ?? "knossos";
   const env = await childEnv(secrets);
 
   return new Promise((resolve, reject) => {
@@ -156,7 +156,7 @@ async function run(
         reject(
           new Error(
             `Could not find '${binary}'. Build it with \`cargo build --release\`, ` +
-              `then run "Daedalus: Locate Executable".`
+              `then run "Knossos: Locate Executable".`
           )
         );
         return;
@@ -185,7 +185,7 @@ function runWithProgress(
 function reportError(err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   channel.appendLine(`\nError: ${message}`);
-  void vscode.window.showErrorMessage(`Daedalus: ${message}`);
+  void vscode.window.showErrorMessage(`Knossos: ${message}`);
 }
 
 // ---- commands ----
@@ -204,11 +204,11 @@ async function runTask(panel: SessionPanel): Promise<void> {
   if (!root) {
     return;
   }
-  const task = await askForTask("What should Daedalus do?");
+  const task = await askForTask("What should Knossos do?");
   if (!task) {
     return;
   }
-  await vscode.commands.executeCommand("daedalus.session.focus");
+  await vscode.commands.executeCommand("knossos.session.focus");
   panel.runTask(task);
 }
 
@@ -217,14 +217,14 @@ async function previewTask(): Promise<void> {
   if (!root) {
     return;
   }
-  const task = await askForTask("What should Daedalus propose?");
+  const task = await askForTask("What should Knossos propose?");
   if (!task) {
     return;
   }
 
   channel.show(true);
   const result = await runWithProgress(
-    "Daedalus: previewing task",
+    "Knossos: previewing task",
     ["task", task, "--dry-run", ...globalArgs(root), ...loopArgs()],
     root
   );
@@ -235,7 +235,7 @@ async function previewTask(): Promise<void> {
   const diffText = extractDiff(result.stdout);
   if (!diffText) {
     void vscode.window.showInformationMessage(
-      "Daedalus: no changes were proposed. See the output channel."
+      "Knossos: no changes were proposed. See the output channel."
     );
     return;
   }
@@ -246,7 +246,7 @@ async function previewTask(): Promise<void> {
   });
   await vscode.window.showTextDocument(doc, { preview: false });
   void vscode.window.showInformationMessage(
-    "Daedalus: preview only — nothing was written."
+    "Knossos: preview only — nothing was written."
   );
 }
 
@@ -273,7 +273,7 @@ async function verifyWorkspace(): Promise<void> {
 
   channel.show(true);
   const result = await runWithProgress(
-    "Daedalus: verifying",
+    "Knossos: verifying",
     ["verify", ...globalArgs(root)],
     root
   );
@@ -282,10 +282,10 @@ async function verifyWorkspace(): Promise<void> {
   }
 
   if (result.code === 0) {
-    void vscode.window.showInformationMessage("Daedalus: all verification tiers passed.");
+    void vscode.window.showInformationMessage("Knossos: all verification tiers passed.");
   } else {
     void vscode.window.showErrorMessage(
-      "Daedalus: verification failed. See the Daedalus output channel."
+      "Knossos: verification failed. See the Knossos output channel."
     );
   }
 }
@@ -320,7 +320,7 @@ async function lookupSymbol(): Promise<void> {
   const result = await run(["index", "--lookup", name, ...globalArgs(root)], root);
   if (result.code !== 0) {
     void vscode.window.showWarningMessage(
-      `Daedalus: '${name}' is not declared in this workspace.`
+      `Knossos: '${name}' is not declared in this workspace.`
     );
     return;
   }

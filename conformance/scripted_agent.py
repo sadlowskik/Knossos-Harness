@@ -1,6 +1,6 @@
 """A Knossos ACP server whose engine is scripted rather than a model.
 
-Everything below the engine is the real thing: the real `DaedalusAgent`, the
+Everything below the engine is the real thing: the real `KnossosAgent`, the
 real `Talos` loop, the real workspace jail and permission gate. Only the model's
 replies are fixed, which is what makes execute-mode conformance checks
 deterministic -- a real model may or may not decide to write a file on any given
@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "model"))
 
-from knossos.acp import DaedalusAgent          # noqa: E402
+from knossos.acp import KnossosAgent            # noqa: E402
 from knossos.jsonrpc import _configure_stdio    # noqa: E402
 
 
@@ -38,7 +38,7 @@ class ScriptedEngine:
 
 def main() -> int:
     replies = json.loads(os.environ.get("KNOSSOS_SCRIPT", "[]"))
-    agent = DaedalusAgent(
+    agent = KnossosAgent(
         engine=ScriptedEngine(replies),
         execute=os.environ.get("KNOSSOS_EXECUTE") == "1",
         dry_run=os.environ.get("KNOSSOS_WRITE") != "1",

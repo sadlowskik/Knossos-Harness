@@ -1,6 +1,6 @@
 //! The engine slot.
 //!
-//! Daedalus is the *system*; the reasoning engine is swappable. This trait is
+//! Knossos is the *system*; the reasoning engine is swappable. This trait is
 //! that swap point. Implementations ship for Anthropic's Messages API, a
 //! local Ollama server, an OpenAI-compatible `/chat/completions` adapter
 //! (Groq, Gemini, OpenRouter, …), a Cameo node that discovers `/api/engines`
@@ -35,6 +35,14 @@ pub use types::{
 
 #[async_trait]
 pub trait Engine: Send + Sync {
+    /// Prepare a backend before the request budget is resolved.
+    ///
+    /// Local serving engines use this to load/discover the resident model so
+    /// `context_window()` is accurate before the harness builds a prompt.
+    async fn prepare(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// One turn. Implementations must translate `Request` into their own wire
     /// format and the reply back into `Response` — no provider types escape.
     async fn complete(&self, req: &Request) -> Result<Response>;

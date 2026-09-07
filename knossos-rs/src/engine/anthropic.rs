@@ -20,7 +20,7 @@ const API_VERSION: &str = "2023-06-01";
 const PROVIDER: &str = "Anthropic API";
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 /// Most capable model in the current family. Sonnet is the cheaper swap for
-/// long agent loops — set `DAEDALUS_MODEL` to override.
+/// long agent loops — set `KNOSSOS_MODEL` to override.
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
 pub struct AnthropicEngine {

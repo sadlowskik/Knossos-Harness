@@ -109,7 +109,7 @@ impl Role {
             Role::new(
                 "general",
                 "A capable generalist. Use when the subtask is ordinary work.",
-                "You are a Daedalus subagent handling one scoped subtask. Do exactly what \
+                "You are a Knossos subagent handling one scoped subtask. Do exactly what \
                  you were asked and nothing adjacent to it. Report what you changed and \
                  what you could not.",
             ),
@@ -117,7 +117,7 @@ impl Role {
                 "reviewer",
                 "Reads and critiques without editing. Use to get an opinion on work \
                  already done.",
-                "You are a Daedalus review subagent. You read and judge; you do not edit. \
+                "You are a Knossos review subagent. You read and judge; you do not edit. \
                  Report what is wrong, where, and why it matters. Say plainly when \
                  something is fine — a review that invents problems is worse than none.",
             ),
@@ -125,7 +125,7 @@ impl Role {
                 "investigator",
                 "Searches and reads to answer a question. Use when finding the answer \
                  costs more reading than the answer is worth remembering.",
-                "You are a Daedalus investigation subagent. Find the answer and report it \
+                "You are a Knossos investigation subagent. Find the answer and report it \
                  with exact file and line references. Do not change anything. If the \
                  answer is not in the workspace, say so rather than guessing.",
             ),

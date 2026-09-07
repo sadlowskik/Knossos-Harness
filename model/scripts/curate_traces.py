@@ -263,7 +263,7 @@ def curate(paths: List[pathlib.Path], out_dir: pathlib.Path, salt: str,
         counts["sft"][split] = write_jsonl(out_dir / f"sft-{split}.jsonl", sft[split])
         counts["dpo"][split] = write_jsonl(out_dir / f"dpo-{split}.jsonl", dpo[split])
     manifest = {
-        "schema": "daedalus-corpus/v1",
+        "schema": "knossos-corpus/v1",
         "split_salt": salt,
         "allow_legacy": allow_legacy,
         "input_traces": len(paths),
@@ -286,7 +286,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--traces", required=True, type=pathlib.Path)
     parser.add_argument("--out-dir", required=True, type=pathlib.Path)
-    parser.add_argument("--split-salt", default="daedalus-v1")
+    parser.add_argument("--split-salt", default="knossos-v1")
     parser.add_argument("--allow-legacy", action="store_true")
     args = parser.parse_args()
     paths = source_paths(args.traces, args.out_dir)

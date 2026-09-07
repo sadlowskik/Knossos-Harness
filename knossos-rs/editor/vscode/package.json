@@ -1,6 +1,6 @@
 {
-  "name": "daedalus-harness",
-  "displayName": "Daedalus Harness",
+  "name": "knossos-harness",
+  "displayName": "Knossos Harness",
   "description": "Agentic coding with exact symbol grounding, tiered verification and an explicit halting policy.",
   "version": "0.1.0",
   "license": "MIT",
@@ -17,16 +17,16 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "daedalus",
-          "title": "Daedalus",
+          "id": "knossos",
+          "title": "Knossos",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "daedalus": [
+      "knossos": [
         {
-          "id": "daedalus.session",
+          "id": "knossos.session",
           "name": "Session",
           "type": "webview"
         }
@@ -34,95 +34,95 @@
     },
     "commands": [
       {
-        "command": "daedalus.openPanel",
-        "title": "Daedalus: Open Session Panel",
-        "category": "Daedalus"
+        "command": "knossos.openPanel",
+        "title": "Knossos: Open Session Panel",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.task",
-        "title": "Daedalus: Run Task",
-        "category": "Daedalus"
+        "command": "knossos.task",
+        "title": "Knossos: Run Task",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.preview",
-        "title": "Daedalus: Preview Task (dry run)",
-        "category": "Daedalus"
+        "command": "knossos.preview",
+        "title": "Knossos: Preview Task (dry run)",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.verify",
-        "title": "Daedalus: Verify Workspace",
-        "category": "Daedalus"
+        "command": "knossos.verify",
+        "title": "Knossos: Verify Workspace",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.index",
-        "title": "Daedalus: Show Symbol Index",
-        "category": "Daedalus"
+        "command": "knossos.index",
+        "title": "Knossos: Show Symbol Index",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.lookup",
-        "title": "Daedalus: Look Up Symbol",
-        "category": "Daedalus"
+        "command": "knossos.lookup",
+        "title": "Knossos: Look Up Symbol",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.setApiKey",
-        "title": "Daedalus: Set API Key",
-        "category": "Daedalus"
+        "command": "knossos.setApiKey",
+        "title": "Knossos: Set API Key",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.clearApiKey",
-        "title": "Daedalus: Clear Stored API Key",
-        "category": "Daedalus"
+        "command": "knossos.clearApiKey",
+        "title": "Knossos: Clear Stored API Key",
+        "category": "Knossos"
       },
       {
-        "command": "daedalus.locateBinary",
-        "title": "Daedalus: Locate Executable",
-        "category": "Daedalus"
+        "command": "knossos.locateBinary",
+        "title": "Knossos: Locate Executable",
+        "category": "Knossos"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "daedalus.lookup",
+          "command": "knossos.lookup",
           "when": "editorHasSelection",
           "group": "navigation@99"
         }
       ]
     },
     "configuration": {
-      "title": "Daedalus Harness",
+      "title": "Knossos Harness",
       "properties": {
-        "daedalus.binaryPath": {
+        "knossos.binaryPath": {
           "type": "string",
-          "default": "daedalus",
-          "description": "Path to the daedalus executable. Usually unnecessary — the extension looks in the workspace's target/release and target/debug, then a sibling daedalus-harness checkout, then PATH. Run 'Daedalus: Locate Executable' to set this with a file picker."
+          "default": "knossos",
+          "description": "Path to the Knossos executable. Usually unnecessary — the extension looks in the workspace's target/release and target/debug, then a sibling Knossos-Harness checkout, then PATH. Run 'Knossos: Locate Executable' to set this with a file picker."
         },
-        "daedalus.engine": {
+        "knossos.engine": {
           "type": "string",
           "enum": ["anthropic", "ollama"],
           "default": "anthropic",
           "description": "Which engine backend to drive."
         },
-        "daedalus.model": {
+        "knossos.model": {
           "type": "string",
           "default": "",
           "description": "Model id. Empty uses the engine's default."
         },
-        "daedalus.maxSteps": {
+        "knossos.maxSteps": {
           "type": "number",
           "default": 12,
-          "description": "Hard ceiling on engine turns (Ariadne's forced halt)."
+          "description": "Hard ceiling on engine turns."
         },
-        "daedalus.targetSteps": {
+        "knossos.targetSteps": {
           "type": "number",
           "default": 6,
           "description": "Where budget pressure begins."
         },
-        "daedalus.judge": {
+        "knossos.judge": {
           "type": "boolean",
           "default": true,
           "description": "Run Oracle tier 4 (model judgement against the constitution) once the deterministic tiers pass."
         },
-        "daedalus.previewByDefault": {
+        "knossos.previewByDefault": {
           "type": "boolean",
           "default": true,
           "description": "The session panel stages changes for review instead of writing them straight to disk. Turn this off and the panel edits files directly."

@@ -1,4 +1,4 @@
-# The Daedalus Constitution
+# The Knossos Constitution
 
 One set of principles serving two roles: it shapes what the agent does, and it
 is the rubric Oracle judges the result against. Edit it — a `constitution.md`

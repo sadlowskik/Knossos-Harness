@@ -171,6 +171,9 @@ struct Caps {
     limit_restores: u32,
     /// False after a stream request is refused. Sticky, like the other caps.
     stream: bool,
+    /// Cameo advertises agent-managed tools; generic OpenAI-compat starts true.
+    native_tools: bool,
+    max_request_bytes: Option<usize>,
 }
 
 pub struct OpenAICompatEngine {
@@ -235,6 +238,7 @@ impl OpenAICompatEngine {
         let provider = provider.into();
         let model = model.into();
         let base_url = base_url.into().trim_end_matches('/').to_string();
+        let native_tools = provider != "cameo";
         OpenAICompatEngine {
             client: reqwest::Client::builder()
                 .timeout(DEFAULT_HTTP_TIMEOUT)
@@ -258,6 +262,8 @@ impl OpenAICompatEngine {
                 output_shrinks: 0,
                 limit_restores: 0,
                 stream: true,
+                native_tools,
+                max_request_bytes: None,
             }),
         }
     }
@@ -290,6 +296,33 @@ impl OpenAICompatEngine {
         if caps.context_window.map(|old| window < old).unwrap_or(true) {
             caps.context_window = Some(window);
         }
+    }
+
+    pub fn bound_native_tools(&self, supported: bool) {
+        self.caps.lock().expect("caps").native_tools = supported;
+    }
+
+    pub fn bound_max_completion_tokens(&self, max: u32) {
+        if max == 0 {
+            return;
+        }
+        let mut caps = self.caps.lock().expect("caps");
+        caps.hard_output_cap = Some(match caps.hard_output_cap {
+            Some(old) => old.min(max),
+            None => max,
+        });
+        caps.max_tokens = caps.max_tokens.min(max);
+    }
+
+    pub fn bound_max_request_bytes(&self, max: usize) {
+        if max == 0 {
+            return;
+        }
+        let mut caps = self.caps.lock().expect("caps");
+        caps.max_request_bytes = Some(match caps.max_request_bytes {
+            Some(old) => old.min(max),
+            None => max,
+        });
     }
 
     pub fn limit_restores(&self) -> u32 {
@@ -336,9 +369,8 @@ impl Engine for OpenAICompatEngine {
             if caps.send_sampling {
                 payload["temperature"] = json!(req.temperature);
             }
-            if !req.tools.is_empty() {
-                payload["tools"] = Value::Array(req.tools.iter().map(to_openai_tool).collect());
-            }
+            attach_tools(&mut payload, req, &caps)?;
+            enforce_request_bytes(&payload, &caps)?;
 
             let (status, text) = self.post(&payload).await?;
             if (200..300).contains(&status) {
@@ -431,9 +463,8 @@ impl Engine for OpenAICompatEngine {
         if caps.send_sampling {
             payload["temperature"] = json!(req.temperature);
         }
-        if !req.tools.is_empty() {
-            payload["tools"] = Value::Array(req.tools.iter().map(to_openai_tool).collect());
-        }
+        attach_tools(&mut payload, req, &caps)?;
+        enforce_request_bytes(&payload, &caps)?;
 
         let url = format!("{}/chat/completions", self.base_url);
         let mut http = self
@@ -494,7 +525,7 @@ impl Engine for OpenAICompatEngine {
     }
 
     fn supports_native_tools(&self) -> bool {
-        true
+        self.caps.lock().expect("caps").native_tools
     }
 
     fn restore_limits(&self) -> bool {
@@ -645,6 +676,28 @@ fn parse_after(body: &str, label: &str) -> Option<u32> {
     re.captures(body)
         .and_then(|c| c.get(1))
         .and_then(|m| m.as_str().parse().ok())
+}
+
+fn attach_tools(payload: &mut Value, req: &Request, caps: &Caps) -> Result<()> {
+    if req.tools.is_empty() {
+        return Ok(());
+    }
+    if !caps.native_tools {
+        bail!("native tool calls are not advertised by this backend");
+    }
+    payload["tools"] = Value::Array(req.tools.iter().map(to_openai_tool).collect());
+    Ok(())
+}
+
+fn enforce_request_bytes(payload: &Value, caps: &Caps) -> Result<()> {
+    let Some(max) = caps.max_request_bytes else {
+        return Ok(());
+    };
+    let encoded = serde_json::to_vec(payload)?;
+    if encoded.len() > max {
+        bail!("request exceeds advertised max_request_bytes ({max})");
+    }
+    Ok(())
 }
 
 fn to_openai_tool(t: &crate::engine::ToolDef) -> Value {
@@ -961,6 +1014,8 @@ mod tests {
             output_shrinks: 0,
             limit_restores: 0,
             stream: true,
+            native_tools: true,
+            max_request_bytes: None,
         }
     }
 

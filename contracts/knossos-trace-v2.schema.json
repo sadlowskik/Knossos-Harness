@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://daedalus.local/contracts/daedalus-trace-v2.schema.json",
-  "title": "Daedalus trajectory event envelope v2",
+  "$id": "https://knossos.local/contracts/knossos-trace-v2.schema.json",
+  "title": "Knossos trajectory event envelope v2",
   "type": "object",
   "required": ["at", "schema_version", "run_id", "event"],
   "properties": {
     "at": {"type": "string", "format": "date-time"},
-    "schema_version": {"const": "daedalus-trace/v2"},
+    "schema_version": {"const": "knossos-trace/v2"},
     "run_id": {"type": "string", "minLength": 1},
     "event": {
       "enum": [

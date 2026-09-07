@@ -1,4 +1,4 @@
-// NDJSON client for `daedalus serve`.
+// NDJSON client for `knossos serve`.
 //
 // Keeps one long-lived process alive so the panel can hold a conversation.
 // stdout is the protocol channel — one JSON object per line — and stderr is
@@ -6,15 +6,15 @@
 
 import { ChildProcess, spawn } from "child_process";
 
-export interface DaedalusEvent {
+export interface KnossosEvent {
   event: string;
   [key: string]: unknown;
 }
 
-export type EventHandler = (event: DaedalusEvent) => void;
+export type EventHandler = (event: KnossosEvent) => void;
 export type ExitHandler = (code: number | null) => void;
 
-export class DaedalusClient {
+export class KnossosClient {
   private child: ChildProcess | undefined;
   /** Partial line carried between stdout chunks. */
   private buffer = "";
@@ -83,7 +83,7 @@ export class DaedalusClient {
         continue;
       }
       try {
-        this.emit(JSON.parse(line) as DaedalusEvent);
+        this.emit(JSON.parse(line) as KnossosEvent);
       } catch {
         // A non-JSON line means the protocol channel was polluted. Surface it
         // rather than silently dropping it — it is always a bug worth seeing.
@@ -92,7 +92,7 @@ export class DaedalusClient {
     }
   }
 
-  private emit(event: DaedalusEvent): void {
+  private emit(event: KnossosEvent): void {
     for (const handler of this.eventHandlers) {
       handler(event);
     }

@@ -242,10 +242,10 @@ pub fn load_cases(path: &Path) -> Result<Vec<CodingCase>> {
     Ok(cases)
 }
 
-/// Bundled core suite, compiled in so `daedalus eval` works without a path.
+/// Bundled core suite, compiled in so `knossos eval` works without a path.
 pub fn bundled_core() -> Result<Vec<CodingCase>> {
     let value: serde_json::Value = serde_json::from_str(include_str!("../cases/core.json"))?;
-    let tmp = std::env::temp_dir().join("daedalus-bundled-core.json");
+    let tmp = std::env::temp_dir().join("knossos-bundled-core.json");
     std::fs::write(&tmp, serde_json::to_vec(&value)?)?;
     load_cases(&tmp)
 }

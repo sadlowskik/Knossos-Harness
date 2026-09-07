@@ -10,6 +10,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   python:
     name: Knossos (Python)
@@ -30,8 +33,12 @@ jobs:
         run: python scripts/audit_suites.py --lock ../knossos-rs/cases/suite-lock.json
 
   rust:
-    name: Knossos (Rust)
-    runs-on: ubuntu-latest
+    name: Knossos (Rust, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,6 +55,33 @@ jobs:
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
         run: cargo test --all-targets --locked
+      - name: Release build
+        working-directory: knossos-rs
+        run: cargo build --release --locked --bin knossos
+
+  field:
+    name: Knossos Field
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: field/package-lock.json
+      - name: Install locked dependencies
+        working-directory: field
+        run: npm ci
+      - name: Security, gameplay, state, asset, and stress suites
+        working-directory: field
+        run: npm test
+      - name: Production build
+        working-directory: field
+        run: npm run build
 
   conformance:
     name: ACP conformance

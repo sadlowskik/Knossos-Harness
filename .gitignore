@@ -19,6 +19,7 @@ checkpoint*.pt
 
 # harness
 .argus/
+.knossos/
 .daedalus/
 *.jsonl
 

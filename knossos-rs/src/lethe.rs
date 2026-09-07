@@ -36,6 +36,8 @@
 
 use crate::engine::{Content, Message};
 
+pub const DEFAULT_MAX_TOKENS: usize = 24_000;
+
 /// Rough token estimate: four characters per token.
 ///
 /// Deliberately the same crude ratio as the Python side, and deliberately an
@@ -75,7 +77,7 @@ pub struct Lethe {
 impl Default for Lethe {
     fn default() -> Self {
         Lethe {
-            max_tokens: 24_000,
+            max_tokens: DEFAULT_MAX_TOKENS,
             keep_recent: 6,
             pin_opening: 1,
         }

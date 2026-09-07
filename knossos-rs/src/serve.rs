@@ -53,6 +53,16 @@ pub enum Command {
     },
     /// Clear the conversation, keep the workspace.
     Reset,
+    /// Report context allocation and durable mission status.
+    State,
+    /// Change this agent's context allocation between turns. Values are
+    /// clamped to the engine/server ceiling.
+    SetContext {
+        #[serde(default)]
+        context_window: Option<u32>,
+        #[serde(default)]
+        compact_at: Option<u32>,
+    },
     /// Put the workspace back as it was before the last turn began.
     ///
     /// The inverse of `Reset`: that keeps the files and drops the conversation,
@@ -144,6 +154,20 @@ pub enum Event {
         hits: Vec<String>,
     },
     Reset,
+    State {
+        engine_context_tokens: Option<u32>,
+        assigned_context_tokens: u32,
+        input_limit_tokens: u32,
+        compact_at_tokens: u32,
+        completion_reserve_tokens: u32,
+        protocol_reserve_tokens: u32,
+        estimated_conversation_tokens: usize,
+        compaction_enabled: bool,
+        mission_id: Option<String>,
+        mission_phase: Option<String>,
+        workspace_revision: Option<u64>,
+        pending_actions: usize,
+    },
     /// Files put back by an `undo`, workspace-relative.
     Undone {
         files: Vec<String>,
@@ -460,6 +484,7 @@ async fn dispatch(
 ) -> Result<()> {
     match command {
         Command::Task { text } => {
+            talos.capture_environment()?;
             let plan = metis::plan(
                 talos.engine.as_ref(),
                 &talos.themis,
@@ -557,6 +582,14 @@ async fn dispatch(
             talos.changed.clear();
             events.send(Event::Reset);
         }
+        Command::State => emit_state(talos, events),
+        Command::SetContext {
+            context_window,
+            compact_at,
+        } => {
+            talos.set_context_limits(context_window, compact_at);
+            emit_state(talos, events);
+        }
         Command::Undo => match talos.undo_turn() {
             Ok(restored) => {
                 let files = restored.iter().map(|p| talos.ctx.display(p)).collect();
@@ -599,6 +632,29 @@ fn finish_turn(talos: &Talos, outcome: &Outcome, events: &Emitter) {
     if outcome.dry_run {
         emit_diffs(talos, events);
     }
+}
+
+fn emit_state(talos: &Talos, events: &Emitter) {
+    let context = talos.context_budget();
+    let mission = talos.mission_state();
+    events.send(Event::State {
+        engine_context_tokens: context.engine_tokens,
+        assigned_context_tokens: context.assigned_tokens,
+        input_limit_tokens: context.input_limit_tokens,
+        compact_at_tokens: if talos.context_policy.compaction_enabled {
+            context.compact_at_tokens
+        } else {
+            0
+        },
+        completion_reserve_tokens: context.completion_reserve,
+        protocol_reserve_tokens: context.protocol_reserve,
+        estimated_conversation_tokens: crate::lethe::estimate_tokens(&talos.messages),
+        compaction_enabled: talos.context_policy.compaction_enabled,
+        mission_id: talos.mission_id().map(str::to_string),
+        mission_phase: mission.map(|state| state.focus.phase.label().to_string()),
+        workspace_revision: mission.map(|state| state.workspace.revision),
+        pending_actions: mission.map_or(0, |state| state.pending_actions.len()),
+    });
 }
 
 fn emit_diffs(talos: &Talos, events: &Emitter) {
@@ -658,6 +714,8 @@ mod tests {
             r#"{"cmd":"index"}"#,
             r#"{"cmd":"index","name":"Adder"}"#,
             r#"{"cmd":"reset"}"#,
+            r#"{"cmd":"state"}"#,
+            r#"{"cmd":"set_context","context_window":8000,"compact_at":6000}"#,
             r#"{"cmd":"undo"}"#,
             r#"{"cmd":"interject","text":"use the existing helper"}"#,
             r#"{"cmd":"shutdown"}"#,

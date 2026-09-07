@@ -84,6 +84,11 @@ pub struct Config {
     /// Ariadne's target mean depth; pressure begins past this point.
     pub target_steps: usize,
     pub max_tokens: u32,
+    /// Per-agent context allocation. `None` derives a safe fraction of the
+    /// engine/server window after discovery.
+    pub context_window: Option<u32>,
+    /// Prompt-token threshold that triggers compaction for this agent.
+    pub compact_at: Option<u32>,
 }
 
 impl Default for Config {
@@ -105,6 +110,8 @@ impl Default for Config {
             max_steps: 20,
             target_steps: 6,
             max_tokens: 8192,
+            context_window: None,
+            compact_at: None,
         }
     }
 }
@@ -141,7 +148,7 @@ impl Config {
                 let model = self
                     .model
                     .clone()
-                    .unwrap_or_else(|| env_or("DAEDALUS_MODEL", anthropic::DEFAULT_MODEL));
+                    .unwrap_or_else(|| model_env_or(anthropic::DEFAULT_MODEL));
                 Ok(Box::new(
                     anthropic::AnthropicEngine::new(key, model)
                         .with_base_url(&self.anthropic_base_url),
@@ -151,7 +158,7 @@ impl Config {
                 let model = self
                     .model
                     .clone()
-                    .unwrap_or_else(|| env_or("DAEDALUS_MODEL", ollama::DEFAULT_MODEL));
+                    .unwrap_or_else(|| model_env_or(ollama::DEFAULT_MODEL));
                 let mut e = ollama::OllamaEngine::new(model)
                     .with_base_url(&self.ollama_base_url)
                     .with_num_ctx(self.ollama_num_ctx)
@@ -213,6 +220,18 @@ impl Config {
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+fn model_env_or(default: &str) -> String {
+    std::env::var("KNOSSOS_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("DAEDALUS_MODEL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// `OLLAMA_HOST` as a base URL, however it was written.

@@ -157,7 +157,7 @@ def test_initialize_reports_capabilities(client):
         "clientInfo": {"name": "test-editor", "version": "1.0"},
     })["result"]
     assert result["protocolVersion"] == PROTOCOL_VERSION
-    assert result["agentInfo"]["name"] == "daedalus"
+    assert result["agentInfo"]["name"] == "knossos"
     # True since session/load was implemented. A capability is a promise:
     # advertising it without the handler makes clients call a method that
     # errors, and hiding a working one means nobody ever calls it.

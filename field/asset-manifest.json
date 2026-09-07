@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "bundle_budget_bytes": 5767168,
+  "assets": [
+    {
+      "path": "assets/mediterranean-relief-v1.png",
+      "sha256": "11e87ff8968a7284d652cc01ac09c4120bf224433a398756b49b5b3c7eee6df7",
+      "purpose": "Roman Field and Atlas map relief",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-26",
+      "transformations": "Exported from ChatGPT/Codex image generation; shipped as the product PNG referenced by Field and Atlas",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    },
+    {
+      "path": "assets/living-rome/capital-tier-3.webp",
+      "sha256": "ede2b22744899afea6fca948d96fd76a16ba6152a4aa08992ebbc46ea0adc99a",
+      "purpose": "Evidence-tier III/IV capital settlement",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-31",
+      "transformations": "Exported from ChatGPT/Codex image generation, background removed as needed; shipped as the product WebP referenced by the capital settlement",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    },
+    {
+      "path": "assets/living-rome/modules/archive.webp",
+      "sha256": "1ada908f9c017fc73ea47b7575ab8a269459c64295c68909434dec7e95ba36a1",
+      "purpose": "Procedural settlement archive module",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-31",
+      "transformations": "Exported from ChatGPT/Codex image generation, background removed as needed; shipped as the product WebP referenced by the archive module",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    },
+    {
+      "path": "assets/living-rome/modules/forum.webp",
+      "sha256": "1f54b79b742982ae740412f40c21a881805ee819f10ad195136c6b48ea0a9ff6",
+      "purpose": "Procedural settlement forum module",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-31",
+      "transformations": "Exported from ChatGPT/Codex image generation, background removed as needed; shipped as the product WebP referenced by the forum module",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    },
+    {
+      "path": "assets/living-rome/modules/gate.webp",
+      "sha256": "0c303fbb5d32070ac4d563f1d66f2b16c9e2a50ffb3d6e128d345e080b150de5",
+      "purpose": "Procedural settlement gate module",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-31",
+      "transformations": "Exported from ChatGPT/Codex image generation, background removed as needed; shipped as the product WebP referenced by the gate module",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    },
+    {
+      "path": "assets/living-rome/modules/works.webp",
+      "sha256": "e3fb93f590a0992d20a4481f7d2c242da8471f0194032352b2f9b9cfc60a578a",
+      "purpose": "Procedural settlement engineering module",
+      "creator": "Korbin Sadlowski",
+      "source": "Generated with ChatGPT/Codex built-in image generation for this repository; owner attestation 2026-09-06",
+      "created": "2026-08-31",
+      "transformations": "Exported from ChatGPT/Codex image generation, background removed as needed; shipped as the product WebP referenced by the engineering-works module",
+      "license": "Apache-2.0",
+      "attribution": "Korbin Sadlowski",
+      "review_status": "APPROVED"
+    }
+  ]
+}

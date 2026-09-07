@@ -109,7 +109,7 @@ impl StepOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Ariadne {
     /// Hard ceiling. Termination is guaranteed by this, nothing else.
     pub max_steps: usize,

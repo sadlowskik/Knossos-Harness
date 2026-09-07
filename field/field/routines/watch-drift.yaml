@@ -1,0 +1,18 @@
+id: watch-drift
+name: Docs drift watch
+enabled: false
+trigger:
+  kind: fs_change
+  workspace: cameo
+  paths: ["core/**/*.rs", "cameod/**/*.rs"]
+  debounce_seconds: 900
+role: scout
+endpoint: anthropic-haiku
+thinking: low
+workspace: cameo
+orders: |
+  Compare docs/architecture.md against the Rust sources that changed. Report only concrete
+  drift: a documented behavior that the code no longer has. Cite file:line on both sides.
+budget_usd: 0.50
+completion:
+  kind: report
