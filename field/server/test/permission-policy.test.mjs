@@ -79,9 +79,9 @@ assert.match(check({
   toolName: 'Bash', input: { command: 'curl https://docs.claude.com' },
   allowedTools: ['Bash'], allowedDomains: ['docs.claude.com'],
 }).message, /network-capable shell/);
-assert.equal(check({
+assert.match(check({
   toolName: 'Read', input: { file_path: '../outside.txt' }, readOnly: true,
-}), null);
+}).message, /escapes/);
 
 assert.deepEqual(
   denyListFor(

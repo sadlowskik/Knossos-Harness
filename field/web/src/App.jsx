@@ -14,7 +14,7 @@ const MODES = [
   { id: 'traces', name: 'Traces', key: 'T' },
 ];
 const FIELD_LENSES = [
-  { id: 'theater', name: 'World', key: 'V' },
+  { id: 'theater', name: 'Board', key: 'V' },
   { id: 'workspace', name: 'City', key: 'C' },
   { id: 'campaigns', name: 'Senate', key: 'S' },
 ];

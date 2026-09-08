@@ -175,6 +175,16 @@ struct LoopArgs {
     environment_export: Option<PathBuf>,
 }
 
+#[derive(clap::Args, Clone, Default)]
+struct RecoveryArgs {
+    /// Retain prompts/tool results in an owner-private portable checkpoint.
+    #[arg(long)]
+    persist_conversation: bool,
+    /// Restore a checkpointed mission before accepting the next turn.
+    #[arg(long)]
+    resume_mission: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Launch Knossos Field, the local Roman multi-agent command surface.
@@ -206,12 +216,8 @@ enum Command {
     /// Plan and execute a task, verifying as it goes.
     Task {
         task: String,
-        /// Retain prompts/tool results in an owner-private portable checkpoint.
-        #[arg(long)]
-        persist_conversation: bool,
-        /// Continue a checkpointed mission; requires the same provider/policy settings.
-        #[arg(long)]
-        resume_mission: Option<String>,
+        #[command(flatten)]
+        recovery: RecoveryArgs,
         #[command(flatten)]
         opts: LoopArgs,
     },
@@ -220,6 +226,8 @@ enum Command {
     Repl {
         /// Optional first task. Omit it to start at the prompt.
         task: Option<String>,
+        #[command(flatten)]
+        recovery: RecoveryArgs,
         #[command(flatten)]
         opts: LoopArgs,
     },
@@ -264,6 +272,8 @@ enum Command {
     /// `--workspace` is ignored here.
     Acp {
         #[command(flatten)]
+        recovery: RecoveryArgs,
+        #[command(flatten)]
         opts: LoopArgs,
     },
 
@@ -272,6 +282,8 @@ enum Command {
     /// Commands in on stdin, events out on stdout, one JSON object per line.
     /// Not meant to be driven by hand — see the VS Code extension.
     Serve {
+        #[command(flatten)]
+        recovery: RecoveryArgs,
         #[command(flatten)]
         opts: LoopArgs,
     },
@@ -295,32 +307,32 @@ async fn main() -> Result<()> {
         max_tokens: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
-            | Command::Serve { opts }
-            | Command::Acp { opts }
+            | Command::Serve { opts, .. }
+            | Command::Acp { opts, .. }
             | Command::Eval { opts, .. } => opts.max_tokens,
             _ => Config::default().max_tokens,
         },
         context_window: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
-            | Command::Serve { opts }
-            | Command::Acp { opts }
+            | Command::Serve { opts, .. }
+            | Command::Acp { opts, .. }
             | Command::Eval { opts, .. } => opts.context_window,
             _ => None,
         },
         compact_at: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
-            | Command::Serve { opts }
-            | Command::Acp { opts }
+            | Command::Serve { opts, .. }
+            | Command::Acp { opts, .. }
             | Command::Eval { opts, .. } => opts.compact_at,
             _ => None,
         },
         ollama_num_ctx: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
-            | Command::Serve { opts }
-            | Command::Acp { opts }
+            | Command::Serve { opts, .. }
+            | Command::Acp { opts, .. }
             | Command::Eval { opts, .. } => Some(opts.num_ctx),
             _ => Config::default().ollama_num_ctx,
         },
@@ -329,8 +341,8 @@ async fn main() -> Result<()> {
         ollama_think: match &cli.command {
             Command::Task { opts, .. }
             | Command::Repl { opts, .. }
-            | Command::Serve { opts }
-            | Command::Acp { opts }
+            | Command::Serve { opts, .. }
+            | Command::Acp { opts, .. }
             | Command::Eval { opts, .. } => opts.no_think.then_some(false),
             _ => Config::default().ollama_think,
         },
@@ -346,21 +358,21 @@ async fn main() -> Result<()> {
         Command::Task {
             ref task,
             ref opts,
-            persist_conversation,
-            ref resume_mission,
-        } => {
-            run_task(
-                &cfg,
-                task,
-                opts,
-                persist_conversation,
-                resume_mission.as_deref(),
-            )
-            .await
-        }
-        Command::Repl { ref task, ref opts } => run_repl(&cfg, task.clone(), opts).await,
-        Command::Serve { ref opts } => run_serve(&cfg, opts).await,
-        Command::Acp { ref opts } => run_acp(&cfg, opts).await,
+            ref recovery,
+        } => run_task(&cfg, task, opts, recovery).await,
+        Command::Repl {
+            ref task,
+            ref opts,
+            ref recovery,
+        } => run_repl(&cfg, task.clone(), opts, recovery).await,
+        Command::Serve {
+            ref opts,
+            ref recovery,
+        } => run_serve(&cfg, opts, recovery).await,
+        Command::Acp {
+            ref opts,
+            ref recovery,
+        } => run_acp(&cfg, opts, recovery).await,
         Command::Eval {
             ref cases,
             ref case_ids,
@@ -696,6 +708,39 @@ fn build_talos_with_quota(
     Ok((talos, trace_path))
 }
 
+fn recovery_requested(recovery: &RecoveryArgs) -> bool {
+    recovery.persist_conversation || recovery.resume_mission.is_some()
+}
+
+fn recovery_identity(cfg: &Config, opts: &LoopArgs) -> String {
+    format!(
+        "{cfg:?};steps={};target={};requests={:?};tokens={:?};concurrency={};memory={};context={};compact={}",
+        opts.max_steps,
+        opts.target_steps,
+        opts.max_requests,
+        opts.max_total_tokens,
+        opts.max_concurrency,
+        !opts.no_memory,
+        !opts.no_context,
+        !opts.no_compaction,
+    )
+}
+
+fn ensure_recovery_supported(root: &Path, opts: &LoopArgs) -> Result<()> {
+    anyhow::ensure!(
+        !opts.delegate
+            && opts.mcp_config.is_none()
+            && !root.join(".knossos/mcp.json").exists()
+            && !root.join(".daedalus/mcp.json").exists(),
+        "conversation restore does not yet support MCP or delegated tools"
+    );
+    anyhow::ensure!(
+        !opts.dry_run,
+        "preview overlays cannot yet be restored from conversation checkpoints"
+    );
+    Ok(())
+}
+
 /// Speak ACP on stdio until the editor goes away.
 ///
 /// Nothing is printed. stdout is the protocol channel, so every announcement
@@ -724,8 +769,12 @@ async fn prefer_cameo(mut cfg: Config) -> Config {
     cfg
 }
 
-async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
+async fn run_acp(cfg: &Config, opts: &LoopArgs, recovery: &RecoveryArgs) -> Result<()> {
     let cfg = prefer_cameo(cfg.clone()).await;
+    anyhow::ensure!(
+        recovery.resume_mission.is_none(),
+        "ACP restores per workspace: start with --persist-conversation and pass resumeMission to session/new"
+    );
     eprintln!(
         "knossos acp — {:?}/{} — waiting for an editor",
         cfg.engine,
@@ -733,6 +782,9 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
     );
 
     let opts = opts.clone();
+    let recovery_identity = recovery
+        .persist_conversation
+        .then(|| recovery_identity(&cfg, &opts));
     let scripted = knossos::engine::mock::MockEngine::from_env();
     let write = std::env::var("KNOSSOS_WRITE").ok().as_deref() == Some("1");
     let execute = std::env::var("KNOSSOS_EXECUTE").ok().as_deref() == Some("1");
@@ -743,6 +795,9 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
         // The editor names the workspace, so everything is built per session
         // rather than once at startup.
         let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        if recovery_identity.is_some() {
+            ensure_recovery_supported(&root, &opts)?;
+        }
         let idx = SymbolIndex::build(&root)?;
         let retrieval = std::sync::Arc::new(Mnemosyne::build(&root, idx.adapter())?);
         let trace = root
@@ -784,6 +839,9 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs) -> Result<()> {
         .with_context_limits(cfg.context_window, cfg.compact_at);
         talos.cancel = cancel;
         talos.approver = Some(approver);
+        if let Some(identity) = &recovery_identity {
+            talos.enable_conversation_checkpoints(identity.clone())?;
+        }
         if !opts.no_context {
             let mut argus = Argus::new(&root);
             argus.scan();
@@ -1274,30 +1332,16 @@ async fn run_task(
     cfg: &Config,
     task: &str,
     opts: &LoopArgs,
-    persist_conversation: bool,
-    resume_mission: Option<&str>,
+    recovery: &RecoveryArgs,
 ) -> Result<()> {
     let cfg = prefer_cameo(cfg.clone()).await;
-    if persist_conversation || resume_mission.is_some() {
-        // Arbitrary MCP programs and delegated runtime state need their own
-        // durable identity/capsule adapters before they can be restored.
-        anyhow::ensure!(
-            !opts.delegate
-                && opts.mcp_config.is_none()
-                && !cfg.workspace_root()?.join(".knossos/mcp.json").exists(),
-            "conversation restore does not yet support MCP or delegated tools"
-        );
-        anyhow::ensure!(
-            !opts.dry_run,
-            "preview overlays cannot yet be restored from conversation checkpoints"
-        );
+    let root = cfg.workspace_root()?;
+    if recovery_requested(recovery) {
+        ensure_recovery_supported(&root, opts)?;
     }
     let (mut talos, trace_path) = build_talos(&cfg, opts, false)?;
-    if persist_conversation || resume_mission.is_some() {
-        let identity = format!("{cfg:?};steps={};target={};requests={:?};tokens={:?};concurrency={};memory={};context={};compact={}",
-            opts.max_steps, opts.target_steps, opts.max_requests, opts.max_total_tokens, opts.max_concurrency,
-            !opts.no_memory, !opts.no_context, !opts.no_compaction);
-        talos.enable_conversation_checkpoints(identity)?;
+    if recovery_requested(recovery) {
+        talos.enable_conversation_checkpoints(recovery_identity(&cfg, opts))?;
     }
     // This occurs before Metis consumes any prompt budget. The record says
     // plainly that this task runs on the host; it is not a sandbox claim.
@@ -1316,7 +1360,7 @@ async fn run_task(
         target_steps: opts.target_steps,
     });
 
-    let outcome = if let Some(mission_id) = resume_mission {
+    let outcome = if let Some(mission_id) = recovery.resume_mission.as_deref() {
         talos.restore_conversation(mission_id)?;
         talos.resume(task).await?
     } else {
@@ -1332,7 +1376,7 @@ async fn run_task(
 
         talos.run(task, &plan).await?
     };
-    if persist_conversation || resume_mission.is_some() {
+    if recovery_requested(recovery) {
         eprintln!(
             "Conversation checkpoint retained for mission {}",
             talos.mission_id().unwrap_or("unknown")
@@ -1367,8 +1411,16 @@ async fn run_task(
     Ok(())
 }
 
-async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
-    let (talos, _) = build_talos(cfg, opts, true)?;
+async fn run_serve(cfg: &Config, opts: &LoopArgs, recovery: &RecoveryArgs) -> Result<()> {
+    let cfg = prefer_cameo(cfg.clone()).await;
+    let root = cfg.workspace_root()?;
+    if recovery_requested(recovery) {
+        ensure_recovery_supported(&root, opts)?;
+    }
+    let (mut talos, _) = build_talos(&cfg, opts, true)?;
+    if recovery_requested(recovery) {
+        talos.enable_conversation_checkpoints(recovery_identity(&cfg, opts))?;
+    }
 
     // The real streams live out here, and only here. `serve::run` takes
     // channels so the protocol can be driven from a test — which is what makes
@@ -1399,11 +1451,12 @@ async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
 
     let writer = tokio::spawn(knossos::serve::write_events(event_rx, std::io::stdout()));
 
-    let result = knossos::serve::run(
+    let result = knossos::serve::run_with_restore(
         talos,
         cfg.max_tokens,
         line_rx,
         knossos::serve::Emitter::new(event_tx),
+        recovery.resume_mission.as_deref(),
     )
     .await;
 
@@ -1414,8 +1467,21 @@ async fn run_serve(cfg: &Config, opts: &LoopArgs) -> Result<()> {
     result
 }
 
-async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result<()> {
-    let (talos, _) = build_talos(cfg, opts, false)?;
+async fn run_repl(
+    cfg: &Config,
+    task: Option<String>,
+    opts: &LoopArgs,
+    recovery: &RecoveryArgs,
+) -> Result<()> {
+    let cfg = prefer_cameo(cfg.clone()).await;
+    let root = cfg.workspace_root()?;
+    if recovery_requested(recovery) {
+        ensure_recovery_supported(&root, opts)?;
+    }
+    let (mut talos, _) = build_talos(&cfg, opts, false)?;
+    if recovery_requested(recovery) {
+        talos.enable_conversation_checkpoints(recovery_identity(&cfg, opts))?;
+    }
 
     talos.session.log(&TraceEvent::TaskStarted {
         task: task.clone().unwrap_or_else(|| "(interactive)".to_string()),
@@ -1425,7 +1491,13 @@ async fn run_repl(cfg: &Config, task: Option<String>, opts: &LoopArgs) -> Result
         target_steps: opts.target_steps,
     });
 
-    repl::run(talos, task, cfg.max_tokens).await
+    repl::run(
+        talos,
+        task,
+        cfg.max_tokens,
+        recovery.resume_mission.as_deref(),
+    )
+    .await
 }
 
 fn init_tracing(verbose: bool) {
@@ -1484,5 +1556,32 @@ mod field_tests {
             Command::Field { dir } => assert_eq!(dir, Some(PathBuf::from("bundle"))),
             _ => panic!("field subcommand parsed as a different command"),
         }
+    }
+
+    #[test]
+    fn durable_recovery_flags_are_available_on_every_interactive_interface() {
+        for args in [
+            vec!["knossos", "task", "work", "--persist-conversation"],
+            vec!["knossos", "repl", "--persist-conversation"],
+            vec!["knossos", "serve", "--persist-conversation"],
+            vec!["knossos", "acp", "--persist-conversation"],
+        ] {
+            let cli = Cli::try_parse_from(args).expect("recovery flags should parse");
+            let recovery = match cli.command {
+                Command::Task { recovery, .. }
+                | Command::Repl { recovery, .. }
+                | Command::Serve { recovery, .. }
+                | Command::Acp { recovery, .. } => recovery,
+                _ => panic!("interactive command parsed as a different command"),
+            };
+            assert!(recovery.persist_conversation);
+        }
+
+        let cli = Cli::try_parse_from(["knossos", "serve", "--resume-mission", "mission-123"])
+            .expect("serve restore flag should parse");
+        let Command::Serve { recovery, .. } = cli.command else {
+            panic!("serve parsed as a different command")
+        };
+        assert_eq!(recovery.resume_mission.as_deref(), Some("mission-123"));
     }
 }

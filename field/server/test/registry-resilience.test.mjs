@@ -34,6 +34,7 @@ const session = {
   endpointId: 'local', model: 'ornith', proc: {},
   pause() { counters.pause++; this.proc = null; },
   resume() { counters.resume++; this.proc = {}; },
+  cancel() { counters.cancel = (counters.cancel ?? 0) + 1; this.proc = null; },
 };
 registry.sessions.set('s1', session);
 registry.meta.set('s1', { budgetUsd: 1, costUsd: 0, campaignId: 'c1', team: 'blue', objectiveId: 'o1' });
@@ -208,3 +209,19 @@ try {
   HarnessSession.prototype.start = directStart;
   direct.shutdown();
 }
+
+const leaving = { id: 'leave-1', cancel() { this.cancelled = true; } };
+registry.sessions.set('leave-1', leaving);
+registry.permissions.set('perm-1', {
+  sessionId: 'leave-1',
+  timer: setTimeout(() => {}, 60_000),
+  resolve(decision) { leaving.decision = decision; },
+});
+const abandoned = registry.abandonOperator();
+assert.ok(abandoned.denied >= 1);
+assert.ok(abandoned.cancelled >= 1);
+assert.equal(leaving.cancelled, true);
+assert.equal(leaving.decision.decision, 'deny');
+assert.equal(registry.permissions.size, 0);
+
+console.log('registry: endpoint failover, budget pause, capability rotation, and operator logout abandon passed');

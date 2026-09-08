@@ -54,7 +54,7 @@ struct Server {
     lines: tokio::sync::mpsc::UnboundedSender<String>,
     events: tokio::sync::mpsc::UnboundedReceiver<Event>,
     handle: tokio::task::JoinHandle<anyhow::Result<()>>,
-    _dir: tempfile::TempDir,
+    _dir: Option<tempfile::TempDir>,
     root: PathBuf,
 }
 
@@ -115,7 +115,56 @@ impl Server {
             lines: line_tx,
             events: event_rx,
             handle,
-            _dir: dir,
+            _dir: Some(dir),
+            root,
+        }
+    }
+
+    fn persistent(
+        root: PathBuf,
+        scripted: Vec<knossos::engine::Response>,
+        restore_mission: Option<String>,
+    ) -> Server {
+        let mut script = Vec::new();
+        if restore_mission.is_none() {
+            script.push(plan_turn());
+        }
+        script.extend(scripted);
+        let trace = root.join("trace.jsonl");
+        let mut talos = Talos::new(
+            Box::new(MockEngine::new(script)),
+            ToolRegistry::standard(),
+            ToolCtx::new(&root),
+            Oracle::new(&root).without_baseline(),
+            SymbolIndex::build(&root).unwrap(),
+            Themis::from_text("Be correct."),
+            Ariadne::new(4, 3),
+            Session::new(&root, "mock").with_trace(&trace).unwrap(),
+            1024,
+            false,
+        );
+        talos
+            .enable_conversation_checkpoints("same-policy".to_string())
+            .unwrap();
+
+        let (line_tx, line_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = tokio::spawn(async move {
+            knossos::serve::run_with_restore(
+                talos,
+                1024,
+                line_rx,
+                Emitter::new(event_tx),
+                restore_mission.as_deref(),
+            )
+            .await
+        });
+
+        Server {
+            lines: line_tx,
+            events: event_rx,
+            handle,
+            _dir: None,
             root,
         }
     }
@@ -630,6 +679,70 @@ async fn context_policy_is_visible_and_mutable_between_server_turns() {
     assert!(compaction_enabled);
     assert!(mission_id.is_none());
     server.until(is_idle).await;
+}
+
+#[tokio::test]
+async fn a_fresh_server_process_can_restore_and_continue_a_checkpointed_mission() {
+    let dir = fixture("passing");
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let mission = {
+        let mut server =
+            Server::persistent(root.clone(), vec![text_response("first answer"); 2], None);
+        assert!(matches!(server.next().await, Event::Ready { .. }));
+        assert!(matches!(server.next().await, Event::Idle));
+        server.send(r#"{"cmd":"task","text":"inspect the workspace"}"#);
+        server.until(is_idle).await;
+        server.send(r#"{"cmd":"state"}"#);
+        let (state, _) = server
+            .until(|event| matches!(event, Event::State { .. }))
+            .await;
+        let Event::State {
+            mission_id: Some(mission),
+            ..
+        } = state
+        else {
+            panic!("checkpointed server did not report a mission id")
+        };
+        server.until(is_idle).await;
+        server.send(r#"{"cmd":"shutdown"}"#);
+        let stopped = tokio::time::timeout(LIMIT, &mut server.handle)
+            .await
+            .expect("first server did not stop")
+            .expect("first server task panicked");
+        stopped.expect("first server failed");
+        mission
+    };
+
+    let mut server = Server::persistent(
+        root,
+        vec![text_response("continued answer"); 2],
+        Some(mission.clone()),
+    );
+    assert!(matches!(server.next().await, Event::Ready { .. }));
+    assert!(matches!(server.next().await, Event::Idle));
+    server.send(r#"{"cmd":"resume","text":"continue from the checkpoint"}"#);
+    let (outcome, seen) = server
+        .until(|event| matches!(event, Event::Outcome { .. }))
+        .await;
+    assert!(
+        matches!(
+            outcome,
+            Event::Outcome {
+                succeeded: true,
+                ..
+            }
+        ),
+        "restored turn failed after {seen:?}"
+    );
+    server.until(is_idle).await;
+    server.send(r#"{"cmd":"state"}"#);
+    let (state, _) = server
+        .until(|event| matches!(event, Event::State { .. }))
+        .await;
+    assert!(
+        matches!(state, Event::State { mission_id: Some(ref id), .. } if id == &mission),
+        "restored server changed mission identity: {state:?}"
+    );
 }
 
 #[tokio::test]

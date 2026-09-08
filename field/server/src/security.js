@@ -143,6 +143,10 @@ export function createControlSecurity({
     }
   }
 
+  function revokeAllHarnessTokens() {
+    harnessCapabilities.clear();
+  }
+
   function networkCheck(req) {
     if (!isLoopbackAddress(req.socket?.remoteAddress)) {
       return denied(403, 'loopback_required', 'Field only accepts loopback clients.');
@@ -259,6 +263,7 @@ export function createControlSecurity({
     bootstrapUrl: `http://127.0.0.1:${port}/?bootstrap=${bootstrapToken}`,
     mintHarnessToken,
     revokeHarnessToken,
+    revokeAllHarnessTokens,
     revokeBrowserSession,
     consumeBootstrap,
     authorizeNetwork: networkCheck,

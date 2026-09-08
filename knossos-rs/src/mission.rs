@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-pub const MISSION_SCHEMA_VERSION: u32 = 1;
+pub const MISSION_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_SNAPSHOT_INTERVAL: u64 = 32;
 pub const MAX_MISSION_EVENT_BYTES: usize = 1024 * 1024;
 pub const MAX_MISSION_STATE_BYTES: usize = 8 * 1024 * 1024;
@@ -109,6 +109,30 @@ pub struct MissionContract {
     pub constraints: Vec<String>,
     pub risk: String,
     pub definition_of_done: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractRevision {
+    pub revision: u64,
+    pub contract: MissionContract,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutcomeDecision {
+    Accepted,
+    Revise,
+    Reverted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DecisionRecord {
+    pub decision: OutcomeDecision,
+    pub reason: String,
+    pub contract_revision: u64,
+    pub workspace_revision: u64,
+    pub checkpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -298,6 +322,12 @@ pub struct MissionState {
     pub schema_version: u32,
     pub identity: MissionIdentity,
     pub contract: MissionContract,
+    #[serde(default)]
+    pub contract_revision: u64,
+    #[serde(default)]
+    pub contract_history: Vec<ContractRevision>,
+    #[serde(default)]
+    pub decisions: Vec<DecisionRecord>,
     pub policy: MissionPolicy,
     pub budget: MissionBudget,
     pub plan: BTreeMap<String, PlanNode>,
@@ -331,7 +361,14 @@ impl MissionState {
                 created_at: chrono::Utc::now().to_rfc3339(),
                 last_safe_checkpoint: None,
             },
-            contract,
+            contract: contract.clone(),
+            contract_revision: 1,
+            contract_history: vec![ContractRevision {
+                revision: 1,
+                contract,
+                reason: "initial contract".into(),
+            }],
+            decisions: Vec::new(),
             policy: MissionPolicy::default(),
             budget: MissionBudget::default(),
             plan: BTreeMap::new(),
@@ -377,6 +414,16 @@ pub enum MissionEvent {
         nodes: Vec<PlanNode>,
         active_node: Option<String>,
         cause: String,
+    },
+    ContractAmended {
+        expected_revision: u64,
+        contract: MissionContract,
+        reason: String,
+    },
+    OutcomeDecided {
+        decision: OutcomeDecision,
+        reason: String,
+        checkpoint: Option<String>,
     },
     ConsequentialIntent {
         intent: ActionIntent,
@@ -551,8 +598,7 @@ impl MissionStore {
         // saved preceding hash is also checked against that event's envelope.
         let last = std::fs::read_to_string(&self.journal)?
             .lines()
-            .filter(|line| !line.trim().is_empty())
-            .last()
+            .rfind(|line| !line.trim().is_empty())
             .map(str::to_owned)
             .context("mission journal is empty")?;
         let event: Envelope = serde_json::from_str(&last)?;
@@ -622,19 +668,19 @@ impl MissionStore {
             if envelope.sequence != sequence + 1 || envelope.previous_hash != last_hash {
                 bail!("mission journal sequence/hash chain is invalid");
             }
-            if envelope_hash(
+            if envelope_hash_for_stored(
                 envelope.sequence,
                 &envelope.at,
                 &envelope.previous_hash,
                 &envelope.event,
+                &envelope.hash,
             )? != envelope.hash
             {
                 bail!("mission journal event hash is invalid");
             }
             match &envelope.event {
                 MissionEvent::Created { state: initial } if state.is_none() => {
-                    validate_state(initial)?;
-                    state = Some(initial.as_ref().clone());
+                    state = Some(migrate_state(initial.as_ref().clone())?);
                 }
                 MissionEvent::Created { .. } => {
                     bail!("mission journal contains a second creation event")
@@ -806,6 +852,79 @@ fn apply_event(state: &mut MissionState, event: &MissionEvent) -> Result<()> {
                 MissionPhase::Blocked | MissionPhase::Cancelled | MissionPhase::Failed
             )
             .then(|| cause.clone());
+        }
+        MissionEvent::ContractAmended {
+            expected_revision,
+            contract,
+            reason,
+        } => {
+            if !matches!(
+                state.focus.phase,
+                MissionPhase::Contract | MissionPhase::Revise
+            ) || *expected_revision != state.contract_revision
+                || contract.outcome.trim().is_empty()
+                || reason.trim().is_empty()
+                || !state.pending_actions.is_empty()
+            {
+                bail!("contract amendment is stale or invalid");
+            }
+            state.contract_revision = state.contract_revision.saturating_add(1);
+            state.contract = contract.clone();
+            state.contract_history.push(ContractRevision {
+                revision: state.contract_revision,
+                contract: contract.clone(),
+                reason: reason.clone(),
+            });
+            for proof in state.verification.required_checks.values_mut() {
+                proof.status = ProofStatus::Invalidated;
+            }
+            state.verification.final_verdict = FinalVerdict::Unverified;
+            state.plan.clear();
+            state.focus.active_node = None;
+        }
+        MissionEvent::OutcomeDecided {
+            decision,
+            reason,
+            checkpoint,
+        } => {
+            if state.focus.phase != MissionPhase::Handoff
+                || reason.trim().is_empty()
+                || !state.pending_actions.is_empty()
+            {
+                bail!("outcome decision requires a safe handoff boundary");
+            }
+            match decision {
+                OutcomeDecision::Accepted if !proofs_current(state) => {
+                    bail!("acceptance requires current independent proof")
+                }
+                OutcomeDecision::Accepted if checkpoint.is_some() => {
+                    bail!("acceptance does not take a rollback checkpoint")
+                }
+                OutcomeDecision::Reverted => {
+                    let id = checkpoint
+                        .as_ref()
+                        .context("revert decision requires a restored checkpoint")?;
+                    if !state.workspace.snapshots.iter().any(|saved| saved == id) {
+                        bail!("revert checkpoint is not part of this mission");
+                    }
+                }
+                OutcomeDecision::Revise if checkpoint.is_some() => {
+                    bail!("revision does not take a rollback checkpoint")
+                }
+                _ => {}
+            }
+            state.decisions.push(DecisionRecord {
+                decision: *decision,
+                reason: reason.clone(),
+                contract_revision: state.contract_revision,
+                workspace_revision: state.workspace.revision,
+                checkpoint: checkpoint.clone(),
+            });
+            state.focus.phase = match decision {
+                OutcomeDecision::Accepted => MissionPhase::Accepted,
+                OutcomeDecision::Revise => MissionPhase::Revise,
+                OutcomeDecision::Reverted => MissionPhase::Reverted,
+            };
         }
         MissionEvent::PlanRevised {
             nodes,
@@ -988,9 +1107,6 @@ fn transition_allowed(from: MissionPhase, to: MissionPhase) -> bool {
             | (Challenge, Verify)
             | (Verify, Replan)
             | (Verify, Handoff)
-            | (Handoff, Accepted)
-            | (Handoff, Revise)
-            | (Handoff, Reverted)
             | (Revise, Plan)
             | (Recovering, Recon)
             | (Paused, Execute)
@@ -1009,6 +1125,12 @@ fn validate_state(state: &MissionState) -> Result<()> {
     if state.contract.outcome.trim().is_empty() {
         bail!("mission outcome cannot be empty");
     }
+    if state.contract_revision == 0
+        || state.contract_history.last().map(|item| item.revision) != Some(state.contract_revision)
+        || state.contract_history.last().map(|item| &item.contract) != Some(&state.contract)
+    {
+        bail!("mission contract history is inconsistent");
+    }
     if serde_json::to_vec(state)?.len() > MAX_MISSION_STATE_BYTES {
         bail!(
             "mission state exceeds its {} byte limit",
@@ -1016,6 +1138,30 @@ fn validate_state(state: &MissionState) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Upgrade provider-neutral state before replaying events after creation.
+/// Version 1 and 2 share a data shape; version 2 changes newly appended journal
+/// and evidence fingerprints from SHA-1 to SHA-256. Unknown versions remain a
+/// hard error so future state is never silently interpreted with old rules.
+fn migrate_state(mut state: MissionState) -> Result<MissionState> {
+    match state.schema_version {
+        MISSION_SCHEMA_VERSION => {}
+        1 => {
+            state.schema_version = MISSION_SCHEMA_VERSION;
+            if state.contract_revision == 0 && state.contract_history.is_empty() {
+                state.contract_revision = 1;
+                state.contract_history.push(ContractRevision {
+                    revision: 1,
+                    contract: state.contract.clone(),
+                    reason: "migrated initial contract".into(),
+                });
+            }
+        }
+        version => bail!("unsupported mission schema version {version}"),
+    }
+    validate_state(&state)?;
+    Ok(state)
 }
 
 fn validate_id(id: &str) -> Result<()> {
@@ -1081,6 +1227,10 @@ fn secure_create_new(path: &Path) -> Result<std::fs::File> {
 }
 
 fn digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", sha2::Sha256::digest(bytes))
+}
+
+fn legacy_digest(bytes: &[u8]) -> String {
     let mut hash = Sha1::new();
     hash.update(bytes);
     format!("sha1:{:x}", hash.finalize())
@@ -1099,6 +1249,21 @@ fn envelope_hash(sequence: u64, at: &str, previous: &str, event: &MissionEvent) 
     Ok(digest(&serde_json::to_vec(&(
         sequence, at, previous, event,
     ))?))
+}
+
+fn envelope_hash_for_stored(
+    sequence: u64,
+    at: &str,
+    previous: &str,
+    event: &MissionEvent,
+    stored: &str,
+) -> Result<String> {
+    let bytes = serde_json::to_vec(&(sequence, at, previous, event))?;
+    match stored.split_once(':').map(|(algorithm, _)| algorithm) {
+        Some("sha1") => Ok(legacy_digest(&bytes)),
+        Some("sha256") => Ok(digest(&bytes)),
+        _ => bail!("mission journal uses an unsupported hash algorithm"),
+    }
 }
 
 #[cfg(test)]
@@ -1320,5 +1485,179 @@ mod tests {
             .err()
             .expect("legacy mission must not resume");
         assert!(error.to_string().contains("lacks environment evidence"));
+    }
+
+    #[test]
+    fn v1_journal_migrates_in_memory_and_new_events_use_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_environment(dir.path(), "mission-v1");
+        let store = MissionStore::create(dir.path(), state).unwrap();
+        let line = std::fs::read_to_string(&store.journal).unwrap();
+        let mut envelope: Envelope = serde_json::from_str(line.trim()).unwrap();
+        let MissionEvent::Created { state } = &mut envelope.event else {
+            panic!("first event is creation")
+        };
+        state.schema_version = 1;
+        envelope.hash = legacy_digest(
+            &serde_json::to_vec(&(
+                envelope.sequence,
+                &envelope.at,
+                &envelope.previous_hash,
+                &envelope.event,
+            ))
+            .unwrap(),
+        );
+        std::fs::write(
+            &store.journal,
+            format!("{}\n", serde_json::to_string(&envelope).unwrap()),
+        )
+        .unwrap();
+
+        let mut migrated = MissionStore::open(dir.path(), "mission-v1").unwrap();
+        assert_eq!(migrated.state().schema_version, MISSION_SCHEMA_VERSION);
+        migrated
+            .append(MissionEvent::Transition {
+                from: MissionPhase::Intake,
+                to: MissionPhase::Recon,
+                cause: "resume migrated mission".into(),
+            })
+            .unwrap();
+        let last = std::fs::read_to_string(&store.journal)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap()
+            .to_string();
+        let current: Envelope = serde_json::from_str(&last).unwrap();
+        assert!(current.hash.starts_with("sha256:"));
+        assert_eq!(
+            MissionStore::open(dir.path(), "mission-v1")
+                .unwrap()
+                .sequence(),
+            2
+        );
+    }
+
+    #[test]
+    fn unknown_created_state_schema_is_refused_even_with_a_valid_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_with_environment(dir.path(), "mission-future");
+        let store = MissionStore::create(dir.path(), state).unwrap();
+        let line = std::fs::read_to_string(&store.journal).unwrap();
+        let mut envelope: Envelope = serde_json::from_str(line.trim()).unwrap();
+        let MissionEvent::Created { state } = &mut envelope.event else {
+            panic!("first event is creation")
+        };
+        state.schema_version = 99;
+        envelope.hash = envelope_hash(
+            envelope.sequence,
+            &envelope.at,
+            &envelope.previous_hash,
+            &envelope.event,
+        )
+        .unwrap();
+        std::fs::write(
+            &store.journal,
+            format!("{}\n", serde_json::to_string(&envelope).unwrap()),
+        )
+        .unwrap();
+        let error = MissionStore::open(dir.path(), "mission-future")
+            .err()
+            .expect("future schema must fail closed");
+        assert!(error.to_string().contains("unsupported mission schema"));
+    }
+
+    fn handoff_state(id: &str) -> MissionState {
+        let mut state = MissionState::new(id, contract(), "workspace-a").unwrap();
+        state.focus.phase = MissionPhase::Handoff;
+        state.workspace.snapshots.push("handoff-0".into());
+        state.verification.final_verdict = FinalVerdict::Verified;
+        state.verification.required_checks.insert(
+            "tests".into(),
+            ProofRecord {
+                id: "tests".into(),
+                status: ProofStatus::Passed,
+                bound_revision: Some(0),
+                evidence_id: Some("evidence-1".into()),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn accept_revise_and_revert_are_explicit_revision_bound_decisions() {
+        let accepted_dir = tempfile::tempdir().unwrap();
+        let mut accepted =
+            MissionStore::create(accepted_dir.path(), handoff_state("mission-accept")).unwrap();
+        accepted
+            .append(MissionEvent::OutcomeDecided {
+                decision: OutcomeDecision::Accepted,
+                reason: "operator reviewed proof".into(),
+                checkpoint: None,
+            })
+            .unwrap();
+        assert_eq!(accepted.state().focus.phase, MissionPhase::Accepted);
+        assert_eq!(accepted.state().decisions[0].workspace_revision, 0);
+
+        let revised_dir = tempfile::tempdir().unwrap();
+        let mut revised =
+            MissionStore::create(revised_dir.path(), handoff_state("mission-revise")).unwrap();
+        revised
+            .append(MissionEvent::OutcomeDecided {
+                decision: OutcomeDecision::Revise,
+                reason: "scope changed".into(),
+                checkpoint: None,
+            })
+            .unwrap();
+        let mut contract = revised.state().contract.clone();
+        contract.definition_of_done.push("new check".into());
+        revised
+            .append(MissionEvent::ContractAmended {
+                expected_revision: 1,
+                contract,
+                reason: "operator added a check".into(),
+            })
+            .unwrap();
+        assert_eq!(revised.state().contract_revision, 2);
+        assert_eq!(revised.state().contract_history.len(), 2);
+        assert_eq!(
+            revised.state().verification.final_verdict,
+            FinalVerdict::Unverified
+        );
+
+        let reverted_dir = tempfile::tempdir().unwrap();
+        let mut reverted =
+            MissionStore::create(reverted_dir.path(), handoff_state("mission-revert")).unwrap();
+        reverted
+            .append(MissionEvent::OutcomeDecided {
+                decision: OutcomeDecision::Reverted,
+                reason: "operator rejected the delivered change".into(),
+                checkpoint: Some("handoff-0".into()),
+            })
+            .unwrap();
+        assert_eq!(reverted.state().focus.phase, MissionPhase::Reverted);
+    }
+
+    #[test]
+    fn decisions_fail_closed_without_proof_or_a_known_restore_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = handoff_state("mission-refuse-decision");
+        state.verification.final_verdict = FinalVerdict::Unverified;
+        let mut store = MissionStore::create(dir.path(), state).unwrap();
+        assert!(store
+            .append(MissionEvent::OutcomeDecided {
+                decision: OutcomeDecision::Accepted,
+                reason: "accept anyway".into(),
+                checkpoint: None,
+            })
+            .is_err());
+        assert!(store
+            .append(MissionEvent::OutcomeDecided {
+                decision: OutcomeDecision::Reverted,
+                reason: "revert".into(),
+                checkpoint: Some("unknown".into()),
+            })
+            .is_err());
+        assert_eq!(store.state().focus.phase, MissionPhase::Handoff);
     }
 }

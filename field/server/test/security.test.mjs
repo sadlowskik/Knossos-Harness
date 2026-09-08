@@ -175,12 +175,13 @@ assert.equal(security.authorizeRequest(request({
   method: 'POST', authorization: `Bearer ${internalToken}`, contentType: 'application/json',
 }), internalUrl).status, 401);
 
-const preservedHarness = security.mintHarnessToken('still-running');
+const leftoverHarness = security.mintHarnessToken('still-running');
 assert.match(security.revokeBrowserSession(), /Max-Age=0/);
+security.revokeAllHarnessTokens();
 assert.equal(security.authorizeRequest(request({ cookie }), mutatingUrl).status, 401);
 assert.equal(security.authorizeUpgrade(request({ cookie, origin: `http://127.0.0.1:${port}` }), wsUrl).status, 401);
 assert.equal(security.consumeBootstrap(request(), root).status, 410);
-assert.equal(security.authorizeRequest(request({ method: 'POST', authorization: `Bearer ${preservedHarness}`, contentType: 'application/json' }), internalUrl).sessionId, 'still-running');
+assert.equal(security.authorizeRequest(request({ method: 'POST', authorization: `Bearer ${leftoverHarness}`, contentType: 'application/json' }), internalUrl).status, 401);
 let clock = 0;
 const expiring = createControlSecurity({ port, now: () => clock, bootstrapTtlMs: 100, bootstrapToken: 'expires' });
 clock = 100;

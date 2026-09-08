@@ -79,8 +79,8 @@ operator-local interface, not a public API.
 
 ## Control reference
 
-Selection and command follow RTS convention, because operating twenty agents needs the
-grammar RTS solved decades ago.
+Atlas (default) is a parallel board: one column per live agent, grouped by workspace.
+Rome is the operations map. Selection and command on the map follow RTS convention.
 
 | Input | Action |
 |---|---|

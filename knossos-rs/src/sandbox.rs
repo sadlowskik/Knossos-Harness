@@ -468,6 +468,7 @@ mod tests {
             ("RUSTUP_TOOLCHAIN", "stable"),
             ("RUST_BACKTRACE", "1"),
             ("ANTHROPIC_API_KEY", "sk-ant-should-never-appear"),
+            ("CAMEO_CONSOLE_KEY", "cameo-operator-should-never-appear"),
             ("OPENAI_API_KEY", "sk-should-never-appear"),
             ("AWS_SECRET_ACCESS_KEY", "should-never-appear"),
             ("GITHUB_TOKEN", "ghp_should-never-appear"),
@@ -483,6 +484,7 @@ mod tests {
         // `cargo test` runs code the agent wrote.
         let env = Sandbox::default().env_for(realistic());
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!env.contains_key("CAMEO_CONSOLE_KEY"));
     }
 
     #[test]

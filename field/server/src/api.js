@@ -22,6 +22,7 @@ import {
   TERMINAL_LIMITS,
   validateTerminalCommand,
 } from './terminal-policy.js';
+import { buildChildEnvironment } from './child-env.js';
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const EVENT_PAGE_DEFAULT = 2000;
@@ -300,7 +301,11 @@ export function createApi({ cfg, projection, registry, director, simulator, rout
     // Called by the permission MCP server running inside a harness session.
     // Holds the request open until an operator decides.
     'POST /api/internal/permission': async (body, _url, req) =>
-      registry.requestPermission({ ...body, capabilitySessionId: req.fieldAuth?.sessionId }),
+      registry.requestPermission({
+        ...body,
+        sessionId: req.fieldAuth?.sessionId ?? body.sessionId,
+        capabilitySessionId: req.fieldAuth?.sessionId,
+      }),
 
     'GET /api/events': async (_b, url) => {
       const page = parseEventPage(url);
@@ -390,6 +395,7 @@ export function createApi({ cfg, projection, registry, director, simulator, rout
 
       const proc = spawn(shell, args, {
         cwd,
+        env: buildChildEnvironment(),
         detached: process.platform !== 'win32',
         windowsHide: true,
       });
@@ -402,7 +408,7 @@ export function createApi({ cfg, projection, registry, director, simulator, rout
       }, TERMINAL_LIMITS.timeoutMs);
       terminals.set(id, { proc, timer });
 
-      broadcast({ type: 'terminal', id, stream: 'meta', data: `[${body.ws}:${body.cwd || '.'}] $ ${command}\n` });
+      broadcast({ type: 'terminal', id, stream: 'meta', data: `[${body.ws}:${body.cwd || '.'}] $ ${redactCommand(command)}\n` });
       const forward = (stream) => (chunk) => {
         const accepted = output.accept(chunk);
         if (accepted.text) broadcast({ type: 'terminal', id, stream, data: accepted.text });

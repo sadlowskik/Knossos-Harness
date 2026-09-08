@@ -1,7 +1,7 @@
-const STORAGE_KEY = 'knossos.field.presentation.v2';
+const STORAGE_KEY = 'knossos.field.presentation.v3';
 
 export const DEFAULT_FIELD_SETTINGS = Object.freeze({
-  theme: 'rome',
+  theme: 'atlas',
   identityMode: 'both',
   markerMode: 'both',
   emblemSource: 'auto',

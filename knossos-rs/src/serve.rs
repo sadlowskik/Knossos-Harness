@@ -69,6 +69,14 @@ pub enum Command {
     /// this keeps the conversation and drops the files. Dispatched normally —
     /// there is no turn running to undo while a turn is running.
     Undo,
+    /// Accept the current independently verified mission handoff.
+    Accept {
+        reason: String,
+    },
+    /// Revert the last delivered turn and close the mission as reverted.
+    Revert {
+        reason: String,
+    },
     /// What this front end can do. Send before anything else.
     ///
     /// **Permission gating is opt-in, and it has to be.** A front end that does
@@ -170,6 +178,11 @@ pub enum Event {
     },
     /// Files put back by an `undo`, workspace-relative.
     Undone {
+        files: Vec<String>,
+    },
+    MissionDecision {
+        decision: String,
+        phase: String,
         files: Vec<String>,
     },
     Error {
@@ -413,10 +426,20 @@ fn deny_outstanding(pending: &Pending) {
 /// handshake something that can be *proved* not to deadlock rather than hoped
 /// about.
 pub async fn run(
+    talos: Talos,
+    max_tokens: u32,
+    lines: tokio::sync::mpsc::UnboundedReceiver<String>,
+    events: Emitter,
+) -> Result<()> {
+    run_with_restore(talos, max_tokens, lines, events, None).await
+}
+
+pub async fn run_with_restore(
     mut talos: Talos,
     max_tokens: u32,
     lines: tokio::sync::mpsc::UnboundedReceiver<String>,
     events: Emitter,
+    restore_mission: Option<&str>,
 ) -> Result<()> {
     let pending: Pending = Default::default();
     let gating = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -426,6 +449,12 @@ pub async fn run(
         next_id: std::sync::atomic::AtomicU64::new(1),
         enabled: gating.clone(),
     }));
+    if let Some(mission_id) = restore_mission {
+        // Restore only after the front-end approval policy is attached. Approval
+        // presence is part of the checkpoint policy hash; restoring before this
+        // point would compare a governed checkpoint with an unattended executor.
+        talos.restore_conversation(mission_id)?;
+    }
 
     events.send(Event::Ready {
         workspace: talos.oracle.root().display().to_string(),
@@ -601,6 +630,22 @@ async fn dispatch(
                 message: format!("{e:#}"),
             }),
         },
+        Command::Accept { reason } => {
+            talos.accept_mission(reason)?;
+            events.send(Event::MissionDecision {
+                decision: "accepted".into(),
+                phase: "accepted".into(),
+                files: Vec::new(),
+            });
+        }
+        Command::Revert { reason } => {
+            let restored = talos.revert_mission(reason)?;
+            events.send(Event::MissionDecision {
+                decision: "reverted".into(),
+                phase: "reverted".into(),
+                files: restored.iter().map(|path| rel(talos, path)).collect(),
+            });
+        }
         // Both are intercepted before they get here: `Shutdown` by the loop,
         // `Permission` by the router. Reaching either would mean a reply was
         // queued behind the very command that is waiting for it — the deadlock
@@ -717,6 +762,8 @@ mod tests {
             r#"{"cmd":"state"}"#,
             r#"{"cmd":"set_context","context_window":8000,"compact_at":6000}"#,
             r#"{"cmd":"undo"}"#,
+            r#"{"cmd":"accept","reason":"reviewed the proof"}"#,
+            r#"{"cmd":"revert","reason":"the result is not wanted"}"#,
             r#"{"cmd":"interject","text":"use the existing helper"}"#,
             r#"{"cmd":"shutdown"}"#,
         ];

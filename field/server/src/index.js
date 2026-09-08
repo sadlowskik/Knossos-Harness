@@ -171,10 +171,12 @@ const server = http.createServer(async (req, res) => {
   req.fieldAuth = auth;
 
   if (req.method === 'POST' && url.pathname === '/api/logout') {
+    const abandoned = registry.abandonOperator();
+    security.revokeAllHarnessTokens();
     res.setHeader('set-cookie', security.revokeBrowserSession());
     hub.revokeClients();
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true }));
+    return res.end(JSON.stringify({ ok: true, ...abandoned }));
   }
 
   // Routine toggling needs the live routine controller, so it is handled here.
@@ -208,7 +210,11 @@ const server = http.createServer(async (req, res) => {
   if (fs.existsSync(DIST_DIR)) {
     const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
     const file = path.resolve(DIST_DIR, rel);
-    if (file.startsWith(DIST_DIR) && fs.existsSync(file) && fs.statSync(file).isFile()) {
+    const distRoot = path.resolve(DIST_DIR);
+    const distKey = process.platform === 'win32' ? distRoot.toLowerCase() : distRoot;
+    const fileKey = process.platform === 'win32' ? file.toLowerCase() : file;
+    const insideDist = fileKey === distKey || fileKey.startsWith(distKey + path.sep);
+    if (insideDist && fs.existsSync(file) && fs.statSync(file).isFile()) {
       res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
       return fs.createReadStream(file).pipe(res);
     }

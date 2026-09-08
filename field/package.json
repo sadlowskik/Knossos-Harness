@@ -2,7 +2,7 @@
   "name": "knossos-field",
   "version": "0.1.0",
   "private": true,
-  "description": "Field â€” a real multi-agent operating environment with RTS command semantics.",
+  "description": "Field — multi-agent operator: Atlas parallel workspaces, Rome operations map.",
   "type": "module",
   "workspaces": [
     "server",

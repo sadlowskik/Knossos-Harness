@@ -35,6 +35,19 @@ assert.ok(events.some(([kind, data]) => kind === 'harness.permission_requested' 
 
 session.decidePermission(7, 'allow');
 assert.deepEqual(writes.at(-1), { cmd: 'permission', id: 7, allow: true });
+assert.equal(session.buildArgs().includes('--dry-run'), false);
+const readOnly = new KnossosSession({
+  id: 'k2', agentId: 'reviewer', name: 'Reviewer', role: 'reviewer',
+  cwd: process.cwd(), workspaceId: 'cameo', engine: 'cameo', readOnly: true,
+});
+assert.ok(readOnly.buildArgs().includes('--dry-run'));
+const snapshot = new KnossosSession({
+  id: 'k3', agentId: 'reviewer', name: 'Reviewer', role: 'reviewer',
+  cwd: process.cwd(), workspaceId: 'cameo', engine: 'cameo',
+  environmentScope: 'production-readonly',
+});
+assert.ok(snapshot.buildArgs().includes('--dry-run'));
+
 assert.ok(
   /(?:knossos|daedalus)(?:\.exe)?$/.test(resolveKnossosBinary()),
   'the adapter resolves the Knossos binary or the v0.1 compatibility name',

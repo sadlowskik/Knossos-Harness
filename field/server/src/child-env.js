@@ -10,6 +10,21 @@ const PROVIDER_KEYS = {
   anthropic: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
 };
 
+/** Operator credentials that must never reach a harness child, even if listed. */
+const PRIVILEGED_NEVER = new Set([
+  'CAMEO_CONSOLE_KEY',
+  'CAMEO_UPDATE_PRIVATE_PEM',
+  'CAMEO_UPDATE_PRIVATE',
+  'SSH_AUTH_SOCK',
+  'SSH_PRIVATE_KEY',
+]);
+
+function isPrivilegedEnvKey(key) {
+  const name = String(key ?? '').toUpperCase();
+  if (PRIVILEGED_NEVER.has(name)) return true;
+  return name.startsWith('CAMEO_') && (name.includes('KEY') || name.includes('PRIVATE') || name.includes('SECRET') || name.includes('TOKEN'));
+}
+
 function sourceValue(source, wanted) {
   if (process.platform !== 'win32') return source[wanted];
   const found = Object.keys(source).find((key) => key.toLowerCase() === wanted.toLowerCase());
@@ -30,11 +45,13 @@ export function buildChildEnvironment({
     ...explicitKeys.map(String),
   ]);
   for (const key of keys) {
+    if (isPrivilegedEnvKey(key)) continue;
     const value = sourceValue(source, key);
     if (value != null && value !== '') result[key] = value;
   }
   for (const [key, value] of Object.entries(overrides)) {
-    if (value != null) result[key] = String(value);
+    if (value == null || isPrivilegedEnvKey(key)) continue;
+    result[key] = String(value);
   }
   return result;
 }

@@ -48,6 +48,8 @@ export class KnossosSession extends EventEmitter {
     this.env = opts.env ?? {};
     this.engine = opts.engine ?? 'cameo';
     this.providerKind = opts.providerKind;
+    this.readOnly = opts.readOnly === true;
+    this.environmentScope = opts.environmentScope ?? null;
     this.credentialEnvKeys = opts.credentialEnvKeys ?? [];
 
     this.proc = null;
@@ -64,6 +66,9 @@ export class KnossosSession extends EventEmitter {
   buildArgs() {
     const args = ['serve', '--workspace', this.cwd, '--engine', this.engine];
     if (this.model) args.push('--model', this.model);
+    if (this.readOnly || ['snapshot', 'production-readonly'].includes(this.environmentScope)) {
+      args.push('--dry-run');
+    }
     return args;
   }
 

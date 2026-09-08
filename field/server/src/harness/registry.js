@@ -216,6 +216,8 @@ export class Registry {
       workspaces: this.cfg.workspaces,
       engine: ep?.kind === 'openai-compatible' ? 'cameo' : 'anthropic',
       providerKind: ep?.kind,
+      readOnly: role?.read_only === true,
+      environmentScope: environmentScope ?? null,
       credentialEnvKeys: Array.isArray(ep?.credential_env)
         ? ep.credential_env
         : ep?.credential_env ? [ep.credential_env] : [],
@@ -765,9 +767,7 @@ export class Registry {
   // ---------------------------------------------------------------- permissions
 
   requestPermission({ sessionId, toolName, input, toolUseId, capabilitySessionId }) {
-    if (capabilitySessionId && capabilitySessionId !== sessionId) {
-      throw new Error('permission capability does not belong to this session');
-    }
+    if (capabilitySessionId) sessionId = capabilitySessionId;
     const permissionId = randomUUID();
     this.emit('permission.requested', {
       permissionId, sessionId, toolName, input, toolUseId,
@@ -811,6 +811,19 @@ export class Registry {
 
       this.permissions.set(permissionId, { resolve, sessionId, timer });
     });
+  }
+
+  abandonOperator() {
+    const pending = [...this.permissions.keys()];
+    for (const permissionId of pending) {
+      this.decidePermission(permissionId, 'deny', 'Operator signed out.');
+    }
+    const running = [...this.sessions.keys()];
+    for (const sessionId of running) {
+      this.permissionCapabilities?.revoke?.(sessionId);
+      this.sessions.get(sessionId)?.cancel?.();
+    }
+    return { denied: pending.length, cancelled: running.length };
   }
 
   decidePermission(permissionId, decision, message) {
@@ -959,7 +972,7 @@ export function evaluatePermissionPolicy({
     }
   }
 
-  if (mutating && candidate && workspacePath) {
+  if (candidate && workspacePath) {
     const root = path.resolve(workspacePath);
     const resolved = path.resolve(root, String(candidate));
     const rootKey = process.platform === 'win32' ? root.toLowerCase() : root;

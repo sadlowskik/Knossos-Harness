@@ -30,7 +30,7 @@ use crate::episode::{self, EpisodeStore, Record};
 use crate::metis::Plan;
 use crate::mission::{
     evidence_digest, ActionIntent, EnvironmentRecord, FinalVerdict, MissionContract, MissionEvent,
-    MissionPhase, MissionState, MissionStore, PlanNode, ProofRecord, ProofStatus,
+    MissionPhase, MissionState, MissionStore, OutcomeDecision, PlanNode, ProofRecord, ProofStatus,
 };
 use crate::oracle::{Oracle, Verdict};
 use crate::scribe::SymbolIndex;
@@ -325,6 +325,51 @@ impl Talos {
 
     pub fn mission_id(&self) -> Option<&str> {
         self.mission.as_ref().map(MissionStore::mission_id)
+    }
+
+    /// Accept a verified handoff. The decision is journaled against the exact
+    /// contract and workspace revisions rather than inferred from a new prompt.
+    pub fn accept_mission(&mut self, reason: impl Into<String>) -> Result<()> {
+        let reason = reason.into();
+        anyhow::ensure!(!reason.trim().is_empty(), "acceptance reason is required");
+        anyhow::ensure!(
+            self.mission
+                .as_ref()
+                .is_some_and(|mission| mission.state().focus.phase == MissionPhase::Handoff),
+            "accept requires a mission at handoff"
+        );
+        self.append_mission(MissionEvent::OutcomeDecided {
+            decision: OutcomeDecision::Accepted,
+            reason,
+            checkpoint: None,
+        })
+    }
+
+    /// Revert the last delivered turn and journal the decision only after the
+    /// workspace rewind succeeds. A restarted executor has no in-memory file
+    /// undo log and therefore fails closed instead of pretending to revert.
+    pub fn revert_mission(&mut self, reason: impl Into<String>) -> Result<Vec<PathBuf>> {
+        let reason = reason.into();
+        anyhow::ensure!(!reason.trim().is_empty(), "revert reason is required");
+        anyhow::ensure!(
+            self.mission
+                .as_ref()
+                .is_some_and(|mission| mission.state().focus.phase == MissionPhase::Handoff),
+            "revert requires a mission at handoff"
+        );
+        let checkpoint = self
+            .mission
+            .as_ref()
+            .and_then(|mission| mission.state().workspace.snapshots.last())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("mission has no safe handoff checkpoint"))?;
+        let restored = self.undo_turn()?;
+        self.append_mission(MissionEvent::OutcomeDecided {
+            decision: OutcomeDecision::Reverted,
+            reason,
+            checkpoint: Some(checkpoint),
+        })?;
+        Ok(restored)
     }
 
     /// Attach a bounded host/container fingerprint captured before planning.
@@ -871,7 +916,29 @@ impl Talos {
         };
         match phase {
             MissionPhase::Handoff => {
-                self.transition_mission(MissionPhase::Revise, "operator requested a revision")?;
+                self.append_mission(MissionEvent::OutcomeDecided {
+                    decision: OutcomeDecision::Revise,
+                    reason: instruction.to_string(),
+                    checkpoint: None,
+                })?;
+                let (expected_revision, mut contract) = self
+                    .mission
+                    .as_ref()
+                    .map(|mission| {
+                        (
+                            mission.state().contract_revision,
+                            mission.state().contract.clone(),
+                        )
+                    })
+                    .expect("handoff phase has a mission");
+                contract
+                    .constraints
+                    .push(format!("operator revision: {instruction}"));
+                self.append_mission(MissionEvent::ContractAmended {
+                    expected_revision,
+                    contract,
+                    reason: "operator revised the delivered outcome".into(),
+                })?;
             }
             MissionPhase::Verify => {
                 self.transition_mission(MissionPhase::Replan, "verification needed revision")?;

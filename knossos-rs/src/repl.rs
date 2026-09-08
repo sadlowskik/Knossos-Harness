@@ -158,13 +158,23 @@ fn describe(tool: &str, input: &serde_json::Value) -> String {
     }
 }
 
-pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> Result<()> {
+pub async fn run(
+    mut talos: Talos,
+    initial: Option<String>,
+    max_tokens: u32,
+    restore_mission: Option<&str>,
+) -> Result<()> {
     let pending: Pending = Default::default();
     let busy = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     talos.approver = Some(std::sync::Arc::new(PromptApprover {
         pending: pending.clone(),
     }));
+    if let Some(mission_id) = restore_mission {
+        // The prompt approver is part of the policy identity, so attach it before
+        // comparing the checkpoint hash.
+        talos.restore_conversation(mission_id)?;
+    }
 
     // One reader owns stdin for the whole session. On its own thread because
     // `read_line` blocks for as long as the user takes to type, which is not
@@ -204,7 +214,14 @@ pub async fn run(mut talos: Talos, initial: Option<String>, max_tokens: u32) -> 
 
     if let Some(task) = initial {
         busy.store(true, std::sync::atomic::Ordering::Relaxed);
-        let started = first_task(&mut talos, &task, max_tokens).await;
+        let started = if restore_mission.is_some() {
+            talos
+                .resume(&task)
+                .await
+                .map(|outcome| report(&talos, &outcome))
+        } else {
+            first_task(&mut talos, &task, max_tokens).await
+        };
         busy.store(false, std::sync::atomic::Ordering::Relaxed);
         started?;
     }
