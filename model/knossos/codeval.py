@@ -29,8 +29,8 @@ bug and breaks the suite is not a smaller success; it is a different failure.
 
 # Anti-gaming
 
-Grading by "run the tests" invites the obvious cheat: edit the tests. Two
-defences, and the first is the one that matters.
+Grading by "run the tests" invites several obvious cheats. The grader closes
+the ones it can structurally instead of hoping the evaluated agent behaves.
 
 **Test files are restored before grading.** Whatever the agent did to
 `tests/`, the originals are written back before pytest runs. An agent that
@@ -38,8 +38,17 @@ deletes the failing test, weakens its assertion, or adds a passing duplicate
 gains exactly nothing -- the graded run uses the fixture's tests. This is
 `restore_tests`, and it is not optional.
 
+**The Python process is isolated from the fixture.** Safe-path startup, ignored
+Python environment variables, disabled plugin autoload, an empty pytest config,
+and `--noconftest` prevent workspace files from redefining how grading starts
+or interprets tests.
+
 **Node ids, not exit codes.** Each expectation names a specific test. A deleted
 or renamed test does not "pass", it fails to collect, which is a failure.
+
+**Added product files count as changes.** No-op and clarification cases cannot
+be gamed by leaving the original files untouched while adding a second
+implementation elsewhere.
 
 `tamper` records whether the agent touched the test files even though it did not
 help, because an agent that repeatedly tries is worth knowing about separately
@@ -57,6 +66,7 @@ for what the harness will and will not claim.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1114,6 +1124,14 @@ def restore_tests(case: CodingCase, root: Path) -> bool:
     is worth being able to see.
     """
     tampered = False
+    expected = set(case.test_files)
+    tests = root / "tests"
+    if tests.exists():
+        for path in sorted(item for item in tests.rglob("*") if item.is_file()):
+            rel = path.relative_to(root).as_posix()
+            if rel not in expected:
+                tampered = True
+                path.unlink()
     for rel in case.test_files:
         path = root / rel
         original = case.files[rel]
@@ -1147,8 +1165,17 @@ def _pytest(root: Path, node_ids: Sequence[str]) -> bool:
     try:
         # The sharpest instance of the leak this guards: these are tests an
         # agent wrote, run by the eval loop, and their stdout is graded.
+        # Import pytest before putting the fixture root on sys.path, then add
+        # that root explicitly so its product modules remain importable.
+        bootstrap = (
+            "import os,sys; "
+            "os.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'; "
+            "import pytest; sys.path.insert(0,os.getcwd()); "
+            "raise SystemExit(pytest.main())"
+        )
         proc = sandbox.DEFAULT.run(
-            [sys.executable, "-m", "pytest", *node_ids, "-q", "--no-header",
+            [sys.executable, "-E", "-P", "-c", bootstrap, *node_ids, "-q",
+             "--no-header", "-c", os.devnull, "--noconftest",
              "-p", "no:cacheprovider"],
             cwd=root, timeout=TEST_TIMEOUT)
         return proc.returncode == 0
@@ -1213,6 +1240,16 @@ def grade(case: CodingCase, root: Path, tampered: bool,
             not (root / rel).is_file()
             or (root / rel).read_text(encoding="utf-8") != original)
     ]
+    known = set(case.files)
+    ignored = {".knossos", ".pytest_cache", "__pycache__", "target"}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if (rel.startswith("tests/") or rel in known
+                or any(part in ignored for part in Path(rel).parts)):
+            continue
+        changed_files.append(rel)
     action_passed = _action_verdict(
         case.expected_action, changed_files, agent_response)
     return {

@@ -136,6 +136,60 @@ def test_restoring_an_untouched_suite_reports_no_tamper(case, tmp_path):
     assert restore_tests(case, root) is False
 
 
+def test_added_test_files_are_removed_and_reported(case, tmp_path):
+    root = tmp_path / "w"
+    materialise(case, root)
+    added = root / "tests" / "test_always_green.py"
+    added.write_text("def test_green(): assert True\n", encoding="utf-8")
+
+    assert restore_tests(case, root) is True
+    assert not added.exists()
+
+
+def test_added_product_files_count_as_changes(tmp_path):
+    no_op = CodingCase(
+        id="no-op",
+        prompt="report whether a change is needed",
+        files={"pkg.py": "VALUE = 1\n"},
+        fail_to_pass=[],
+        expected_action="no_op",
+    )
+    root = tmp_path / "w"
+    materialise(no_op, root)
+    (root / "replacement.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    verdict = grade(no_op, root, tampered=False)
+
+    assert verdict["changed_files"] == ["replacement.py"]
+    assert not verdict["action_passed"]
+    assert not verdict["passed"]
+
+
+def test_pytest_isolated_from_workspace_hooks(tmp_path, monkeypatch):
+    """The command itself must close configuration and import-hook channels."""
+    import knossos.codeval as cv
+
+    captured = {}
+
+    class Completed:
+        returncode = 0
+
+    def fake_run(argv, cwd, timeout):
+        captured.update(argv=argv, cwd=cwd, timeout=timeout)
+        return Completed()
+
+    monkeypatch.setattr(cv.sandbox.DEFAULT, "run", fake_run)
+    assert cv._pytest(tmp_path, ["tests/test_m.py::test_adds"])
+    argv = captured["argv"]
+    assert argv[1:4] == ["-E", "-P", "-c"]
+    assert "import pytest" in argv[4]
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" in argv[4]
+    assert "sys.path.insert(0,os.getcwd())" in argv[4]
+    pytest_config = max(index for index, value in enumerate(argv) if value == "-c")
+    assert argv[pytest_config + 1] == cv.os.devnull
+    assert "--noconftest" in argv
+
+
 # --------------------------------------------------------- breaking things
 
 def test_fixing_the_bug_but_breaking_another_test_fails(case, tmp_path):

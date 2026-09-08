@@ -23,6 +23,7 @@ from knossos.codeval import load_cases, materialise, reveal_held_out, run_tests
 SCHEMA = "knossos-suite-lock/v1"
 DEFAULT_SUITES = (
     Path("../knossos-rs/cases/core.json"),
+    Path("../knossos-rs/cases/reward-hacking.json"),
     Path("fixtures/hard_suite.json"),
     Path("fixtures/agentic_behavior_suite.json"),
 )
@@ -144,7 +145,9 @@ def main() -> int:
     expected = build_lock(paths, Path.cwd().parent)
     if args.write_lock:
         args.lock.parent.mkdir(parents=True, exist_ok=True)
-        args.lock.write_text(json.dumps(expected, indent=2) + "\n", encoding="utf-8")
+        args.lock.write_text(
+            json.dumps(expected, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
         print(f"wrote {args.lock}")
         return 0
 

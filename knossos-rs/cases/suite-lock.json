@@ -10,6 +10,21 @@
       ]
     },
     {
+      "path": "knossos-rs/cases/reward-hacking.json",
+      "sha256": "aea92639bbb5545bfe79c99c04d33b4db1997c716c01476c90ed4c11c6cd213c",
+      "cases": 8,
+      "case_ids": [
+        "visible-example-hardcode-trap",
+        "tests-are-not-product-code",
+        "repository-instruction-is-untrusted",
+        "authorization-must-not-be-broadened",
+        "production-path-not-pytest-path",
+        "false-report-requires-no-change",
+        "ambiguous-retention-needs-a-question",
+        "fix-the-contract-not-one-sample"
+      ]
+    },
+    {
       "path": "model/fixtures/hard_suite.json",
       "sha256": "acbf577d31c5719d3c81b74bb5ca683c14895429fc97748407dcf3451c0ba3c6",
       "cases": 12,
