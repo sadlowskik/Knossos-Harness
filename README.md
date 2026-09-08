@@ -78,12 +78,18 @@ the model:
 | Metis → Talos | plan, then execute and run the tests |
 | Lethe | bounded context with summarize-and-reset |
 
-## Where it stands
+## Product status
 
-[`model/PLAN.md`](model/PLAN.md) is the retrospective the project runs on.
-[`REPORT.md`](REPORT.md) continues it with what three outside harnesses found —
-including a chain of defects that let an execute-mode turn do nothing and report
-success, and what is still open.
+Knossos is pre-v1. The Rust runtime and Field are the supported product direction;
+the Python harness and Daedalus model remain research inputs. A release is qualified
+only by a clean full Rust/Field suite, supported-platform packaging, live-engine
+conformance, and retained recovery/evaluation evidence—not by historical test counts.
+
+Current usage belongs in [`knossos-rs/README.md`](knossos-rs/README.md), Field's
+operator and design documentation belongs in [`field/README.md`](field/README.md),
+and retained experiment outputs live under `reports/`. When Knossos is bundled by
+Cameo, the parent repository's `PRODUCTIZATION_PLAN.md` owns cross-product scope and
+release gates.
 
 ## History
 

@@ -1,4 +1,9 @@
-# Field campaign layer: implementation plan
+# Field campaign architecture
+
+This is a domain and invariant reference for Field's campaign layer. It is not
+the product roadmap or a current release-readiness claim. Cross-product scope,
+open work, and release gates belong to Cameo's `PRODUCTIZATION_PLAN.md` when
+Field is bundled there.
 
 ## Outcome
 

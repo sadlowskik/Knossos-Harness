@@ -41,7 +41,7 @@ rl.on('line', async (line) => {
     reply(id, {
       protocolVersion: params?.protocolVersion ?? '2024-11-05',
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'field', version: '0.1.0' },
+      serverInfo: { name: 'field', version: '0.2.0-beta.2' },
     });
     return;
   }

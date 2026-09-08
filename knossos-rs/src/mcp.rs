@@ -217,7 +217,10 @@ impl McpClient {
                 Some(json!({
                     "protocolVersion": PROTOCOL_VERSION,
                     "capabilities": {},
-                    "clientInfo": {"name": "knossos", "version": "0.1.0"},
+                    "clientInfo": {
+                        "name": "knossos",
+                        "version": env!("CARGO_PKG_VERSION")
+                    },
                 })),
                 Some(CONNECT_TIMEOUT),
                 None,

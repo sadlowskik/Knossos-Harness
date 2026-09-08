@@ -278,7 +278,7 @@ What the tests defend:
 
 ## Honest scope
 
-**This is v1 and it is small.** What it does: plans a task, executes it with
+**This is pre-v1 and intentionally bounded.** What it does: plans a task, executes it with
 real file edits and build commands, verifies with a tiered ladder, and stops on
 evidence or on a budget. That is a working agent, not a frontier one.
 

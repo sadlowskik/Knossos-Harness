@@ -175,10 +175,12 @@ body::before {
   overflow-wrap: anywhere;
 }
 
+.trace.ok,
 .trace .ok {
   color: var(--vscode-charts-green, inherit);
 }
 
+.trace.bad,
 .trace .bad {
   color: var(--vscode-errorForeground);
 }

@@ -2,7 +2,7 @@
   "name": "knossos-harness",
   "displayName": "Knossos Harness",
   "description": "Agentic coding with exact symbol grounding, tiered verification and an explicit halting policy.",
-  "version": "0.1.0",
+  "version": "0.2.0-beta.2",
   "license": "MIT",
   "publisher": "korbinsadlowski",
   "engines": {

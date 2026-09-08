@@ -163,7 +163,27 @@ fn cli_continuation_preserves_conversation_authority_and_quota_across_processes(
         "pub const SECOND: u32 = 42;\n"
     );
     let after = MissionStore::open(&root, &mission).unwrap();
-    assert_eq!(after.state().contract, before.state().contract);
+    assert_eq!(
+        after.state().contract_revision,
+        before.state().contract_revision + 1
+    );
+    assert_eq!(
+        after.state().contract_history.len(),
+        before.state().contract_history.len() + 1
+    );
+    assert_eq!(
+        after.state().contract_history.first().unwrap().contract,
+        before.state().contract
+    );
+    assert_eq!(
+        after
+            .state()
+            .contract
+            .constraints
+            .last()
+            .map(String::as_str),
+        Some("operator revision: add another source file with SECOND set to 42")
+    );
     let resumed = after.load_conversation().unwrap();
     assert!(resumed["quota"]["spent"]["requests"].as_u64().unwrap() > spent);
     assert!(resumed["messages"]

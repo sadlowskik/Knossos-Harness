@@ -1,6 +1,6 @@
 [package]
 name = "knossos"
-version = "0.1.0"
+version = "0.2.0-beta.2"
 edition = "2021"
 license = "MIT"
 description = "An agentic coding harness shaped by the Daedalus architecture: exact symbol memory, tiered verification, and explicit halting around a swappable engine."

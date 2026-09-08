@@ -146,7 +146,7 @@ hard-denies direct writes, path escape, production-readonly mutation, and mutati
 patterns before operator review. Persisted events redact credential-shaped fields, recognized
 credential strings, and the actual values of credential environment variables.
 
-See [the full campaign implementation plan](docs/red-blue-orchestration-plan.md).
+See the [campaign architecture and invariants](docs/red-blue-orchestration-plan.md).
 
 ---
 
