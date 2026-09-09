@@ -13,6 +13,9 @@ pub const DEFAULT_SNAPSHOT_INTERVAL: u64 = 32;
 pub const MAX_MISSION_EVENT_BYTES: usize = 1024 * 1024;
 pub const MAX_MISSION_STATE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_MISSION_JOURNAL_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CONTRACT_REVISIONS: usize = 128;
+const MAX_OUTCOME_DECISIONS: usize = 512;
+const MAX_RESTORE_POINTS: usize = 512;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -870,11 +873,15 @@ fn apply_event(state: &mut MissionState, event: &MissionEvent) -> Result<()> {
             }
             state.contract_revision = state.contract_revision.saturating_add(1);
             state.contract = contract.clone();
-            state.contract_history.push(ContractRevision {
-                revision: state.contract_revision,
-                contract: contract.clone(),
-                reason: reason.clone(),
-            });
+            push_bounded(
+                &mut state.contract_history,
+                MAX_CONTRACT_REVISIONS,
+                ContractRevision {
+                    revision: state.contract_revision,
+                    contract: contract.clone(),
+                    reason: reason.clone(),
+                },
+            );
             for proof in state.verification.required_checks.values_mut() {
                 proof.status = ProofStatus::Invalidated;
             }
@@ -913,13 +920,17 @@ fn apply_event(state: &mut MissionState, event: &MissionEvent) -> Result<()> {
                 }
                 _ => {}
             }
-            state.decisions.push(DecisionRecord {
-                decision: *decision,
-                reason: reason.clone(),
-                contract_revision: state.contract_revision,
-                workspace_revision: state.workspace.revision,
-                checkpoint: checkpoint.clone(),
-            });
+            push_bounded(
+                &mut state.decisions,
+                MAX_OUTCOME_DECISIONS,
+                DecisionRecord {
+                    decision: *decision,
+                    reason: reason.clone(),
+                    contract_revision: state.contract_revision,
+                    workspace_revision: state.workspace.revision,
+                    checkpoint: checkpoint.clone(),
+                },
+            );
             state.focus.phase = match decision {
                 OutcomeDecision::Accepted => MissionPhase::Accepted,
                 OutcomeDecision::Revise => MissionPhase::Revise,
@@ -1072,10 +1083,24 @@ fn apply_event(state: &mut MissionState, event: &MissionEvent) -> Result<()> {
             if *safe {
                 state.identity.last_safe_checkpoint = Some(id.clone());
             }
-            state.workspace.snapshots.push(id.clone());
+            push_bounded(
+                &mut state.workspace.snapshots,
+                MAX_RESTORE_POINTS,
+                id.clone(),
+            );
         }
     }
     Ok(())
+}
+
+/// Keep the actionable in-memory state bounded while the immutable journal
+/// retains the complete audit trail. Removing the oldest entry is deterministic,
+/// so replay reconstructs the same state on every host.
+fn push_bounded<T>(items: &mut Vec<T>, limit: usize, item: T) {
+    if items.len() >= limit {
+        items.drain(..=items.len() - limit);
+    }
+    items.push(item);
 }
 
 fn proofs_current(state: &MissionState) -> bool {
@@ -1276,6 +1301,15 @@ mod tests {
             definition_of_done: vec!["tests pass".into()],
             ..MissionContract::default()
         }
+    }
+
+    #[test]
+    fn historical_state_vectors_rotate_without_losing_recent_evidence() {
+        let mut items = (0..MAX_RESTORE_POINTS).collect::<Vec<_>>();
+        push_bounded(&mut items, MAX_RESTORE_POINTS, MAX_RESTORE_POINTS);
+        assert_eq!(items.len(), MAX_RESTORE_POINTS);
+        assert_eq!(items.first(), Some(&1));
+        assert_eq!(items.last(), Some(&MAX_RESTORE_POINTS));
     }
 
     fn state_with_environment(dir: &Path, id: &str) -> MissionState {
