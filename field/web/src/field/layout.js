@@ -100,16 +100,42 @@ export function computeLayout(snap, positions, now, config) {
     });
   }
 
-  // --- recently changed files, as ticks on their folder ----------------------
-  const fileTicks = [];
+  // --- files as first-class objects, placed under their folder ---------------
+  // A file is drawn only when its folder is (folders are already heat-gated), so the
+  // Field never fills with cold files. Each file gets a real coordinate so a unit can
+  // walk to it, it can pulse when touched, and it can be selected and ordered onto.
+  const FILE_STEP = 12;
+  const FILE_R = 3.2;
+  const MAX_FILES_PER_FOLDER = 8;
+  const files = [];
+  const fileByKey = new Map();
+  const filesByFolder = new Map();
   for (const file of snap.files) {
-    const age = now - file.lastTs;
-    if (age > 60_000) continue;
     const node = folderByKey.get(`${file.workspaceId}:${file.dir}`);
     if (!node) continue;
-    fileTicks.push({
-      x: node.x + node.w - 4, y: node.y + 3,
-      strength: 1 - age / 60_000, change: file.change, path: file.path,
+    if (!filesByFolder.has(node.key)) filesByFolder.set(node.key, []);
+    filesByFolder.get(node.key).push(file);
+  }
+  for (const [folderKey, list] of filesByFolder) {
+    const node = folderByKey.get(folderKey);
+    // Most-recently-touched first so the ones worth seeing keep their slot.
+    list.sort((a, b) => (b.lastTs ?? 0) - (a.lastTs ?? 0));
+    const shown = list.slice(0, MAX_FILES_PER_FOLDER);
+    const rowW = (shown.length - 1) * FILE_STEP;
+    const cx = node.x + node.w / 2;
+    const fy = node.y + node.h + 9;
+    shown.forEach((file, i) => {
+      const age = now - (file.lastTs ?? 0);
+      const fileNode = {
+        key: file.key, path: file.path, dir: file.dir, workspaceId: file.workspaceId,
+        change: file.change, lastTs: file.lastTs,
+        x: cx - rowW / 2 + i * FILE_STEP, y: fy, r: FILE_R,
+        recency: age >= 0 && age < 60_000 ? 1 - age / 60_000 : 0,
+        label: file.path.split('/').slice(-1)[0],
+        folderKey,
+      };
+      files.push(fileNode);
+      fileByKey.set(`${file.workspaceId}:${file.path}`, fileNode);
     });
   }
 
@@ -150,8 +176,13 @@ export function computeLayout(snap, positions, now, config) {
   // --- agents ----------------------------------------------------------------
   const live = snap.sessions.filter((s) => s.state !== 'done' || (now - (s.endedAt ?? 0)) < 120_000);
 
-  // Group by anchor so agents on the same work form up together.
+  // Group by anchor so agents on the same work form up together. A unit anchors to the
+  // exact file it is on when that file is drawn; otherwise it falls back to the folder,
+  // then the workspace, then staging — the file case never regresses the fallback.
   const anchorKey = (s) => {
+    if (s.workspaceId && s.focusPath != null && fileByKey.has(`${s.workspaceId}:${s.focusPath}`)) {
+      return `file:${s.workspaceId}:${s.focusPath}`;
+    }
     if (s.workspaceId && s.focusDir != null && folderByKey.has(`${s.workspaceId}:${s.focusDir}`)) {
       return `f:${s.workspaceId}:${s.focusDir}`;
     }
@@ -172,8 +203,12 @@ export function computeLayout(snap, positions, now, config) {
   const agents = [];
   for (const [key, list] of groups) {
     list.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-    let ax; let ay;
+    let ax; let ay; let onFile = false;
     if (key === 'staging') { ax = stagingX; ay = stagingY; }
+    else if (key.startsWith('file:')) {
+      const node = fileByKey.get(key.slice(5));
+      ax = node.x; ay = node.y + node.r + 2; onFile = true;
+    }
     else if (key.startsWith('f:')) {
       const node = folderByKey.get(key.slice(2));
       ax = node.x + node.w / 2; ay = node.y + node.h;
@@ -192,7 +227,7 @@ export function computeLayout(snap, positions, now, config) {
         id: s.id, session: s,
         x: ax + slot.dx, y: ay + slot.dy,
         anchorX: ax, anchorY: ay,
-        staged: key === 'staging',
+        staged: key === 'staging', onFile,
       });
     });
   }
@@ -202,7 +237,7 @@ export function computeLayout(snap, positions, now, config) {
   // exists so a dozen labeled units can be inspected at once without becoming a knot.
   for (const region of regions) {
     const formation = agents
-      .filter((a) => a.session.simulated && a.session.workspaceId === region.id)
+      .filter((a) => a.session.simulated && !a.onFile && a.session.workspaceId === region.id)
       .sort((a, b) => (a.session.name ?? '').localeCompare(b.session.name ?? ''));
     if (!formation.length) continue;
     const cols = Math.min(4, formation.length);
@@ -273,7 +308,7 @@ export function computeLayout(snap, positions, now, config) {
   } : { minX: -400, minY: -300, maxX: 400, maxY: 300 };
 
   return {
-    regions, folders, fileTicks, sites, missions, agents, routes,
-    bounds, agentById, folderByKey,
+    regions, folders, files, sites, missions, agents, routes,
+    bounds, agentById, folderByKey, fileByKey,
   };
 }

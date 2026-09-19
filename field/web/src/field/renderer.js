@@ -127,7 +127,7 @@ function shapeFor(role) { return SHAPES[role] ?? SHAPES.builder; }
 export function draw(ctx, opts) {
   const {
     layout, cam, view, selection, hover, marquee, now,
-    pulses, showLabels, contextTarget,
+    pulses, filePulses = {}, showLabels, contextTarget,
   } = opts;
 
   const sel = new Set(selection);
@@ -226,15 +226,44 @@ export function draw(ctx, opts) {
     }
   }
 
-  // file change ticks ---------------------------------------------------
-  for (const t of layout.fileTicks) {
-    const [sx, sy] = toScreen(cam, view, t.x, t.y);
+  // files ---------------------------------------------------------------
+  // Placed objects under their folder. They flash when the unit on them acts, so you can
+  // see the exact file being worked, and they can be right-clicked to order a unit onto.
+  for (const f of layout.files ?? []) {
+    const [sx, sy] = toScreen(cam, view, f.x, f.y);
+    const r = Math.max(2, f.r * Math.min(1.4, cam.z));
+    const pulse = filePulses[f.key] ?? 0;
+
+    if (pulse > 0) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, r + 2 + (1 - pulse) * 8, 0, Math.PI * 2);
+      ctx.strokeStyle = C.ember;
+      ctx.globalAlpha = pulse * 0.6;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     ctx.beginPath();
-    ctx.arc(sx, sy, 1.9, 0, Math.PI * 2);
-    ctx.fillStyle = t.change === 'unlink' ? C.rust : t.change === 'add' ? C.verify : C.amber;
-    ctx.globalAlpha = 0.25 + t.strength * 0.75;
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = f.change === 'unlink' ? C.rust : f.change === 'add' ? C.verify : C.amber;
+    ctx.globalAlpha = pulse > 0 ? 1 : 0.5 + f.recency * 0.5;
     ctx.fill();
     ctx.globalAlpha = 1;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = mix(C.line2, '#000000', 0.2);
+    ctx.stroke();
+
+    if ((showLabels || pulse > 0) && cam.z > 0.7) {
+      ctx.font = '400 8px "IBM Plex Mono", monospace';
+      const label = fitText(ctx, f.label, 64);
+      if (label) {
+        ctx.fillStyle = C.faint;
+        ctx.textBaseline = 'top';
+        const lw = ctx.measureText(label).width;
+        ctx.fillText(label, sx - lw / 2, sy + r + 2);
+      }
+    }
   }
 
   // mission artifacts ---------------------------------------------------

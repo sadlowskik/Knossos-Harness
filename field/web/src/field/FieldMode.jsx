@@ -26,6 +26,13 @@ export default function FieldMode() {
   const dirtyRef = useRef(true);
   const dragRef = useRef(null);
   const nowRef = useRef(Date.now());
+  // Rendered unit positions, eased toward their posted layout coordinate so a unit
+  // visibly walks to a new file/folder rather than teleporting.
+  const posRef = useRef({});
+  const animLayoutRef = useRef(null);
+
+  const reservedUsd = (st.snap.budgetReservations ?? [])
+    .reduce((sum, row) => sum + (row.reservedUsd ?? 0), 0);
 
   const layout = useMemo(
     () => computeLayout(st.snap, st.snap.positions ?? {}, Date.now(), st.config),
@@ -86,6 +93,44 @@ export default function FieldMode() {
       }
       if (lay.agents.some((a) => a.session.state === 'waiting_permission')) animating = true;
 
+      // --- movement -----------------------------------------------------
+      // Each layout carries the true target coordinates. Capture them once per layout,
+      // then ease the rendered position toward the target every frame while it differs.
+      // A unit that has arrived is pinned exactly, so a settled Field never animates.
+      const pos = posRef.current;
+      if (animLayoutRef.current !== lay) {
+        animLayoutRef.current = lay;
+        const liveIds = new Set(lay.agents.map((a) => a.id));
+        for (const id of Object.keys(pos)) if (!liveIds.has(id)) delete pos[id];
+        for (const a of lay.agents) {
+          const cur = pos[a.id];
+          if (cur) { cur.tx = a.x; cur.ty = a.y; }
+          else pos[a.id] = { x: a.x, y: a.y, tx: a.x, ty: a.y };
+        }
+      }
+      const EASE = 0.2;
+      for (const a of lay.agents) {
+        const cur = pos[a.id];
+        if (!cur) continue;
+        const dx = cur.tx - cur.x; const dy = cur.ty - cur.y;
+        if (dx * dx + dy * dy < 0.25) { cur.x = cur.tx; cur.y = cur.ty; }
+        else { cur.x += dx * EASE; cur.y += dy * EASE; animating = true; }
+        a.x = cur.x; a.y = cur.y;   // draw and hit-test follow the visible position
+      }
+
+      // A file flashes when the unit posted on it takes an action there.
+      const filePulses = {};
+      const fbk = lay.fileByKey;
+      if (fbk) {
+        for (const a of lay.agents) {
+          const p = pulses[a.id];
+          const sess = a.session;
+          if (!p || sess.workspaceId == null || sess.focusPath == null) continue;
+          const node = fbk.get(`${sess.workspaceId}:${sess.focusPath}`);
+          if (node) filePulses[node.key] = Math.max(filePulses[node.key] ?? 0, p);
+        }
+      }
+
       // Heat decays with real time, so refresh it at a low rate rather than per frame.
       const heatPresent = lay.folders.length > 0 || lay.regions.some((r) => r.heat > 0.02);
       const heatDue = heatPresent && now - lastDraw > 250;
@@ -110,6 +155,7 @@ export default function FieldMode() {
         marquee,
         now,
         pulses,
+        filePulses,
         showLabels,
         contextTarget: menu?.world ?? null,
       });
@@ -129,6 +175,17 @@ export default function FieldMode() {
       const [x, y] = toScreen(cam, view, a.x, a.y);
       if ((x - sx) ** 2 + (y - sy) ** 2 < HIT_RADIUS ** 2) {
         return { type: 'agent', id: a.id, session: a.session, world: { x: a.x, y: a.y } };
+      }
+    }
+    // Files sit under their folders and are smaller, so they are tested first.
+    for (const f of lay.files ?? []) {
+      const [x, y] = toScreen(cam, view, f.x, f.y);
+      const rr = f.r * cam.z + 5;
+      if ((x - sx) ** 2 + (y - sy) ** 2 < rr ** 2) {
+        return {
+          type: 'file', id: f.path, workspaceId: f.workspaceId, label: f.path,
+          world: { x: f.x, y: f.y },
+        };
       }
     }
     for (const f of lay.folders) {
@@ -366,6 +423,27 @@ export default function FieldMode() {
 
       <div className="field-hint label">
         drag select · shift add · ctrl+digit group · right-click to assign · alt-drag pan · scroll zoom
+      </div>
+
+      <div
+        className="field-resources mono"
+        aria-live="polite"
+        style={{
+          position: 'absolute', top: 12, left: 12, display: 'flex', gap: 12,
+          alignItems: 'center', padding: '6px 11px', borderRadius: 6,
+          background: 'rgba(12,11,9,0.82)', border: '1px solid #302D28',
+          color: '#D8D2C8', fontSize: 12, pointerEvents: 'none', letterSpacing: '0.02em',
+        }}
+      >
+        <span style={{ color: '#FFD08A' }}>◈ ${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
+        <span style={{ color: '#7C776D' }}>spent</span>
+        {reservedUsd > 0 && (
+          <>
+            <span style={{ color: '#302D28' }}>·</span>
+            <span style={{ color: '#7E8B94' }}>${reservedUsd.toFixed(2)}</span>
+            <span style={{ color: '#7C776D' }}>reserved</span>
+          </>
+        )}
       </div>
 
       <PermissionRequests />

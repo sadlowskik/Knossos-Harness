@@ -11,7 +11,7 @@ const EMPTY = {
   totals: { costUsd: 0 },
 };
 
-const MODE_IDS = new Set(['theater', 'field', 'campaigns', 'workspace', 'routines', 'traces']);
+const MODE_IDS = new Set(['theater', 'field', 'rts', 'campaigns', 'workspace', 'routines', 'traces']);
 const requestedMode = typeof location === 'undefined'
   ? null
   : new URLSearchParams(location.search).get('mode');

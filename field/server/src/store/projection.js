@@ -218,6 +218,9 @@ const HANDLERS = {
       s.focusDir = d.dir;
     }
     if (d.path) {
+      // File-level position for the canvas Field: which file this unit is on right now.
+      // Additive to focusDir, which stays the folder-level anchor and fallback.
+      s.focusPath = d.path;
       s.touched.push({ path: d.path, ts: evt.ts, tool: d.name });
       if (d.name === 'Edit' || d.name === 'Write' || d.name === 'NotebookEdit') s.editCount += 1;
     }
