@@ -71,7 +71,13 @@ export function startRoutines({
   now = () => new Date(),
   createId = randomUUID,
 }) {
-  for (const routine of cfg.routines) validateRoutine(routine, cfg);
+  for (const routine of cfg.routines) {
+    // Only validate routines that are actually enabled. A disabled routine
+    // (e.g. a Cameo-specific sweep on a box that isn't mounted) must never be
+    // able to crash Field at boot — the harness stays provider-agnostic.
+    const isEnabled = projection?.routines?.get(routine.id)?.enabled ?? !!routine.enabled;
+    if (isEnabled) validateRoutine(routine, cfg);
+  }
   const pending = new Map();   // routineId -> { paths:Set, timer }
   const enabled = new Map(cfg.routines.map((r) => [
     r.id,

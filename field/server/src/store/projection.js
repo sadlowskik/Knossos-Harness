@@ -511,7 +511,7 @@ function recordWorkspaceActivity(workspace, event) {
   if (workspace.activityEvents.length > 200) workspace.activityEvents.splice(0, workspace.activityEvents.length - 200);
 }
 
-function workspaceMaturity(workspace, campaigns, now) {
+export function workspaceMaturity(workspace, campaigns, now) {
   const activityEvidence = workspace.activityEvents.filter((event) => now - event.ts <= ACTIVITY_WINDOW_MS);
   const relevant = campaigns.filter((campaign) => campaignTargetsWorkspace(campaign, workspace.id));
   const criteria = relevant.flatMap((campaign) => campaign.objectives

@@ -19,8 +19,14 @@ const PRIVILEGED_NEVER = new Set([
   'SSH_PRIVATE_KEY',
 ]);
 
+// The per-endpoint Cameo *serve* key is distinct from the operator's privileged Cameo
+// secrets: the harness legitimately needs it to authenticate to a Cameo box, so it is
+// explicitly permitted to reach a child. Every other CAMEO_* secret stays blocked.
+const PRIVILEGED_ALLOW = new Set(['CAMEO_SERVE_KEY']);
+
 function isPrivilegedEnvKey(key) {
   const name = String(key ?? '').toUpperCase();
+  if (PRIVILEGED_ALLOW.has(name)) return false;
   if (PRIVILEGED_NEVER.has(name)) return true;
   return name.startsWith('CAMEO_') && (name.includes('KEY') || name.includes('PRIVATE') || name.includes('SECRET') || name.includes('TOKEN'));
 }

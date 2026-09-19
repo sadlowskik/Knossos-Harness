@@ -8,6 +8,8 @@ import { api } from '../net/client.js';
 import { clearActiveAgent, openCity, openSenate, selectAgent, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import AtlasMode from '../atlas/AtlasMode.jsx';
+import CityPanel from '../city/CityPanel.jsx';
+import PowerSources from '../setup/PowerSources.jsx';
 import {
   DEFAULT_FIELD_SETTINGS,
   agentPreferenceKey,
@@ -522,6 +524,8 @@ export default function TheaterMode() {
   const [settings, setSettings] = useState(loadFieldSettings), [selectedRegion, setSelectedRegion] = useState(null), [settingsOpen, setSettingsOpen] = useState(false), [choosingCapital, setChoosingCapital] = useState(false), [pendingCapital, setPendingCapital] = useState(false), [capitalError, setCapitalError] = useState(''), [trace, setTrace] = useState([]);
   const [rehearsalOpen, setRehearsalOpen] = useState(false), [rehearsalBusy, setRehearsalBusy] = useState(false), [rehearsalError, setRehearsalError] = useState('');
   const [simulation, setSimulation] = useState({ enabled: false, scenarios: [], active: null });
+  const [citiesOpen, setCitiesOpen] = useState(false);
+  const [powerOpen, setPowerOpen] = useState(false);
   const reconcileRef = useRef('');
   const view = useMemo(() => rehearsalSnapshot(st.snap, simulation.active), [st.snap, simulation.active]);
   const world = st.snap.world ?? { capitalWorkspaceId: null, assignments: {}, revision: 0 };
@@ -579,7 +583,7 @@ export default function TheaterMode() {
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
       <div><span>{simulation.active ? 'SYNTHETIC REHEARSAL' : settings.theme === 'rome' ? 'IMPERIUM OPERIS' : 'LIVING OPERATIONS'}</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : 'Choose a capital project'}</h1></div>
       <div className="field-status" aria-live="polite" aria-atomic="true"><span><b>{active.length}</b> active</span><span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> attention</span><span><b>{clusters.filter((item) => (item.baseKind ?? item.kind) === 'workfront').length}</b> fronts</span></div>
-      <div className="field-quick-settings"><button type="button" onClick={() => setSettings((current) => ({ ...current, theme: current.theme === 'rome' ? 'atlas' : 'rome' }))}>Theme <b>{themeLabel}</b></button><button type="button" onClick={() => setSettings((current) => ({ ...current, identityMode: current.identityMode === 'both' ? 'model' : current.identityMode === 'model' ? 'portrait' : 'both' }))}>Identity <b>{settings.identityMode}</b></button><button type="button" className={simulation.active ? 'rehearsal-live' : ''} onClick={() => { setRehearsalOpen(true); setRehearsalError(''); }}><Sparkles />{settings.theme === 'rome' ? 'Muster' : 'Rehearse'}{simulation.active && <b>LIVE</b>}</button><button type="button" onClick={() => setChoosingCapital(true)}>Capital</button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
+      <div className="field-quick-settings"><button type="button" onClick={() => setSettings((current) => ({ ...current, theme: current.theme === 'rome' ? 'atlas' : 'rome' }))}>Theme <b>{themeLabel}</b></button><button type="button" onClick={() => setSettings((current) => ({ ...current, identityMode: current.identityMode === 'both' ? 'model' : current.identityMode === 'model' ? 'portrait' : 'both' }))}>Identity <b>{settings.identityMode}</b></button><button type="button" className={simulation.active ? 'rehearsal-live' : ''} onClick={() => { setRehearsalOpen(true); setRehearsalError(''); }}><Sparkles />{settings.theme === 'rome' ? 'Muster' : 'Rehearse'}{simulation.active && <b>LIVE</b>}</button><button type="button" onClick={() => setPowerOpen(true)}><RadioTower />Models</button><button type="button" onClick={() => setCitiesOpen(true)}><Landmark />Cities</button><button type="button" onClick={() => setChoosingCapital(true)}>Capital</button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
     </header>
     <main className="field-world-canvas living-world">
       <div className="world-map-base" aria-hidden="true" /><div className="world-contours" aria-hidden="true" />
@@ -593,6 +597,8 @@ export default function TheaterMode() {
     {trace.length >= 2000 && <div className="rehearsal-watermark" role="status">Showing the first 2,000 events. Open Traces to load the rest.</div>}
     {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} />}
     {rehearsalOpen && <RehearsalPanel simulation={simulation} workspaces={workspaces} capitalId={world.capitalWorkspaceId} theme={settings.theme} busy={rehearsalBusy} error={rehearsalError} onRun={runRehearsal} onStop={stopRehearsal} onClose={() => setRehearsalOpen(false)} />}
+    {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
+    {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} />}
     {(!world.capitalWorkspaceId || choosingCapital) && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} theme={settings.theme} />}
   </div>;
 }

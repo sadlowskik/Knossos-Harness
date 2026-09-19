@@ -18,8 +18,9 @@ const PERMISSION_MCP = path.join(HERE, 'permission-mcp.mjs');
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export class Registry {
-  constructor({ cfg, emit, apiBase, permissionCapabilities, registerSecret, campaignPolicy, budgetLedger }) {
+  constructor({ cfg, emit, apiBase, permissionCapabilities, registerSecret, campaignPolicy, budgetLedger, keys }) {
     this.cfg = cfg;
+    this.keys = keys ?? null;
     this.emit = emit;
     this.apiBase = apiBase;
     this.permissionCapabilities = permissionCapabilities;
@@ -69,6 +70,31 @@ export class Registry {
 
   endpoint(id) { return this.cfg.endpoints.find((e) => e.id === id); }
   workspace(id) { return this.cfg.workspaces.find((w) => w.id === id); }
+
+  // Build the credential/base-url environment a session needs for its endpoint. The key is
+  // resolved from the KeyStore at spawn time only — never stored on cfg.endpoints (which
+  // /api/config exposes) nor in the snapshot.
+  endpointEnv(ep) {
+    if (!ep) return {};
+    const key = ep.secretRef ? this.keys?.get(ep.secretRef) : null;
+    const base = ep.base_url ?? ep.baseUrl ?? null;
+    if (ep.kind === 'openai-compatible') {
+      const env = {};
+      if (base) { env.CAMEO_BASE_URL = base; env.CAMEO_MODEL = ep.model ?? ''; }
+      // knossos `serve --engine cameo` reads its API key from CAMEO_SERVE_KEY
+      // (knossos-rs/src/config.rs:187). This only reaches the child once child-env's
+      // privileged guard permits CAMEO_SERVE_KEY explicitly (see child-env allowlist).
+      if (key) env.CAMEO_SERVE_KEY = key;
+      return env;
+    }
+    if (ep.kind === 'anthropic') {
+      const env = {};
+      if (key) env.ANTHROPIC_API_KEY = key;
+      if (base) env.ANTHROPIC_BASE_URL = base;
+      return env;
+    }
+    return {};
+  }
 
   /**
    * `adaptive` is resolved here from the real size of the target, not from a guess.
@@ -221,9 +247,7 @@ export class Registry {
       credentialEnvKeys: Array.isArray(ep?.credential_env)
         ? ep.credential_env
         : ep?.credential_env ? [ep.credential_env] : [],
-      env: ep?.kind === 'openai-compatible' && (ep.base_url || ep.baseUrl)
-        ? { CAMEO_BASE_URL: ep.base_url ?? ep.baseUrl, CAMEO_MODEL: ep.model ?? '' }
-        : {},
+      env: this.endpointEnv(ep),
     });
 
     let firstStart = true;

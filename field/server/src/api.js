@@ -10,6 +10,9 @@ import { Projection } from './store/projection.js';
 import { readEventRange, replayInto } from './store/replay.js';
 import { updateFrontmatterFile } from './config.js';
 import { readJsonBody } from './body.js';
+import { listCities, cityDetail, activeCitySessionIds, resolveCityAgent } from './cities.js';
+
+const CITY_ORDER_MAX = 8192;
 import {
   readWorkspaceFile,
   resolveWorkspacePath,
@@ -71,7 +74,7 @@ function json(res, code, body) {
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'target', 'dist', '.field-state']);
 
-export function createApi({ cfg, projection, registry, director, simulator, routines, log, broadcast }) {
+export function createApi({ cfg, projection, registry, director, simulator, routines, log, broadcast, keys, endpointsStore }) {
   const terminals = new Map();
 
   const routes = {
@@ -448,6 +451,125 @@ export function createApi({ cfg, projection, registry, director, simulator, rout
       const result = routines.run(String(body?.routineId ?? ''));
       if (!result.admitted) throw new DomainError('routine_not_admitted', result.reason);
       return { sessionId: result.sessionId, runId: result.runId };
+    },
+
+    // ---- Cities: a city is a workspace. Derived state (read) + command surface (write). ----
+
+    'GET /api/cities': async () => ({ cities: listCities(projection) }),
+
+    'GET /api/city': async (_b, url) => {
+      const id = String(url.searchParams.get('id') ?? '');
+      const city = cityDetail(projection, log, id);
+      if (!city) throw new DomainError('not_found', `city ${id || '(empty)'} is not a mounted workspace`);
+      return city;
+    },
+
+    'POST /api/city/deploy': async (body) => {
+      const id = String(body?.id ?? '');
+      if (!cfg.workspaces.some((w) => w.id === id)) {
+        throw new DomainError('not_found', `city ${id || '(empty)'} is not a mounted workspace`);
+      }
+      const agentId = resolveCityAgent(cfg, body?.role);
+      if (!agentId) throw new DomainError('no_agent', 'no agent is defined in field/agents');
+      const orders = body?.orders ? String(body.orders).slice(0, CITY_ORDER_MAX) : undefined;
+      const s = registry.spawn({
+        agentId, workspaceId: id, orders,
+        thinking: body?.thinking, endpointId: body?.endpoint,
+        target: { type: 'workspace', id, workspaceId: id },
+      });
+      return { sessionId: s.id };
+    },
+
+    'POST /api/city/orders': async (body) => {
+      const id = String(body?.id ?? '');
+      if (!cfg.workspaces.some((w) => w.id === id)) {
+        throw new DomainError('not_found', `city ${id || '(empty)'} is not a mounted workspace`);
+      }
+      const text = String(body?.text ?? '').replace(/[^\P{C}\n\t]/gu, '').trim();
+      if (!text) throw new DomainError('empty_order', 'order text is required');
+      if (text.length > CITY_ORDER_MAX) throw new DomainError('order_too_large', `order exceeds ${CITY_ORDER_MAX} characters`);
+      const active = activeCitySessionIds(projection, id);
+      if (active.length) {
+        const res = registry.command('say', { sessionIds: active, text });
+        return { delivered: res?.sent ?? active.length, sessionIds: active };
+      }
+      const agentId = resolveCityAgent(cfg, body?.role);
+      if (!agentId) throw new DomainError('no_agent', 'no agent is defined in field/agents');
+      const s = registry.spawn({ agentId, workspaceId: id, orders: text, target: { type: 'workspace', id, workspaceId: id } });
+      return { spawned: s.id };
+    },
+
+    // ---- Power sources: add/list/test/remove models. Keys live only in the KeyStore. ----
+
+    'GET /api/endpoints': async () => ({
+      endpoints: cfg.endpoints.map((e) => ({
+        id: e.id, name: e.name ?? e.id, kind: e.kind, model: e.model ?? null,
+        base_url: e.base_url ?? e.baseUrl ?? null,
+        source: endpointsStore?.get(e.id) ? 'user' : 'config',
+        hasKey: !!(e.secretRef || e.credential_env),
+        status: projection.endpoints.get(e.id)?.status ?? 'unknown',
+      })),
+    }),
+
+    'POST /api/endpoints': async (body) => {
+      const id = String(body?.id ?? '').replace(/[^a-z0-9_-]/gi, '').slice(0, 48);
+      if (!id) throw new DomainError('bad_request', 'id is required (letters, digits, - _)');
+      if (!['anthropic', 'openai-compatible'].includes(body?.kind)) {
+        throw new DomainError('bad_request', 'kind must be "anthropic" or "openai-compatible"');
+      }
+      const name = String(body?.name ?? id).slice(0, 64);
+      const model = body?.model ? String(body.model).slice(0, 128) : null;
+      const base_url = body?.base_url ? String(body.base_url).trim() : null;
+      if (base_url && !/^https?:\/\//i.test(base_url)) {
+        throw new DomainError('bad_request', 'base_url must start with http:// or https://');
+      }
+      const desc = { id, name, kind: body.kind, model, base_url };
+      const key = body?.key ? String(body.key) : '';
+      if (key) {
+        const secretRef = `ep:${id}`;
+        keys.set(secretRef, key);
+        log.addSecret(key);
+        desc.secretRef = secretRef;
+      }
+      endpointsStore.add(desc);
+      const i = cfg.endpoints.findIndex((e) => e.id === id);
+      if (i >= 0) cfg.endpoints[i] = { ...desc }; else cfg.endpoints.push({ ...desc });
+      if (!projection.endpoints.has(id)) {
+        projection.endpoints.set(id, {
+          id, name, kind: body.kind, model, baseUrl: base_url,
+          costPerMtok: { input: 0, output: 0 }, status: 'unknown',
+          latencyMs: null, lastCheck: 0, detail: null, failures: 0,
+        });
+      }
+      return { ok: true, id, hasKey: !!key };
+    },
+
+    'POST /api/endpoints/test': async (body) => {
+      const id = String(body?.id ?? '');
+      const ep = cfg.endpoints.find((e) => e.id === id);
+      if (!ep) throw new DomainError('not_found', `endpoint ${id || '(empty)'} not found`);
+      const base = ep.base_url ?? ep.baseUrl ?? null;
+      if (!base) return { ok: true, kind: ep.kind, note: 'anthropic endpoints authenticate via the harness at spawn; nothing to probe.' };
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        const target = base.replace(/\/+$/, '') + '/models';
+        const res = await fetch(target, { signal: controller.signal });
+        clearTimeout(timer);
+        return { ok: res.ok, status: res.status, target };
+      } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+    },
+
+    'POST /api/endpoints/delete': async (body) => {
+      const id = String(body?.id ?? '');
+      const desc = endpointsStore?.get(id);
+      if (!desc) throw new DomainError('not_found', `${id || '(empty)'} is not a user-added endpoint`);
+      if (desc.secretRef) keys.delete(desc.secretRef);
+      endpointsStore.remove(id);
+      const i = cfg.endpoints.findIndex((e) => e.id === id);
+      if (i >= 0) cfg.endpoints.splice(i, 1);
+      projection.endpoints.delete(id);
+      return { ok: true };
     },
   };
 

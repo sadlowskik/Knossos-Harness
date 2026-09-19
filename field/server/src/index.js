@@ -20,6 +20,8 @@ import { startRoutines } from './routines.js';
 import { FieldSimulator } from './simulation/field-simulator.js';
 import { createControlSecurity } from './security.js';
 import { readJsonBody } from './body.js';
+import { KeyStore } from './keystore.js';
+import { EndpointsStore } from './endpoints-store.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -49,6 +51,17 @@ const configuredSecrets = Object.entries(process.env)
   .map(([, value]) => value);
 configuredSecrets.push(security.bootstrapToken, security.browserToken);
 const log = new EventLog(STATE_DIR, { secrets: configuredSecrets });
+
+// UI-added models: keys live only in the gitignored key store; endpoint descriptors merge
+// over field.yaml. Register every stored key for event-log redaction before anything runs.
+const keys = new KeyStore(STATE_DIR);
+const endpointsStore = new EndpointsStore(STATE_DIR);
+for (const value of keys.values()) log.addSecret(value);
+for (const desc of endpointsStore.all()) {
+  const i = cfg.endpoints.findIndex((e) => e.id === desc.id);
+  if (i >= 0) cfg.endpoints[i] = { ...desc }; else cfg.endpoints.push({ ...desc });
+}
+
 const projection = new Projection(cfg);
 
 // Replay everything that ever happened. Live state and a historical replay are
@@ -118,6 +131,7 @@ const registry = new Registry({
   registerSecret: (secret) => log.addSecret(secret),
   campaignPolicy: (campaignId) => projection.campaigns.campaigns.get(campaignId) ?? null,
   budgetLedger: projection.budgets,
+  keys,
 });
 const director = new CampaignDirector({
   projection: projection.campaigns,
@@ -137,6 +151,7 @@ const simulator = process.env.FIELD_SIMULATION === '0'
 
 const api = createApi({
   cfg, projection, registry, director, simulator, routines, log,
+  keys, endpointsStore,
   broadcast: (msg) => hub.broadcast(msg),
 });
 
