@@ -204,7 +204,10 @@ export class Registry {
     // Manifest-driven adapter selection. resolveAdapterManifest reproduces the historical
     // mapping exactly: openai-compatible endpoints use the Knossos adapter, everything else
     // (anthropic and any unknown kind) falls back to the default direct Claude adapter.
-    const adapterManifest = resolveAdapterManifest(ep?.kind);
+    // Endpoint kind picks the adapter as before. An optional, opt-in `harness`/`adapter` field on
+    // the endpoint additively overrides that with a specific harness (e.g. 'acp'); when it is
+    // absent — every current config — selection is exactly the historical endpoint-kind mapping.
+    const adapterManifest = resolveAdapterManifest(ep?.kind, ep?.harness ?? ep?.adapter);
     const SessionAdapter = adapterManifest.Adapter;
     const permissionToken = SessionAdapter === HarnessSession
       ? this.permissionCapabilities?.mint(id)

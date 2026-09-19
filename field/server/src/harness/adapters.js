@@ -8,6 +8,7 @@
 import { defineAdapterManifest } from './adapter.js';
 import { HarnessSession } from './session.js';
 import { KnossosSession } from './knossos-session.js';
+import { AcpSession } from './acp-session.js';
 
 export const ADAPTER_MANIFESTS = [
   defineAdapterManifest({
@@ -51,14 +52,46 @@ export const ADAPTER_MANIFESTS = [
     },
     Adapter: KnossosSession,
   }),
+  defineAdapterManifest({
+    id: 'acp',
+    name: 'Agent Client Protocol (JSON-RPC over stdio)',
+    kind: 'acp',
+    // Intentionally empty: ACP is a HARNESS-kind axis, not an endpoint/engine kind. No endpoint
+    // kind auto-routes to it, so endpoint-kind resolution stays byte-identical to before. The
+    // adapter is reached only by an explicit harness selector (see resolveAdapterManifest below).
+    endpointKinds: [],
+    launch: { bin: 'FIELD_ACP_BIN', argv: 'FIELD_ACP_ARGS' },
+    auth: { via: 'child-env', keys: [] },
+    capabilities: {
+      kind: 'acp',
+      duplex: true,
+      resumable: true,
+      permissions: 'inline-handshake',
+      delegation: false,
+      browser: false,
+      verification: false,
+      dryRun: true,
+    },
+    Adapter: AcpSession,
+  }),
 ];
 
 /**
  * Resolve the adapter manifest for an endpoint/engine kind. A kind that no manifest claims
  * falls back to the default manifest — identical to the old ternary, where every non
  * `openai-compatible` endpoint used the direct Claude adapter.
+ *
+ * `explicitHarness` is an ADDITIVE second axis: when an endpoint/orders names a harness by id or
+ * kind (e.g. 'acp'), that manifest is selected regardless of endpoint kind. This is the seam that
+ * lets an operator say "drive this endpoint via the ACP harness." It is opt-in only — when
+ * absent (every existing call site and config), resolution is byte-identical to before, so the
+ * default selection behaviour is unchanged.
  */
-export function resolveAdapterManifest(endpointKind) {
+export function resolveAdapterManifest(endpointKind, explicitHarness) {
+  if (explicitHarness) {
+    const chosen = ADAPTER_MANIFESTS.find((m) => m.id === explicitHarness || m.kind === explicitHarness);
+    if (chosen) return chosen;
+  }
   return ADAPTER_MANIFESTS.find((m) => m.endpointKinds.includes(endpointKind))
     ?? ADAPTER_MANIFESTS.find((m) => m.default);
 }
