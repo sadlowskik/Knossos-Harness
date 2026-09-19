@@ -42,6 +42,31 @@ function formationSlot(i, count) {
   return { dx: t * spread, dy: 30 + row * 24 };
 }
 
+// Fold the synthetic rehearsal partition (snapshot().rehearsal) into a snapshot the
+// layout can lay out. The server keeps simulated sessions/folders/files in a separate
+// sub-projection so they never pollute live truth; the RTS lens opts in by merging them
+// here. Real facts always win a key collision, and when no simulation is running the
+// snapshot is returned untouched — so live behaviour is byte-for-byte unchanged.
+export function foldRehearsal(snap) {
+  const r = snap?.rehearsal;
+  if (!r) return snap;
+  const sessions = r.sessions ?? [];
+  const rFolders = r.folders ?? [];
+  const rFiles = r.files ?? [];
+  if (!sessions.length && !rFolders.length && !rFiles.length) return snap;
+
+  const haveFolder = new Set((snap.folders ?? []).map((f) => `${f.workspaceId}:${f.dir}`));
+  const haveFile = new Set((snap.files ?? []).map((f) => `${f.workspaceId}:${f.path}`));
+  const liveIds = new Set((snap.sessions ?? []).map((s) => s.id));
+
+  return {
+    ...snap,
+    sessions: [...(snap.sessions ?? []), ...sessions.filter((s) => !liveIds.has(s.id))],
+    folders: [...(snap.folders ?? []), ...rFolders.filter((f) => !haveFolder.has(`${f.workspaceId}:${f.dir}`))],
+    files: [...(snap.files ?? []), ...rFiles.filter((f) => !haveFile.has(`${f.workspaceId}:${f.path}`))],
+  };
+}
+
 export function computeLayout(snap, positions, now, config) {
   const regions = [];
   const regionById = new Map();

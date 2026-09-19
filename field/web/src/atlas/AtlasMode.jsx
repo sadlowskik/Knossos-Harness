@@ -154,7 +154,7 @@ function Mark({ identity }) {
   return <span className="atlas-mark" style={{ background: `hsl(${hue} 28% 24%)` }}>{initials(identity?.displayName ?? '?')}</span>;
 }
 
-function ColumnTranscript({ session, campaigns }) {
+export function ColumnTranscript({ session, campaigns }) {
   const sessionId = session.id;
   const [events, setEvents] = useState([]);
   const bottomRef = useRef(null);

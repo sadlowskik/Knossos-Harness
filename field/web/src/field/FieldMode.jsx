@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { computeLayout, pulseOf } from './layout.js';
+import { computeLayout, foldRehearsal, pulseOf } from './layout.js';
 import { draw, minimapRect, minimapToWorld, toScreen, toWorld } from './renderer.js';
 import {
   addSelection, clearSelection, getState, selectOnly, setState, toggleSelection, useField,
@@ -7,6 +7,7 @@ import {
 import { api } from '../net/client.js';
 import ContextMenu from '../hud/ContextMenu.jsx';
 import SelectionHUD from '../hud/SelectionHUD.jsx';
+import UnitInspector from './UnitInspector.jsx';
 import EndpointRail from '../hud/EndpointRail.jsx';
 import PermissionRequests from '../hud/PermissionRequests.jsx';
 
@@ -21,6 +22,7 @@ export default function FieldMode() {
   const [menu, setMenu] = useState(null);
   const [hover, setHover] = useState(null);
   const [showLabels, setShowLabels] = useState(false);
+  const [inspectId, setInspectId] = useState(null);
 
   const camRef = useRef(st.camera);
   const dirtyRef = useRef(true);
@@ -34,10 +36,17 @@ export default function FieldMode() {
   const reservedUsd = (st.snap.budgetReservations ?? [])
     .reduce((sum, row) => sum + (row.reservedUsd ?? 0), 0);
 
+  // Fold the synthetic rehearsal partition in before layout so simulated units render,
+  // anchor to the files their tool_use events touch, and walk there like live ones. When
+  // no simulation is running foldRehearsal returns the snapshot unchanged.
+  const foldedSnap = useMemo(() => foldRehearsal(st.snap), [st.snap]);
   const layout = useMemo(
-    () => computeLayout(st.snap, st.snap.positions ?? {}, Date.now(), st.config),
-    [st.snap, st.config],
+    () => computeLayout(foldedSnap, st.snap.positions ?? {}, Date.now(), st.config),
+    [foldedSnap, st.config, st.snap.positions],
   );
+  const inspectSession = inspectId
+    ? foldedSnap.sessions.find((s) => s.id === inspectId) ?? null
+    : null;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   dirtyRef.current = true;
@@ -413,6 +422,11 @@ export default function FieldMode() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onDoubleClick={(e) => {
+          const [sx, sy] = localPoint(e);
+          const hit = hitTest(sx, sy);
+          if (hit.type === 'agent') { selectOnly([hit.id]); setInspectId(hit.id); }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           const [sx, sy] = localPoint(e);
@@ -422,7 +436,7 @@ export default function FieldMode() {
       />
 
       <div className="field-hint label">
-        drag select · shift add · ctrl+digit group · right-click to assign · alt-drag pan · scroll zoom
+        drag select · shift add · double-click a unit for its city · ctrl+digit group · right-click to assign · alt-drag pan · scroll zoom
       </div>
 
       <div
@@ -449,6 +463,10 @@ export default function FieldMode() {
       <PermissionRequests />
       <SelectionHUD />
       <EndpointRail />
+
+      {inspectSession && (
+        <UnitInspector session={inspectSession} onClose={() => setInspectId(null)} />
+      )}
 
       {menu && (
         <ContextMenu
