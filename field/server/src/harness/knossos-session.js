@@ -4,10 +4,10 @@
 // This adapter translates those real events into the same Field vocabulary as the direct
 // Claude adapter, so campaigns do not care which harness/provider powers a unit.
 import { spawn } from 'node:child_process';
-import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
+import { HarnessAdapter } from './adapter.js';
 import { buildChildEnvironment } from '../child-env.js';
 
 const KNOSSOS_BIN = resolveKnossosBinary();
@@ -32,7 +32,7 @@ export function resolveKnossosBinary() {
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? 'knossos';
 }
 
-export class KnossosSession extends EventEmitter {
+export class KnossosSession extends HarnessAdapter {
   constructor(opts) {
     super();
     this.id = opts.id;
@@ -61,7 +61,20 @@ export class KnossosSession extends EventEmitter {
     this.stderr = '';
   }
 
-  emitEvent(kind, data) { this.emit('event', kind, { sessionId: this.id, ...data }); }
+  // emitEvent is inherited from HarnessAdapter (canonical Field-event emission point).
+
+  capabilities() {
+    return {
+      kind: 'ndjson-serve',
+      duplex: true,
+      resumable: true,
+      permissions: 'inline-handshake',
+      delegation: false,
+      browser: false,
+      verification: true,
+      dryRun: true,
+    };
+  }
 
   buildArgs() {
     const args = ['serve', '--workspace', this.cwd, '--engine', this.engine];

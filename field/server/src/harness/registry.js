@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { HarnessSession } from './session.js';
-import { KnossosSession } from './knossos-session.js';
+import { resolveAdapterManifest } from './adapters.js';
 import { composePrompt } from '../config.js';
 import { resolveWorkspacePath } from '../workspace-path.js';
 import { buildMatcher } from '../glob.js';
@@ -201,7 +201,11 @@ export class Registry {
     systemPrompt += `\n\n---\n\n# Delegation limit\n\nYou may create at most ${maxChildren} subagents. ` +
       `Maximum delegation depth for this Field is ${this.cfg.defaults.max_delegation_depth ?? 2}.`;
 
-    const SessionAdapter = ep?.kind === 'openai-compatible' ? KnossosSession : HarnessSession;
+    // Manifest-driven adapter selection. resolveAdapterManifest reproduces the historical
+    // mapping exactly: openai-compatible endpoints use the Knossos adapter, everything else
+    // (anthropic and any unknown kind) falls back to the default direct Claude adapter.
+    const adapterManifest = resolveAdapterManifest(ep?.kind);
+    const SessionAdapter = adapterManifest.Adapter;
     const permissionToken = SessionAdapter === HarnessSession
       ? this.permissionCapabilities?.mint(id)
       : null;

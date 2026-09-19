@@ -2,8 +2,8 @@
 // Every Field event about an agent originates in this file, parsed from that process's
 // actual stdout. Nothing is synthesized.
 import { spawn } from 'node:child_process';
-import { EventEmitter } from 'node:events';
 import { createInterface } from 'node:readline';
+import { HarnessAdapter } from './adapter.js';
 import { describeTool } from './tools.js';
 import { buildChildEnvironment } from '../child-env.js';
 
@@ -14,7 +14,7 @@ const CLAUDE_BIN = process.env.FIELD_CLAUDE_BIN || 'claude';
 // level is recorded on the spawn event so the operator can see what was chosen.
 const EFFORT = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
-export class HarnessSession extends EventEmitter {
+export class HarnessSession extends HarnessAdapter {
   constructor(opts) {
     super();
     this.id = opts.id;                       // uuid, also the harness --session-id
@@ -48,8 +48,19 @@ export class HarnessSession extends EventEmitter {
     this.turnSawUsage = false;
   }
 
-  emitEvent(kind, data) {
-    this.emit('event', kind, { sessionId: this.id, ...data });
+  // emitEvent is inherited from HarnessAdapter (canonical Field-event emission point).
+
+  capabilities() {
+    return {
+      kind: 'cli-stream-json',
+      duplex: true,
+      resumable: true,
+      permissions: 'mcp-bridge',
+      delegation: true,
+      browser: true,
+      verification: false,
+      dryRun: false,
+    };
   }
 
   buildArgs({ resume = false } = {}) {
