@@ -268,6 +268,29 @@ pub struct ActionIntent {
     pub tool: String,
     pub input_hash: String,
     pub at_workspace_revision: u64,
+    /// Workspace-relative paths the call named, so an interrupted action can
+    /// be re-observed on resume. Empty for tools that name no path (`run`).
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+/// What resume found when an action's intent had no recorded result: the
+/// process ended between doing and recording. Nothing is replayed; the current
+/// state of each named target is observed and recorded, and the engine is told
+/// the outcome is unknown.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReconciledAction {
+    pub call_id: String,
+    pub tool: String,
+    pub observations: Vec<Observation>,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Observation {
+    pub path: String,
+    /// Digest of the file's current bytes, `None` when it does not exist.
+    pub digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -341,6 +364,8 @@ pub struct MissionState {
     #[serde(default)]
     pub environment: Option<EnvironmentRecord>,
     pub pending_actions: BTreeMap<String, ActionIntent>,
+    #[serde(default)]
+    pub reconciled_actions: Vec<ReconciledAction>,
     pub failures: Vec<FailureRecord>,
     pub children: BTreeMap<String, ChildRecord>,
     pub verification: VerificationState,
@@ -394,6 +419,7 @@ impl MissionState {
             },
             environment: None,
             pending_actions: BTreeMap::new(),
+            reconciled_actions: Vec::new(),
             failures: Vec::new(),
             children: BTreeMap::new(),
             verification: VerificationState::default(),
@@ -437,6 +463,10 @@ pub enum MissionEvent {
         succeeded: bool,
         result_hash: String,
         changed_paths: Vec<String>,
+    },
+    /// An intent whose result never arrived, closed by observation on resume.
+    ConsequentialReconciled {
+        action: ReconciledAction,
     },
     ApprovalDecision {
         lease_id: String,
@@ -732,6 +762,36 @@ impl MissionStore {
         Ok(store)
     }
 
+    /// Close every pending action by observation rather than refusing to
+    /// resume. Returns what was reconciled so the caller can tell the engine.
+    pub fn reconcile_pending(&mut self, root: &Path) -> Result<Vec<ReconciledAction>> {
+        let pending: Vec<ActionIntent> = self.state.pending_actions.values().cloned().collect();
+        let mut reconciled = Vec::with_capacity(pending.len());
+        for intent in pending {
+            let observations = intent
+                .targets
+                .iter()
+                .map(|target| Observation {
+                    path: target.clone(),
+                    digest: observe_target(root, target),
+                })
+                .collect();
+            let action = ReconciledAction {
+                call_id: intent.call_id.clone(),
+                tool: intent.tool.clone(),
+                observations,
+                note: "the process ended before this call's result was recorded; \
+                       its effect is unknown and was not replayed"
+                    .into(),
+            };
+            self.append(MissionEvent::ConsequentialReconciled {
+                action: action.clone(),
+            })?;
+            reconciled.push(action);
+        }
+        Ok(reconciled)
+    }
+
     pub fn state(&self) -> &MissionState {
         &self.state
     }
@@ -1016,6 +1076,31 @@ fn apply_event(state: &mut MissionState, event: &MissionEvent) -> Result<()> {
                 state.verification.final_verdict = FinalVerdict::Unverified;
             }
         }
+        MissionEvent::ConsequentialReconciled { action } => {
+            let intent = state
+                .pending_actions
+                .remove(&action.call_id)
+                .context("reconciled action has no pending intent")?;
+            if intent.tool != action.tool {
+                bail!("reconciled action tool does not match its intent");
+            }
+            // The action may have changed the tree: treat it as a change of
+            // unknown content so every proof is invalidated and the closing
+            // verification covers what it touched.
+            state.budget.tools_used = state.budget.tools_used.saturating_add(1);
+            state.workspace.revision = state.workspace.revision.saturating_add(1);
+            state
+                .workspace
+                .changed_paths
+                .extend(action.observations.iter().map(|o| o.path.clone()));
+            for proof in state.verification.required_checks.values_mut() {
+                if proof.bound_revision != Some(state.workspace.revision) {
+                    proof.status = ProofStatus::Invalidated;
+                }
+            }
+            state.verification.final_verdict = FinalVerdict::Unverified;
+            state.reconciled_actions.push(action.clone());
+        }
         MissionEvent::ApprovalDecision {
             lease_id,
             capability,
@@ -1266,6 +1351,22 @@ fn legacy_digest(bytes: &[u8]) -> String {
 /// Tool output can contain source, credentials, or other operator data. The
 /// durable mission keeps only this fingerprint; full content remains in the
 /// explicitly opt-in trace path.
+/// Digest of a workspace-relative target's current bytes; `None` if it does
+/// not exist or the path would leave the workspace.
+fn observe_target(root: &Path, target: &str) -> Option<String> {
+    let relative = Path::new(target);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    std::fs::read(root.join(relative))
+        .ok()
+        .map(|bytes| evidence_digest(&bytes))
+}
+
 pub fn evidence_digest(bytes: &[u8]) -> String {
     digest(bytes)
 }
@@ -1329,8 +1430,67 @@ mod tests {
                 tool: tool.into(),
                 input_hash: "sha1:input".into(),
                 at_workspace_revision: revision,
+                targets: Vec::new(),
             },
         }
+    }
+
+    #[test]
+    fn an_interrupted_action_is_reconciled_by_observation_not_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("touched.rs"), b"pub fn after() {}\n").unwrap();
+        let state = state_with_environment(dir.path(), "mission-rec");
+        let mut store = MissionStore::create(dir.path(), state).unwrap();
+        store
+            .append(MissionEvent::ConsequentialIntent {
+                intent: ActionIntent {
+                    call_id: "call-9".into(),
+                    tool: "write_file".into(),
+                    input_hash: "sha1:input".into(),
+                    at_workspace_revision: 0,
+                    targets: vec!["touched.rs".into(), "never-written.rs".into()],
+                },
+            })
+            .unwrap();
+        assert_eq!(store.state().pending_actions.len(), 1);
+        let revision_before = store.state().workspace.revision;
+
+        let reconciled = store.reconcile_pending(dir.path()).unwrap();
+        assert_eq!(reconciled.len(), 1);
+        assert_eq!(reconciled[0].call_id, "call-9");
+        assert_eq!(reconciled[0].observations.len(), 2);
+        assert!(
+            reconciled[0].observations[0].digest.is_some(),
+            "existing file digested"
+        );
+        assert!(
+            reconciled[0].observations[1].digest.is_none(),
+            "missing file observed as absent"
+        );
+
+        assert!(store.state().pending_actions.is_empty());
+        assert_eq!(store.state().reconciled_actions.len(), 1);
+        assert_eq!(store.state().workspace.revision, revision_before + 1);
+        assert!(store
+            .state()
+            .workspace
+            .changed_paths
+            .iter()
+            .any(|path| path == "touched.rs"));
+
+        // The journal replays cleanly with the new event in it.
+        let reopened = MissionStore::open(dir.path(), "mission-rec").unwrap();
+        assert!(reopened.state().pending_actions.is_empty());
+        assert_eq!(
+            reopened.state().reconciled_actions,
+            store.state().reconciled_actions
+        );
+    }
+
+    #[test]
+    fn reconciliation_never_reads_outside_the_workspace() {
+        assert!(observe_target(Path::new("/nonexistent-root"), "../etc/passwd").is_none());
+        assert!(observe_target(Path::new("/nonexistent-root"), "/etc/passwd").is_none());
     }
 
     #[test]

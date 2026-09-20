@@ -251,6 +251,11 @@ struct ConversationState {
     attempt_parent: Option<String>,
     plan_remainder: Vec<String>,
     quota: Option<crate::engine::budget::RecoveryQuota>,
+    /// The Oracle baseline taken before the agent changed anything, so a
+    /// resumed mission forgives exactly what a fresh one would. Absent in
+    /// checkpoints written before this field existed.
+    #[serde(default)]
+    baseline: Option<crate::oracle::BaselineSnapshot>,
 }
 
 impl Talos {
@@ -504,6 +509,7 @@ impl Talos {
                 .as_ref()
                 .map(|quota| quota.recovery_snapshot())
                 .transpose()?,
+            baseline: self.oracle.snapshot(),
         };
         self.mission
             .as_mut()
@@ -520,7 +526,10 @@ impl Talos {
         );
         let store = MissionStore::open_for_resume(self.ctx.root(), mission_id)?;
         let lock = store.lock_execution()?;
-        let store = MissionStore::open_for_resume(self.ctx.root(), mission_id)?;
+        let mut store = MissionStore::open_for_resume(self.ctx.root(), mission_id)?;
+        // An intent with no recorded result is closed by observing its targets
+        // now, not by refusing to resume and not by replaying it.
+        let reconciled = store.reconcile_pending(self.ctx.root())?;
         let saved: ConversationState = serde_json::from_value(store.load_conversation()?)?;
         anyhow::ensure!(
             saved.policy_hash == self.recovery_policy_hash()?,
@@ -551,12 +560,52 @@ impl Talos {
         self.environment = store.state().environment.clone();
         self.mission = Some(store);
         self.recovery_lock = Some(lock);
-        // A fresh baseline must not forgive failures introduced by the prior
-        // process. Until baseline serialization lands, resumed verification is
-        // strict and can require repair of pre-existing failures as well.
-        self.oracle = Oracle::new(self.ctx.root()).without_baseline();
+        // The checkpoint carries the baseline the prior process measured, so
+        // the resumed mission forgives exactly the same pre-existing failures.
+        // A checkpoint from before that field existed falls back to strict.
+        self.oracle = match saved.baseline {
+            Some(snapshot) => Oracle::new(self.ctx.root()).with_snapshot(snapshot),
+            None => Oracle::new(self.ctx.root()).without_baseline(),
+        };
+        for action in &reconciled {
+            for observation in &action.observations {
+                self.changed.insert(PathBuf::from(&observation.path));
+            }
+            let observed = if action.observations.is_empty() {
+                "it named no file".to_string()
+            } else {
+                action
+                    .observations
+                    .iter()
+                    .map(|o| match &o.digest {
+                        Some(digest) => format!("{} exists (digest {digest})", o.path),
+                        None => format!("{} does not exist", o.path),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            };
+            self.messages.push(Message::user_text(format!(
+                "Recovery notice: your earlier call {} ({}) was interrupted before its \
+                 result was recorded, so whether it took effect is unknown. Current \
+                 state: {observed}. Re-check before relying on it; nothing was replayed.",
+                action.call_id, action.tool
+            )));
+        }
         Ok(())
     }
+}
+
+/// The workspace paths a tool call names (`path`, or a `paths` list), recorded
+/// with its intent so an interrupted call can be re-observed on resume.
+fn intent_targets(input: &serde_json::Value) -> Vec<String> {
+    let mut targets = Vec::new();
+    if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
+        targets.push(path.to_string());
+    }
+    if let Some(paths) = input.get("paths").and_then(|v| v.as_array()) {
+        targets.extend(paths.iter().filter_map(|v| v.as_str()).map(str::to_string));
+    }
+    targets
 }
 
 fn validate_conversation(messages: &[Message]) -> Result<()> {
@@ -1930,6 +1979,7 @@ impl Talos {
                                 tool: name.clone(),
                                 input_hash: evidence_digest(input.to_string().as_bytes()),
                                 at_workspace_revision: revision,
+                                targets: intent_targets(input),
                             },
                         })?;
                     }

@@ -159,6 +159,15 @@ impl Verdict {
     }
 }
 
+/// [`Baseline`] as checkpoint data. Tuple map keys do not survive JSON, so the
+/// per-tier tallies are flattened into `(tier, file, message, count)` rows.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BaselineSnapshot {
+    pub passed: std::collections::BTreeMap<u8, bool>,
+    pub diags: Vec<(u8, String, String, usize)>,
+    pub tests: Option<std::collections::BTreeMap<PathBuf, usize>>,
+}
+
 /// What the ladder already complained about, before the agent touched anything.
 #[derive(Debug, Clone, Default)]
 struct Baseline {
@@ -344,6 +353,49 @@ impl Oracle {
     /// that [`Oracle::prepare`] costs is not worth paying for.
     pub fn without_baseline(mut self) -> Self {
         self.use_baseline = false;
+        self
+    }
+
+    /// The prepared baseline in a form that can ride in a mission checkpoint.
+    /// `None` when no baseline was taken (forgiveness off, or `prepare` has
+    /// not run yet).
+    pub fn snapshot(&self) -> Option<BaselineSnapshot> {
+        let baseline = self.baseline.as_ref()?;
+        Some(BaselineSnapshot {
+            passed: baseline.passed.clone(),
+            diags: baseline
+                .diags
+                .iter()
+                .flat_map(|(tier, tally)| {
+                    tally.iter().map(move |((file, message), count)| {
+                        (*tier, file.clone(), message.clone(), *count)
+                    })
+                })
+                .collect(),
+            tests: self.baseline_tests.clone(),
+        })
+    }
+
+    /// Restore a baseline taken by an earlier process, so a resumed mission
+    /// forgives exactly the failures a fresh one would have. Marks the oracle
+    /// prepared: the ladder is not run again to re-measure what is known.
+    pub fn with_snapshot(mut self, snapshot: BaselineSnapshot) -> Self {
+        let mut baseline = Baseline {
+            passed: snapshot.passed,
+            diags: Default::default(),
+        };
+        for (tier, file, message, count) in snapshot.diags {
+            *baseline
+                .diags
+                .entry(tier)
+                .or_default()
+                .entry((file, message))
+                .or_insert(0) += count;
+        }
+        self.baseline = Some(baseline);
+        self.baseline_tests = snapshot.tests;
+        self.use_baseline = true;
+        self.prepared = true;
         self
     }
 
@@ -1509,5 +1561,50 @@ mod tests {
         assert!(!v.deterministic_tiers_passed(), "dry run must gate tier 4");
         assert!(v.report().contains("preview, not verification"));
         assert!(v.summary().contains("syntax only"));
+    }
+}
+
+#[cfg(test)]
+mod baseline_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn a_baseline_round_trips_through_its_snapshot() {
+        let mut oracle = Oracle::new(std::env::temp_dir());
+        let mut baseline = Baseline::default();
+        baseline.passed.insert(1, false);
+        baseline.passed.insert(2, true);
+        *baseline
+            .diags
+            .entry(1)
+            .or_default()
+            .entry(("src/lib.rs".into(), "mismatched types".into()))
+            .or_insert(0) += 3;
+        oracle.baseline = Some(baseline.clone());
+        oracle.baseline_tests = Some(
+            [(PathBuf::from("src/lib.rs"), 2usize)]
+                .into_iter()
+                .collect(),
+        );
+
+        let snapshot = oracle.snapshot().expect("a prepared oracle has a snapshot");
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let back: BaselineSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, snapshot);
+
+        let restored = Oracle::new(std::env::temp_dir()).with_snapshot(back);
+        assert!(restored.prepared && restored.use_baseline);
+        let again = restored.baseline.as_ref().unwrap();
+        assert_eq!(again.passed, baseline.passed);
+        assert_eq!(
+            again.diags[&1][&("src/lib.rs".to_string(), "mismatched types".to_string())],
+            3
+        );
+        assert_eq!(restored.baseline_tests, oracle.baseline_tests);
+    }
+
+    #[test]
+    fn no_baseline_means_no_snapshot() {
+        assert!(Oracle::new(std::env::temp_dir()).snapshot().is_none());
     }
 }
