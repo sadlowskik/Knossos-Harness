@@ -83,20 +83,36 @@ jobs:
         # log. Time out from inside instead, so the step *fails*, the log
         # names every test that finished, and the process tree shows what
         # was still running.
+        # Output goes to a file rather than through a pipe: a test binary
+        # that outlives cargo would otherwise hold the pipe open and keep
+        # the step alive past any timeout, which is exactly what happened
+        # with `timeout(1)` in front of cargo.
         run: |
-          set -o pipefail
           LOG="$GITHUB_WORKSPACE/ci-rust.log"
-          BOUND=""
-          if command -v timeout >/dev/null 2>&1; then BOUND="timeout -k 30 25m"; fi
-          status=0
-          $BOUND cargo test --all-targets --locked 2>&1 | tee "$LOG" || status=$?
-          if [ "$status" -ne 0 ]; then
-            {
-              echo "=== cargo test exited $status (124 = timed out); processes still alive:"
-              ps -eo pid,ppid,etime,stat,args 2>/dev/null || ps -ef || true
-            } | tee -a "$LOG"
-            exit "$status"
+          if command -v setsid >/dev/null 2>&1; then
+            setsid cargo test --all-targets --locked > "$LOG" 2>&1 &
+          else
+            cargo test --all-targets --locked > "$LOG" 2>&1 &
           fi
+          pid=$!
+          deadline=$((SECONDS + 1500))
+          while kill -0 "$pid" 2>/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              {
+                echo "=== cargo test still running after 25 minutes; processes alive:"
+                ps -eo pid,ppid,pgid,etime,stat,args 2>/dev/null || ps -ef || true
+                echo "=== tests that never reported (compare against a green run)"
+              } >> "$LOG"
+              kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+              pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
+              cat "$LOG"
+              exit 124
+            fi
+            sleep 5
+          done
+          wait "$pid"; status=$?
+          cat "$LOG"
+          exit "$status"
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
