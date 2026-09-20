@@ -519,6 +519,8 @@ struct Snapshot {
 }
 
 pub struct MissionStore {
+    /// Canonical workspace root. Symlink refusal applies below it only.
+    workspace: PathBuf,
     dir: PathBuf,
     journal: PathBuf,
     state: MissionState,
@@ -531,7 +533,7 @@ impl MissionStore {
     /// Held by a checkpoint-enabled executor for its entire ownership period.
     pub fn lock_execution(&self) -> Result<std::fs::File> {
         let path = self.dir.join("execution.lock");
-        reject_symlink_components(&path)?;
+        reject_symlink_components(&path, &self.workspace)?;
         let mut options = std::fs::OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -567,7 +569,7 @@ impl MissionStore {
         let hash = format!("{:x}", sha2::Sha256::digest(&bytes));
         let id = format!("conversation-{hash}");
         let path = self.dir.join(format!("{id}.json"));
-        reject_symlink_components(&path)?;
+        reject_symlink_components(&path, &self.workspace)?;
         let mut file = secure_create_new(&path)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
@@ -597,7 +599,7 @@ impl MissionStore {
             "invalid checkpoint identity"
         );
         let path = self.dir.join(format!("{id}.json"));
-        reject_symlink_components(&path)?;
+        reject_symlink_components(&path, &self.workspace)?;
         anyhow::ensure!(
             std::fs::metadata(&path)?.is_file(),
             "checkpoint is not a regular file"
@@ -644,8 +646,9 @@ impl MissionStore {
 
     pub fn create(workspace: impl AsRef<Path>, state: MissionState) -> Result<Self> {
         validate_state(&state)?;
-        let dir = mission_dir(workspace.as_ref(), &state.identity.mission_id)?;
-        reject_symlink_components(&dir)?;
+        let workspace = canonical_workspace(workspace.as_ref())?;
+        let dir = mission_dir(&workspace, &state.identity.mission_id)?;
+        reject_symlink_components(&dir, &workspace)?;
         std::fs::create_dir_all(&dir)?;
         secure_directory(&dir)?;
         let journal = dir.join("journal.jsonl");
@@ -653,6 +656,7 @@ impl MissionStore {
             bail!("mission `{}` already exists", state.identity.mission_id);
         }
         let mut store = Self {
+            workspace: workspace.clone(),
             dir,
             journal,
             state: state.clone(),
@@ -670,8 +674,9 @@ impl MissionStore {
     /// mission actionable, so legacy or drifted journals remain inspectable.
     pub fn open(workspace: impl AsRef<Path>, mission_id: &str) -> Result<Self> {
         validate_id(mission_id)?;
-        let dir = mission_dir(workspace.as_ref(), mission_id)?;
-        reject_symlink_components(&dir)?;
+        let workspace = canonical_workspace(workspace.as_ref())?;
+        let dir = mission_dir(&workspace, mission_id)?;
+        reject_symlink_components(&dir, &workspace)?;
         let journal = dir.join("journal.jsonl");
         if std::fs::metadata(&journal)?.len() > MAX_MISSION_JOURNAL_BYTES {
             bail!(
@@ -735,6 +740,7 @@ impl MissionStore {
         }
         let state = state.context("mission journal has no creation event")?;
         Ok(Self {
+            workspace,
             dir,
             journal,
             state,
@@ -837,7 +843,7 @@ impl MissionStore {
                 MAX_MISSION_EVENT_BYTES
             );
         }
-        reject_symlink_components(&self.journal)?;
+        reject_symlink_components(&self.journal, &self.workspace)?;
         let existing = std::fs::metadata(&self.journal).map_or(0, |metadata| metadata.len());
         if existing.saturating_add(encoded.len() as u64 + 1) > MAX_MISSION_JOURNAL_BYTES {
             bail!(
@@ -862,7 +868,7 @@ impl MissionStore {
 
     pub fn snapshot(&self) -> Result<PathBuf> {
         let snapshots = self.dir.join("snapshots");
-        reject_symlink_components(&snapshots)?;
+        reject_symlink_components(&snapshots, &self.workspace)?;
         std::fs::create_dir_all(&snapshots)?;
         secure_directory(&snapshots)?;
         let state_json = serde_json::to_vec(&self.state)?;
@@ -1291,8 +1297,23 @@ fn mission_dir(workspace: &Path, mission_id: &str) -> Result<PathBuf> {
     Ok(workspace.join(".knossos").join("missions").join(mission_id))
 }
 
-fn reject_symlink_components(path: &Path) -> Result<()> {
+/// The workspace root as the filesystem knows it. Mission paths are built from
+/// this, so a symlinked root (macOS's `/var` -> `/private/var`, a developer's
+/// linked checkout) resolves once here instead of failing every guard below.
+fn canonical_workspace(workspace: &Path) -> Result<PathBuf> {
+    workspace
+        .canonicalize()
+        .with_context(|| format!("workspace {} is not accessible", workspace.display()))
+}
+
+/// Refuse a symlink anywhere between the workspace root and `path`. Ancestors
+/// at or above the root are the operator's filesystem, not mission storage,
+/// and the root itself is canonical, so they are not inspected.
+fn reject_symlink_components(path: &Path, workspace: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
+        if ancestor == workspace || !ancestor.starts_with(workspace) {
+            break;
+        }
         if std::fs::symlink_metadata(ancestor)
             .is_ok_and(|metadata| metadata.file_type().is_symlink())
         {

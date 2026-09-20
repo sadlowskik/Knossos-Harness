@@ -27,7 +27,9 @@ fs.writeFileSync(path.join(outside, 'escape.txt'), 'escape');
 const workspace = canonicalizeWorkspace({ id: 'fixture', path: root }, fixture);
 const cfg = { workspaces: [workspace] };
 assert.equal(workspace.mounted, true);
-assert.equal(workspace.path, fs.realpathSync(root));
+// The same native realpath the canonicalizer uses: on Windows CI the temp dir
+// arrives as an 8.3 short name (RUNNER~1) that only the native call expands.
+assert.equal(workspace.path, (fs.realpathSync.native ?? fs.realpathSync)(root));
 
 const visible = resolveWorkspacePath(cfg, 'fixture', 'src/visible.txt', { type: 'file' });
 assert.equal(readWorkspaceFile(visible), 'visible');
