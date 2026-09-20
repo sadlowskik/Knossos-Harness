@@ -511,6 +511,19 @@ mod platform {
         if !Path::new(SANDBOX_EXEC).is_file() {
             return Err(format!("{SANDBOX_EXEC} is not present on this macOS"));
         }
+        // A program that does not exist must fail at spawn with NotFound, as
+        // it does on every other platform: the Oracle skips an absent
+        // verifier on exactly that error. Wrapped, the spawn would succeed
+        // (sandbox-exec exists) and the absence would surface as an exit
+        // code instead. Nothing runs either way, so the level is unchanged.
+        if !resolves(program) {
+            return Ok((
+                tokio::process::Command::new(program),
+                Confinement::Seatbelt {
+                    network_denied: jail.deny_network,
+                },
+            ));
+        }
         let profile = profile(jail);
         let mut command = tokio::process::Command::new(SANDBOX_EXEC);
         command.arg("-p").arg(profile).arg(program);
@@ -520,6 +533,17 @@ mod platform {
                 network_denied: jail.deny_network,
             },
         ))
+    }
+
+    /// Whether `program` names an existing file, directly or through `PATH`
+    /// (the child's `PATH` is the parent's: the sandbox admits it unchanged).
+    fn resolves(program: &str) -> bool {
+        if program.contains('/') {
+            return Path::new(program).is_file();
+        }
+        std::env::var_os("PATH")
+            .map(|list| std::env::split_paths(&list).any(|dir| dir.join(program).is_file()))
+            .unwrap_or(false)
     }
 
     fn quote(path: &Path) -> String {
