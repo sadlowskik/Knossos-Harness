@@ -231,6 +231,14 @@ Two properties are structural rather than advisory:
 
 Both are covered by tests that attempt the escape.
 
+What these do **not** cover, stated plainly: the jail binds the harness's own
+tools. A command the harness runs — `cargo test`, `pytest`, anything on the
+allowlist — executes with your user's filesystem and network permissions, in a
+cleared environment (only an allowlist of variables, never provider keys). It is
+an environment jail for child processes, not a workspace jail. If the code under
+test must be confined too, run Knossos inside a container or VM; nothing here
+pretends to replace that.
+
 ## The trace
 
 Every plan, step, tool call, Oracle verdict and halt decision is appended to a

@@ -77,7 +77,10 @@ export class KnossosSession extends HarnessAdapter {
   }
 
   buildArgs() {
-    const args = ['serve', '--workspace', this.cwd, '--engine', this.engine];
+    // Every Field-launched mission is checkpointed: the adapter advertises
+    // `resumable`, and without this flag `serve` keeps the mission in memory
+    // only, so a restart lost it and accept/revert had nothing to decide.
+    const args = ['serve', '--workspace', this.cwd, '--engine', this.engine, '--persist-conversation'];
     if (this.model) args.push('--model', this.model);
     if (this.readOnly || ['snapshot', 'production-readonly'].includes(this.environmentScope)) {
       args.push('--dry-run');
