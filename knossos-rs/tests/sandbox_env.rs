@@ -9,6 +9,9 @@
 //! So this compiles an actual crate through the sandboxed environment.
 
 use std::path::Path;
+// Only the Windows-only grandchild-kill test below uses it; on Linux the
+// import is unused and clippy -D warnings rejects the crate.
+#[cfg(windows)]
 use std::time::Duration;
 
 use knossos::sandbox::Sandbox;
