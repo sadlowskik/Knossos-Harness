@@ -507,6 +507,8 @@ impl Agent {
         Ok(json!({
             "stopReason": stop_reason(outcome.halt),
             "missionId": talos.mission_id(),
+            "residualRisk": outcome.residual_risk,
+            "recovery": outcome.recovery,
         }))
     }
 
@@ -675,7 +677,7 @@ impl Agent {
 fn stop_reason(halt: Halt) -> &'static str {
     match halt {
         Halt::Done | Halt::Stuck | Halt::Continue => "end_turn",
-        Halt::BudgetExhausted => "max_turn_requests",
+        Halt::BudgetExhausted | Halt::DeadlineExceeded => "max_turn_requests",
         Halt::Cancelled => "cancelled",
     }
 }

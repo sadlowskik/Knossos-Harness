@@ -139,12 +139,14 @@ impl Engine for OllamaEngine {
             })?;
 
         let status = resp.status();
+        let retry_after = crate::engine::error::retry_after_seconds(resp.headers());
         let text = resp.text().await.context("reading Ollama response body")?;
         if !status.is_success() {
             return Err(crate::engine::EngineError::Status {
                 provider: PROVIDER,
                 status: status.as_u16(),
                 body: text,
+                retry_after,
             }
             .into());
         }

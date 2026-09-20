@@ -31,6 +31,9 @@ pub enum EngineError {
         provider: &'static str,
         status: u16,
         body: String,
+        /// `Retry-After` in seconds when the backend sent one (429/503), so
+        /// the retry policy waits what was asked rather than guessing.
+        retry_after: Option<u64>,
     },
 
     /// The request never got an answer: connection refused, DNS, a timeout.
@@ -63,6 +66,14 @@ impl EngineError {
         }
     }
 
+    /// The backend's `Retry-After`, in seconds, when it sent one.
+    pub fn retry_after(&self) -> Option<u64> {
+        match self {
+            EngineError::Status { retry_after, .. } => *retry_after,
+            EngineError::Transport { .. } | EngineError::Budget { .. } => None,
+        }
+    }
+
     /// The HTTP status, when the failure had one.
     pub fn status(&self) -> Option<u16> {
         match self {
@@ -70,6 +81,16 @@ impl EngineError {
             EngineError::Transport { .. } | EngineError::Budget { .. } => None,
         }
     }
+}
+
+/// Seconds from a `Retry-After` header. Only the delta-seconds form is honoured;
+/// an HTTP-date is rare from model APIs and a wrong guess would be worse than
+/// falling back to exponential backoff.
+pub fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 #[cfg(test)]
@@ -81,6 +102,7 @@ mod tests {
             provider: "Test API",
             status: code,
             body: "b".into(),
+            retry_after: None,
         }
     }
 
@@ -125,7 +147,9 @@ mod tests {
             provider: "Anthropic API",
             status: 429,
             body: "rate limited".into(),
+            retry_after: Some(7),
         };
+        assert_eq!(e.retry_after(), Some(7));
         assert_eq!(e.to_string(), "Anthropic API returned 429: rate limited");
     }
 }

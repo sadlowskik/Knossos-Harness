@@ -236,6 +236,9 @@ pub struct Talos {
     recovery_identity: Option<String>,
     recovery_lock: Option<std::fs::File>,
     shared_quota: Option<Arc<crate::engine::budget::Quota>>,
+    /// Wall-clock bound for the current run, armed from `ariadne.deadline`
+    /// when `run`/`resume` begins so per-step drives share one clock.
+    run_deadline: Option<std::time::Instant>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -308,6 +311,7 @@ impl Talos {
             recovery_identity: None,
             recovery_lock: None,
             shared_quota: None,
+            run_deadline: None,
         }
     }
 
@@ -760,6 +764,13 @@ pub struct Outcome {
     pub summary: String,
     /// True when nothing was written to disk.
     pub dry_run: bool,
+    /// What a reader should still worry about: verification that did not run
+    /// or did not pass, changes left unverified, effects that are unknown.
+    /// Empty only for a verified, written, completed run with nothing pending.
+    pub residual_risk: Vec<String>,
+    /// The concrete next commands: accept, revert, resume, apply. Portable so
+    /// a front end can render them as actions without knowing the CLI.
+    pub recovery: Vec<String>,
 }
 
 impl Outcome {
@@ -769,6 +780,14 @@ impl Outcome {
 }
 
 impl Talos {
+    /// Start the wall-clock budget for a run, if one is configured.
+    fn arm_deadline(&mut self) {
+        self.run_deadline = self
+            .ariadne
+            .deadline
+            .map(|deadline| std::time::Instant::now() + deadline);
+    }
+
     /// Play a different role than the default executor.
     pub fn with_role(mut self, role: impl Into<String>) -> Self {
         self.role = role.into();
@@ -1144,6 +1163,7 @@ impl Talos {
 
     /// Start a fresh task, discarding any previous conversation.
     pub async fn run(&mut self, task: &str, plan: &Plan) -> Result<Outcome> {
+        self.arm_deadline();
         self.start_mission(task, plan)?;
         self.session.log(&TraceEvent::PlanProduced {
             steps: plan.steps.clone(),
@@ -1192,6 +1212,7 @@ impl Talos {
     /// The step budget resets: each thing the user asks for gets its own
     /// allowance, rather than one budget draining across a long session.
     pub async fn resume(&mut self, instruction: &str) -> Result<Outcome> {
+        self.arm_deadline();
         if self.messages.is_empty() {
             let plan = Plan {
                 steps: vec![instruction.to_string()],
@@ -1264,6 +1285,7 @@ impl Talos {
                 max_steps: per_step,
                 target_steps: per_step.saturating_sub(1).max(1),
                 stuck_after: self.ariadne.stuck_after,
+                deadline: None,
             };
             let mark = self.ctx.checkpoint(format!("step-{}", index + 1));
             self.plan_remainder = steps[index + 1..].to_vec();
@@ -1331,6 +1353,7 @@ impl Talos {
             max_steps: reserve,
             target_steps: reserve.saturating_sub(1).max(1),
             stuck_after: self.ariadne.stuck_after,
+            deadline: None,
         };
         // Relaxed only when the plan actually accomplished something.
         // Otherwise this phase is a second door onto "every step did
@@ -1349,6 +1372,8 @@ impl Talos {
             verdict: final_outcome.verdict,
             summary: final_outcome.summary,
             dry_run: final_outcome.dry_run,
+            residual_risk: final_outcome.residual_risk,
+            recovery: final_outcome.recovery,
         })
     }
 
@@ -1723,6 +1748,21 @@ impl Talos {
         let mut recent: VecDeque<String> = VecDeque::with_capacity(FUTILE_WINDOW);
 
         for step in 1..=budget.max_steps {
+            // Wall-clock bound for the whole run, checked at the same boundary
+            // as cancellation so an overrun stops the next engine call rather
+            // than the one after.
+            if self
+                .run_deadline
+                .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            {
+                return self.finish(
+                    Halt::DeadlineExceeded,
+                    step - 1,
+                    last_verdict,
+                    &last_text,
+                    matches!(verify, VerifyMode::Full),
+                );
+            }
             // Checked before the engine call rather than after, so cancelling
             // stops the next request going out instead of paying for a turn
             // whose answer is already unwanted.
@@ -2169,7 +2209,9 @@ impl Talos {
         } else {
             let to = match halt {
                 Halt::Stuck => MissionPhase::Blocked,
-                Halt::BudgetExhausted | Halt::Cancelled => MissionPhase::Paused,
+                Halt::BudgetExhausted | Halt::DeadlineExceeded | Halt::Cancelled => {
+                    MissionPhase::Paused
+                }
                 Halt::Done | Halt::Continue => unreachable!(),
             };
             self.transition_mission(to, halt.label())?;
@@ -2212,6 +2254,7 @@ impl Talos {
             outcome: halt.label().to_string(),
         });
 
+        let (residual_risk, recovery) = self.assess_result(halt, &verdict);
         Ok(Outcome {
             halt,
             steps_used: step,
@@ -2219,7 +2262,76 @@ impl Talos {
             verdict,
             summary,
             dry_run: self.ctx.is_dry_run(),
+            residual_risk,
+            recovery,
         })
+    }
+
+    /// Residual risk and recovery instructions for a finished drive. Derived
+    /// from evidence only: the verdict, what changed, the mission journal.
+    fn assess_result(&self, halt: Halt, verdict: &Option<Verdict>) -> (Vec<String>, Vec<String>) {
+        let mut risk = Vec::new();
+        let mut recovery = Vec::new();
+        let dry = self.ctx.is_dry_run();
+        let changed = self.changed.len();
+
+        match verdict {
+            None => risk.push("no verification ran; nothing here is proven".to_string()),
+            Some(v) if !v.passed => {
+                let at = v
+                    .failure()
+                    .map(|tier| tier.label.clone())
+                    .unwrap_or_else(|| "verification".to_string());
+                risk.push(format!(
+                    "verification failed at {at}; the workspace is not proven"
+                ));
+            }
+            Some(v) if v.reached_tier < 3 => risk.push(format!(
+                "verification stopped at tier {}; the test suite did not run",
+                v.reached_tier
+            )),
+            Some(_) => {}
+        }
+        if dry {
+            risk.push("preview only: nothing was written, so nothing is verified on disk".into());
+            recovery.push("re-run without --dry-run to apply, or use `repl` and /apply".into());
+        }
+        if halt != Halt::Done && changed > 0 && !dry {
+            risk.push(format!(
+                "{changed} file(s) changed without a passing closing verification"
+            ));
+        }
+        if let Some(mission) = self.mission_state() {
+            let reconciled = mission.reconciled_actions.len();
+            if reconciled > 0 {
+                risk.push(format!(
+                    "{reconciled} interrupted action(s) were reconciled by observation; \
+                     their effects are unknown"
+                ));
+            }
+        }
+        match (self.mission_id(), halt) {
+            (Some(id), Halt::Done) if !dry => {
+                recovery.push(format!(
+                    "accept: knossos decide accept --mission {id} --reason <why>"
+                ));
+                recovery.push(format!(
+                    "revise: knossos decide revise --mission {id} --instruction <what>"
+                ));
+                recovery.push(format!(
+                    "revert (from this session): knossos decide revert --mission {id} --reason <why>"
+                ));
+            }
+            (Some(id), _) => recovery.push(format!(
+                "resume: knossos task --resume-mission {id} \"<next instruction>\""
+            )),
+            (None, _) => recovery.push(
+                "re-run with --persist-conversation to make the mission resumable and \
+                 decidable"
+                    .into(),
+            ),
+        }
+        (risk, recovery)
     }
 
     fn summarize(&self, halt: Halt, verdict: &Option<Verdict>, last_text: &str) -> String {
@@ -2243,6 +2355,10 @@ impl Talos {
                 "Stopped: step budget of {} exhausted. Verification: {verdict_line}. \
                  Last message: {last_text}",
                 self.ariadne.max_steps
+            ),
+            Halt::DeadlineExceeded => format!(
+                "Stopped: wall-clock deadline reached. Verification: {verdict_line}. \
+                 Last message: {last_text}"
             ),
             // Says what was kept, not just that it stopped. A cancelled turn
             // may have already edited files, and the person who cancelled needs

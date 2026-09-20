@@ -85,6 +85,7 @@ impl Engine for AnthropicEngine {
             })?;
 
         let status = resp.status();
+        let retry_after = crate::engine::error::retry_after_seconds(resp.headers());
         let text = resp
             .text()
             .await
@@ -96,6 +97,7 @@ impl Engine for AnthropicEngine {
                 provider: PROVIDER,
                 status: status.as_u16(),
                 body: text,
+                retry_after,
             }
             .into());
         }

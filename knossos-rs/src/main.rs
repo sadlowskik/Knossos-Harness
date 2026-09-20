@@ -132,6 +132,9 @@ struct LoopArgs {
     /// Maximum simultaneous engine calls, including delegated work.
     #[arg(long, default_value = "1")]
     max_concurrency: usize,
+    /// Wall-clock ceiling for the run, in seconds. Checked between steps.
+    #[arg(long)]
+    max_seconds: Option<u64>,
     /// Context window for a local model, in tokens.
     ///
     /// The ceiling `--max-tokens` lives inside: prompt and completion share it.
@@ -729,7 +732,8 @@ fn build_talos_with_quota(
         Oracle::new(&root),
         idx,
         themis,
-        Ariadne::new(opts.max_steps, opts.target_steps),
+        Ariadne::new(opts.max_steps, opts.target_steps)
+            .with_deadline(opts.max_seconds.map(std::time::Duration::from_secs)),
         session,
         cfg.max_tokens,
         !opts.no_judge,
@@ -874,7 +878,8 @@ async fn run_acp(cfg: &Config, opts: &LoopArgs, recovery: &RecoveryArgs) -> Resu
             Oracle::new(&root),
             idx,
             Themis::load(&root),
-            Ariadne::new(opts.max_steps, opts.target_steps),
+            Ariadne::new(opts.max_steps, opts.target_steps)
+                .with_deadline(opts.max_seconds.map(std::time::Duration::from_secs)),
             Session::new(&root, "acp").with_trace(&trace)?,
             cfg.max_tokens,
             !opts.no_judge,
@@ -1427,6 +1432,18 @@ async fn run_task(
     }
 
     println!("\n{}", outcome.summary);
+    if !outcome.residual_risk.is_empty() {
+        println!("\nResidual risk:");
+        for item in &outcome.residual_risk {
+            println!("  - {item}");
+        }
+    }
+    if !outcome.recovery.is_empty() {
+        println!("\nNext:");
+        for item in &outcome.recovery {
+            println!("  - {item}");
+        }
+    }
 
     if outcome.dry_run {
         println!("\n{}", diff::render(&talos.diffs()));

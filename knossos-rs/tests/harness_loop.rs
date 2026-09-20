@@ -2122,6 +2122,102 @@ async fn a_full_verify_is_reused_as_the_closing_verification() {
     );
 }
 
+/// A wall-clock deadline is a bound like the step ceiling: reached, the run
+/// stops at the next step boundary with its own halt, not a fake success.
+#[tokio::test]
+async fn a_wall_clock_deadline_halts_the_run_at_the_next_step() {
+    let h = Harness::new("passing");
+    let mut talos = h.talos(vec![valid_write("1"), text_response("done")], 6, false);
+    talos.ariadne = talos.ariadne.with_deadline(Some(std::time::Duration::ZERO));
+    let outcome = talos
+        .run(
+            "add a function",
+            &Plan {
+                steps: vec!["do".into()],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.halt, Halt::DeadlineExceeded, "{}", outcome.summary);
+    assert!(!outcome.succeeded());
+    assert_eq!(
+        outcome.steps_used, 0,
+        "an already-expired deadline stops before step 1"
+    );
+    assert!(outcome.summary.contains("deadline"), "{}", outcome.summary);
+}
+
+/// The result object says what is still at risk and what to do next, from
+/// evidence: a failed ladder names the failing tier, and a run with no
+/// persisted mission is told how to become resumable.
+#[tokio::test]
+async fn the_result_carries_residual_risk_and_recovery() {
+    let h = Harness::new("passing");
+    let broken = h
+        .run(
+            vec![
+                tool_call(
+                    "1",
+                    "write_file",
+                    serde_json::json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn double(x: u32) -> u32 { \"not a number\" }
+                    "
+                    }),
+                ),
+                text_response("Done."),
+                text_response("Still done."),
+            ],
+            3,
+        )
+        .await;
+    assert_ne!(broken.halt, Halt::Done);
+    assert!(
+        broken
+            .residual_risk
+            .iter()
+            .any(|r| r.contains("cargo check")),
+        "{:?}",
+        broken.residual_risk
+    );
+    assert!(
+        broken
+            .residual_risk
+            .iter()
+            .any(|r| r.contains("changed without a passing")),
+        "{:?}",
+        broken.residual_risk
+    );
+    // Every run has a journaled mission, so the next step is a resume with
+    // that mission's id, spelled as the command to type.
+    assert!(
+        broken
+            .recovery
+            .iter()
+            .any(|r| r.starts_with("resume: knossos task --resume-mission ")),
+        "{:?}",
+        broken.recovery
+    );
+
+    let done = h
+        .run(
+            vec![
+                valid_write("1"),
+                text_response("done"),
+                text_response("done"),
+                text_response("done"),
+            ],
+            6,
+        )
+        .await;
+    assert_eq!(done.halt, Halt::Done, "{}", done.summary);
+    assert!(
+        done.residual_risk.is_empty(),
+        "a verified, written completion has no residual risk: {:?}",
+        done.residual_risk
+    );
+}
+
 #[tokio::test]
 async fn verify_report_reaches_the_engine() {
     let h = Harness::new("passing");

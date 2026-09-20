@@ -36,6 +36,9 @@ pub enum Halt {
     Stuck,
     /// Hit the ceiling. Mirrors the forced halt at the final loop.
     BudgetExhausted,
+    /// The wall-clock deadline for the run passed. Like `BudgetExhausted`, a
+    /// bound reached rather than a judgement about progress.
+    DeadlineExceeded,
     /// The caller asked for the turn to stop.
     ///
     /// Not a judgement about progress, which is why Ariadne never returns it —
@@ -56,6 +59,7 @@ impl Halt {
             Halt::Done => "done",
             Halt::Stuck => "stuck",
             Halt::BudgetExhausted => "budget_exhausted",
+            Halt::DeadlineExceeded => "deadline_exceeded",
             Halt::Cancelled => "cancelled",
         }
     }
@@ -117,6 +121,9 @@ pub struct Ariadne {
     pub target_steps: usize,
     /// Consecutive no-op steps tolerated before declaring `Stuck`.
     pub stuck_after: usize,
+    /// Wall-clock budget for one drive. `None` bounds by steps alone. Checked
+    /// at step boundaries, so a slow engine call can overrun it by one turn.
+    pub deadline: Option<std::time::Duration>,
 }
 
 impl Default for Ariadne {
@@ -130,11 +137,18 @@ impl Default for Ariadne {
             max_steps: 20,
             target_steps: 6,
             stuck_after: 2,
+            deadline: None,
         }
     }
 }
 
 impl Ariadne {
+    /// Bound the drive by wall-clock time as well as by steps.
+    pub fn with_deadline(mut self, deadline: Option<std::time::Duration>) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
     pub fn new(max_steps: usize, target_steps: usize) -> Self {
         Ariadne {
             max_steps,

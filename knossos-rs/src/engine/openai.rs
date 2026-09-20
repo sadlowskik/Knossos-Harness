@@ -329,7 +329,7 @@ impl OpenAICompatEngine {
         self.caps.lock().expect("caps").limit_restores
     }
 
-    async fn post(&self, payload: &Value) -> Result<(u16, String)> {
+    async fn post(&self, payload: &Value) -> Result<(u16, String, Option<u64>)> {
         let url = format!("{}/chat/completions", self.base_url);
         let mut req = self
             .client
@@ -344,11 +344,12 @@ impl OpenAICompatEngine {
             detail: format!("request failed: {e}"),
         })?;
         let status = resp.status().as_u16();
+        let retry_after = crate::engine::error::retry_after_seconds(resp.headers());
         let text = resp
             .text()
             .await
             .context("reading OpenAI-compat response")?;
-        Ok((status, text))
+        Ok((status, text, retry_after))
     }
 }
 
@@ -356,7 +357,7 @@ impl OpenAICompatEngine {
 impl Engine for OpenAICompatEngine {
     async fn complete(&self, req: &Request) -> Result<Response> {
         let mut caps = self.caps.lock().expect("caps").clone();
-        let mut last_err: Option<(u16, String)> = None;
+        let mut last_err: Option<(u16, String, Option<u64>)> = None;
 
         for _ in 0..MAX_DEGRADES {
             let messages = to_openai_messages(req, caps.fold_system, caps.native_history);
@@ -372,13 +373,13 @@ impl Engine for OpenAICompatEngine {
             attach_tools(&mut payload, req, &caps)?;
             enforce_request_bytes(&payload, &caps)?;
 
-            let (status, text) = self.post(&payload).await?;
+            let (status, text, retry_after) = self.post(&payload).await?;
             if (200..300).contains(&status) {
                 *self.caps.lock().expect("caps") = caps;
                 return parse_response(&text);
             }
 
-            last_err = Some((status, text.clone()));
+            last_err = Some((status, text.clone(), retry_after));
             let body = text.to_ascii_lowercase();
             match diagnose(status, &body, &caps, &messages) {
                 Some(Action::Shrink {
@@ -413,6 +414,7 @@ impl Engine for OpenAICompatEngine {
                         provider: PROVIDER_LABEL,
                         status,
                         body: text,
+                        retry_after,
                     }
                     .into());
                 }
@@ -425,6 +427,7 @@ impl Engine for OpenAICompatEngine {
                         provider: PROVIDER_LABEL,
                         status,
                         body: text,
+                        retry_after,
                     }
                     .into());
                 }
@@ -432,11 +435,13 @@ impl Engine for OpenAICompatEngine {
         }
 
         *self.caps.lock().expect("caps") = caps;
-        let (status, body) = last_err.unwrap_or((400, "degrade loop exhausted".into()));
+        let (status, body, retry_after) =
+            last_err.unwrap_or((400, "degrade loop exhausted".into(), None));
         Err(EngineError::Status {
             provider: PROVIDER_LABEL,
             status,
             body,
+            retry_after,
         }
         .into())
     }
@@ -481,6 +486,7 @@ impl Engine for OpenAICompatEngine {
         })?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
+            let retry_after = crate::engine::error::retry_after_seconds(resp.headers());
             let body = resp
                 .text()
                 .await
@@ -496,6 +502,7 @@ impl Engine for OpenAICompatEngine {
                 provider: PROVIDER_LABEL,
                 status,
                 body,
+                retry_after,
             }
             .into());
         }

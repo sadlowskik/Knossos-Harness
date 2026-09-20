@@ -80,6 +80,25 @@ enum State {
 /// scripted mock, reports failure however it likes, and treating an unreadable
 /// error as permanent would end a run over a message this module failed to
 /// parse. Retrying instead costs at most `max_attempts` and then the breaker.
+/// Longest `Retry-After` honoured. A backend asking for more than this is
+/// telling us to come back later, not to hold a mission open waiting.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// What to wait before the next attempt: the backend's `Retry-After` when it
+/// sent one (capped, and never shorter than the policy's own backoff), else
+/// the exponential backoff.
+fn wait_before_retry(error: &anyhow::Error, backoff: Duration) -> Duration {
+    error
+        .downcast_ref::<EngineError>()
+        .and_then(EngineError::retry_after)
+        .map(|seconds| {
+            Duration::from_secs(seconds)
+                .min(MAX_RETRY_AFTER)
+                .max(backoff)
+        })
+        .unwrap_or(backoff)
+}
+
 fn is_terminal(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<EngineError>()
@@ -198,9 +217,10 @@ impl Engine for Resilient {
                     return Err(e);
                 }
                 Err(e) => {
+                    let wait = wait_before_retry(&e, backoff);
                     last = Some(e);
                     if attempt < self.policy.max_attempts {
-                        tokio::time::sleep(backoff).await;
+                        tokio::time::sleep(wait).await;
                         backoff = (backoff * 2).min(self.policy.max_backoff);
                     }
                 }
@@ -252,6 +272,7 @@ mod tests {
                     provider: "Test API",
                     status,
                     body: "b".into(),
+                    retry_after: None,
                 }
                 .into(),
                 Failure::Transport => EngineError::Transport {
@@ -456,5 +477,33 @@ mod tests {
         let e = Resilient::new(Box::new(Flaky::new(0)));
         assert_eq!(e.name(), "flaky");
         assert!(e.supports_native_tools());
+    }
+
+    #[test]
+    fn retry_after_is_honoured_capped_and_never_below_backoff() {
+        let asked = |seconds| -> anyhow::Error {
+            EngineError::Status {
+                provider: "Test API",
+                status: 429,
+                body: "slow down".into(),
+                retry_after: Some(seconds),
+            }
+            .into()
+        };
+        let backoff = Duration::from_millis(500);
+        assert_eq!(
+            wait_before_retry(&asked(7), backoff),
+            Duration::from_secs(7)
+        );
+        assert_eq!(wait_before_retry(&asked(3600), backoff), MAX_RETRY_AFTER);
+        assert_eq!(wait_before_retry(&asked(0), backoff), backoff);
+        let silent: anyhow::Error = EngineError::Status {
+            provider: "Test API",
+            status: 503,
+            body: "b".into(),
+            retry_after: None,
+        }
+        .into();
+        assert_eq!(wait_before_retry(&silent, backoff), backoff);
     }
 }

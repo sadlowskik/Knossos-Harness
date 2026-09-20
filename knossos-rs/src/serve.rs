@@ -147,6 +147,8 @@ pub enum Event {
         summary: String,
         changed: Vec<String>,
         dry_run: bool,
+        residual_risk: Vec<String>,
+        recovery: Vec<String>,
     },
     Diffs {
         files: Vec<DiffPayload>,
@@ -686,6 +688,8 @@ fn finish_turn(talos: &Talos, outcome: &Outcome, events: &Emitter) {
         summary: outcome.summary.clone(),
         changed: outcome.changed.iter().map(|p| rel(talos, p)).collect(),
         dry_run: outcome.dry_run,
+        residual_risk: outcome.residual_risk.clone(),
+        recovery: outcome.recovery.clone(),
     });
     if outcome.dry_run {
         emit_diffs(talos, events);
