@@ -78,9 +78,25 @@ jobs:
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
+        # The suite has hung on ubuntu runners intermittently (runs 19, 20,
+        # 22) and the job cap fires as a cancellation, which publishes no
+        # log. Time out from inside instead, so the step *fails*, the log
+        # names every test that finished, and the process tree shows what
+        # was still running.
         run: |
           set -o pipefail
-          cargo test --all-targets --locked 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
+          LOG="$GITHUB_WORKSPACE/ci-rust.log"
+          BOUND=""
+          if command -v timeout >/dev/null 2>&1; then BOUND="timeout -k 30 25m"; fi
+          status=0
+          $BOUND cargo test --all-targets --locked 2>&1 | tee "$LOG" || status=$?
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "=== cargo test exited $status (124 = timed out); processes still alive:"
+              ps -eo pid,ppid,etime,stat,args 2>/dev/null || ps -ef || true
+            } | tee -a "$LOG"
+            exit "$status"
+          fi
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
