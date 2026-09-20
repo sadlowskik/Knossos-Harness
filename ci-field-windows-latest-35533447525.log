@@ -1,0 +1,36 @@
+
+> knossos-field@0.2.0-beta.2 test
+> npm run assets:audit && node server/test/security.test.mjs && node server/test/body.test.mjs && node server/test/markdown-security.test.mjs && node server/test/browser-url.test.mjs && node server/test/workspace-path.test.mjs && node server/test/terminal-policy.test.mjs && node server/test/child-env.test.mjs && node server/test/glob.test.mjs && node server/test/tools.test.mjs && node server/test/campaign.test.mjs && node server/test/transitions.test.mjs && node server/test/graph.test.mjs && node server/test/director.test.mjs && node server/test/reports.test.mjs && node server/test/knossos-session.test.mjs && node server/test/acp-session.test.mjs && node server/test/adapter-contract.test.mjs && node server/test/event-schema.test.mjs && node server/test/session-usage.test.mjs && node server/test/process-generation.test.mjs && node server/test/budget-ledger.test.mjs && node server/test/permission-policy.test.mjs && node server/test/scenario-matrix.test.mjs && node server/test/edge-cases.test.mjs && node server/test/registry-resilience.test.mjs && node server/test/routines.test.mjs && node server/test/routine-queue-recovery.test.mjs && node server/test/git-state.test.mjs && node server/test/eventlog.test.mjs && node server/test/api-pagination.test.mjs && node server/test/replay.test.mjs && node server/test/ws.test.mjs && node server/test/simulation.test.mjs && node server/test/world.test.mjs && node server/test/projection-focus.test.mjs && node server/test/stress.test.mjs
+
+
+> knossos-field@0.2.0-beta.2 assets:audit
+> node scripts/audit-assets.mjs
+
+asset audit passed: 6 referenced files, 5137924 bytes, hashes verified
+security: bootstrap, split authority, loopback, host, origin, cookie, and websocket gates passed
+body: byte cap, JSON errors, empty bodies, and ingestion deadline passed
+markdown: CommonMark parsing and strict HTML/URL sanitization passed
+browser URL: protocols, credentials, complete URLs, and configured domains enforced
+node:internal/modules/run_main:123
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\field-paths-Wg79Ib\\workspace'
+- 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\field-paths-Wg79Ib\\workspace'
+
+    at file:///D:/a/Knossos-Harness/Knossos-Harness/field/server/test/workspace-path.test.mjs:30:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\field-paths-Wg79Ib\\workspace',
+  expected: 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\field-paths-Wg79Ib\\workspace',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v22.23.2
