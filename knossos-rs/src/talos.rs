@@ -2301,6 +2301,7 @@ impl Talos {
                 "{changed} file(s) changed without a passing closing verification"
             ));
         }
+        risk.extend(crate::confine::residual_risk());
         if let Some(mission) = self.mission_state() {
             let reconciled = mission.reconciled_actions.len();
             if reconciled > 0 {

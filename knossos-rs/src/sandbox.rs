@@ -20,31 +20,27 @@
 //! one. Anything not named does not exist as far as the subprocess is
 //! concerned.
 //!
-//! # What this does not do
+//! # What the child can reach
 //!
-//! This is environment isolation, not process isolation. A sandboxed child can
-//! still:
-//!
-//! - write anywhere the user account can write — the path jail in
-//!   [`ToolCtx::resolve`](crate::tools::ToolCtx::resolve) binds the harness's
-//!   own tools, not a subprocess those tools start;
-//! - open network sockets, unless it is cargo itself honouring
-//!   `CARGO_NET_OFFLINE`;
-//! - outlive a timeout, because `kill_on_drop` reaps the direct child while the
-//!   test binaries `cargo test` spawned are separately parented.
-//!
-//! Closing those needs OS-level containment — a job object on Windows, a
-//! process group plus namespaces on Linux — and a platform crate this workspace
-//! does not depend on. Left undone deliberately rather than approximated, so
-//! that the guarantee this module *does* make stays believable.
+//! Environment isolation says nothing about the filesystem: the path jail in
+//! [`ToolCtx::resolve`](crate::tools::ToolCtx::resolve) binds the harness's
+//! own tools, not a subprocess those tools start. That part is
+//! [`confine`](crate::confine): on Linux every child is placed under a
+//! Landlock ruleset before `exec`, on macOS it runs under `sandbox-exec`, and
+//! on Windows it runs unconfined and the result object says so. The level
+//! actually applied travels with every [`Finished`]. Process-tree control
+//! (the Job Object here, the process group on Unix) is what lets a timeout
+//! kill the test binaries `cargo test` spawned, not only cargo itself.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
+
+use crate::confine::{self, Access, Confinement, Policy};
 
 #[cfg(windows)]
 struct WindowsJob(usize);
@@ -175,6 +171,8 @@ pub struct Finished {
     pub timed_out: bool,
     pub stdout: String,
     pub stderr: String,
+    /// What the child could reach. See [`confine`].
+    pub confinement: Confinement,
 }
 
 impl Finished {
@@ -232,15 +230,27 @@ pub struct Sandbox {
     extra: Vec<String>,
     /// Whether cargo may reach the network.
     offline: bool,
+    /// What to do when the OS cannot confine the child.
+    policy: Policy,
+    /// Paths outside the workspace and toolchain homes the child may reach.
+    paths: Vec<(PathBuf, Access)>,
+    /// Whether to cut the child off from TCP where the OS can.
+    deny_network: bool,
 }
 
 impl Default for Sandbox {
     /// Offline, because a run that silently fetches a new dependency has
-    /// changed the build in a way the diff does not show.
+    /// changed the build in a way the diff does not show. Confinement policy
+    /// and extra paths come from the environment (`KNOSSOS_CONFINE`,
+    /// `KNOSSOS_CONFINE_ALLOW_RO`, `KNOSSOS_CONFINE_ALLOW_RW`) so that an
+    /// operator can set them once for every child the harness starts.
     fn default() -> Self {
         Sandbox {
             extra: Vec::new(),
             offline: true,
+            policy: Policy::from_env(),
+            paths: confine::extra_paths_from_env(),
+            deny_network: false,
         }
     }
 }
@@ -263,6 +273,31 @@ impl Sandbox {
 
     pub fn is_offline(&self) -> bool {
         self.offline
+    }
+
+    /// What to do when the OS cannot confine the child.
+    pub fn with_policy(mut self, policy: Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    pub fn policy(&self) -> Policy {
+        self.policy
+    }
+
+    /// Admit a path outside the workspace and the toolchain homes.
+    pub fn allow_path(mut self, path: impl Into<PathBuf>, access: Access) -> Self {
+        self.paths.push((path.into(), access));
+        self
+    }
+
+    /// Cut the child off from TCP where the OS can (Landlock ABI 4+,
+    /// Seatbelt). Off by default because the workspace's own test suite is
+    /// entitled to bind loopback; a request the host cannot honour is
+    /// reported in the result object rather than silently dropped.
+    pub fn deny_network(mut self) -> Self {
+        self.deny_network = true;
+        self
     }
 
     /// Whether a variable of this name reaches the child.
@@ -337,10 +372,26 @@ impl Sandbox {
     ///   `cargo test` is reported as timed out while it keeps its `target/`
     ///   lock and its CPU. Ariadne then grants another step, and one wedged
     ///   tree accumulates an orphan per step, all outliving the harness.
-    pub fn command(&self, program: &str, cwd: &Path) -> tokio::process::Command {
-        let mut cmd = tokio::process::Command::new(program);
+    /// * **Confined to `cwd`.** See [`confine`]. The level applied is returned
+    ///   with the command; the only error this adds is `Unsupported`, under
+    ///   [`Policy::Require`] on a host that cannot confine.
+    pub fn command(
+        &self,
+        program: &str,
+        cwd: &Path,
+    ) -> std::io::Result<(tokio::process::Command, Confinement)> {
+        let confined =
+            confine::confined_command(self.policy, cwd, &self.paths, self.deny_network, program)?;
+        let mut cmd = confined.command;
         cmd.current_dir(cwd).stdin(Stdio::null()).kill_on_drop(true);
         self.apply(&mut cmd);
+        // After `apply`, which clears the environment: the child gets its own
+        // temp directory, the one place outside the workspace it may scribble.
+        if let Some(tmp) = &confined.tmp {
+            cmd.env("TMPDIR", tmp);
+        }
+        confine::observe(&confined.level, self.deny_network);
+        tracing::debug!(program, confinement = %confined.level.describe(), "spawning");
 
         // On Unix the child leads its own process group, so a timeout has a
         // group to signal. Windows needs no equivalent: `taskkill /T` walks the
@@ -353,7 +404,7 @@ impl Sandbox {
             cmd.as_std_mut().process_group(0);
         }
 
-        cmd
+        Ok((cmd, confined.level))
     }
 
     /// Run a command and collect its output, killing the whole process tree if
@@ -382,7 +433,7 @@ impl Sandbox {
         cwd: &Path,
         limit: Duration,
     ) -> std::io::Result<Finished> {
-        let mut cmd = self.command(program, cwd);
+        let (mut cmd, confinement) = self.command(program, cwd)?;
         cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = cmd.spawn()?;
@@ -437,6 +488,7 @@ impl Sandbox {
             timed_out,
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
             stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            confinement,
         })
     }
 
@@ -586,7 +638,7 @@ mod tests {
             ("env", &[])
         };
 
-        let mut cmd = Sandbox::default().command(program, &root);
+        let (mut cmd, _) = Sandbox::default().command(program, &root).unwrap();
         cmd.args(args);
         let out = cmd.output().await.expect("could not run the probe");
         let text = String::from_utf8_lossy(&out.stdout);
@@ -614,7 +666,7 @@ mod tests {
             ("pwd", &[])
         };
 
-        let mut cmd = Sandbox::default().command(program, &root);
+        let (mut cmd, _) = Sandbox::default().command(program, &root).unwrap();
         cmd.args(args);
         let out = cmd.output().await.expect("could not run the probe");
         let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();

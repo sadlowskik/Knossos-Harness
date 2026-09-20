@@ -23,6 +23,7 @@ pub mod ariadne;
 pub mod cameo_board;
 pub mod client_io;
 pub mod config;
+pub mod confine;
 pub mod context;
 pub mod delegate;
 pub mod diff;

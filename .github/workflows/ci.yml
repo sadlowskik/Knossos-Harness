@@ -70,6 +70,11 @@ jobs:
       - name: Test
         working-directory: knossos-rs
         shell: bash
+        # The jail is binding where the OS can provide it: a Linux or macOS
+        # runner that cannot confine children fails the suite instead of
+        # passing it vacuously. Windows has no such jail and runs `prefer`.
+        env:
+          KNOSSOS_CONFINE: ${{ runner.os == 'Windows' && 'prefer' || 'require' }}
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.

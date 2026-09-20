@@ -242,6 +242,30 @@ enum Command {
     /// Run Oracle's deterministic tiers over the workspace.
     Verify,
 
+    /// Run one command under the jail the harness gives its own children:
+    /// scrubbed environment, confined to the workspace (Landlock on Linux,
+    /// Seatbelt on macOS). What Field's terminal and adapters spawn through.
+    Exec {
+        /// Workspace the command is confined to. Defaults to the current directory.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Let cargo reach the network.
+        #[arg(long)]
+        networked: bool,
+        /// Cut the command off from TCP where the OS can.
+        #[arg(long)]
+        deny_network: bool,
+        /// Admit an extra read-only path.
+        #[arg(long = "allow-ro", value_name = "PATH")]
+        allow_ro: Vec<PathBuf>,
+        /// Admit an extra read-write path.
+        #[arg(long = "allow-rw", value_name = "PATH")]
+        allow_rw: Vec<PathBuf>,
+        /// The program and its arguments.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
     /// Produce a plan without executing it.
     Plan { task: String },
 
@@ -396,6 +420,24 @@ async fn main() -> Result<()> {
         Command::Chat { ref prompt } => chat(&cfg, prompt).await,
         Command::Index { full, ref lookup } => index(&cfg, full, lookup.as_deref()),
         Command::Verify => verify(&cfg).await,
+        Command::Exec {
+            ref workspace,
+            networked,
+            deny_network,
+            ref allow_ro,
+            ref allow_rw,
+            ref command,
+        } => {
+            run_exec(
+                workspace.as_deref(),
+                networked,
+                deny_network,
+                allow_ro,
+                allow_rw,
+                command,
+            )
+            .await
+        }
         Command::Plan { ref task } => plan_only(&cfg, task).await,
         Command::Task {
             ref task,
@@ -1605,6 +1647,67 @@ fn init_tracing(verbose: bool) {
         .without_time()
         .with_writer(std::io::stderr)
         .init();
+}
+
+/// `knossos exec`: the harness's own child policy, for anything else that
+/// spawns on the operator's behalf. Exits with the command's status.
+async fn run_exec(
+    workspace: Option<&Path>,
+    networked: bool,
+    deny_network: bool,
+    allow_ro: &[PathBuf],
+    allow_rw: &[PathBuf],
+    command: &[String],
+) -> Result<()> {
+    use knossos::confine::Access;
+    use knossos::sandbox::Sandbox;
+    use std::process::Stdio;
+
+    let workspace = match workspace {
+        Some(w) => w.to_path_buf(),
+        None => std::env::current_dir().context("cannot read the current directory")?,
+    };
+    let mut sandbox = Sandbox::default();
+    if networked {
+        sandbox = sandbox.networked();
+    }
+    if deny_network {
+        sandbox = sandbox.deny_network();
+    }
+    for path in allow_ro {
+        sandbox = sandbox.allow_path(path.clone(), Access::ReadOnly);
+    }
+    for path in allow_rw {
+        sandbox = sandbox.allow_path(path.clone(), Access::ReadWrite);
+    }
+    let (program, args) = command.split_first().context("exec needs a program")?;
+    let (mut cmd, level) = sandbox
+        .command(program, &workspace)
+        .with_context(|| format!("cannot confine `{program}`"))?;
+    cmd.args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if !level.is_confined() {
+        eprintln!("knossos exec: running unconfined ({})", level.describe());
+    } else {
+        tracing::info!(confinement = %level.describe(), "exec");
+    }
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("failed to run `{program}`"))?;
+    // The child leads its own process group on Unix, so the terminal's Ctrl+C
+    // reaches this process and not it; forward the intent instead of leaving
+    // an orphan behind.
+    let status = tokio::select! {
+        status = child.wait() => status.context("waiting for the command")?,
+        _ = tokio::signal::ctrl_c() => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            std::process::exit(130);
+        }
+    };
+    std::process::exit(status.code().unwrap_or(1));
 }
 
 #[cfg(test)]

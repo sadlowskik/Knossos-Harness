@@ -218,26 +218,41 @@ it exists so that "swappable engine" is a fact rather than a claim.
 
 ## Safety
 
-Two properties are structural rather than advisory:
+Three properties are structural rather than advisory:
 
 - **Path jail.** Every filesystem tool resolves through `ToolCtx::resolve`,
   which rejects `../` traversal, absolute paths outside the root, and symlinks
   pointing out of the tree.
+- **Workspace jail for child processes.** On Linux every command the harness
+  runs (`cargo test`, `pytest`, a delegated unit, anything on the allowlist)
+  is placed under a Landlock ruleset before it starts: it can read and execute
+  the system and the toolchain, write the workspace, a per-run temp directory
+  and the cargo cache, and reach nothing else, so the rest of your home
+  directory does not exist for it. On macOS the same policy is applied through
+  `sandbox-exec`. Every descendant inherits it and none can drop it. Children
+  also get a cleared environment: an allowlist of variables, never provider
+  keys.
 - **No shell.** Commands are split into program plus argument vector and
   executed directly. No shell interpreter is involved, so `&&`, `|`, `;` and
   backticks are inert — they arrive as literal arguments. On top of that the
   program must be on an allowlist (`cargo`, `rustc`, `rustfmt`, `git`), and
   `git` is restricted to read-only subcommands.
 
-Both are covered by tests that attempt the escape.
+All three are covered by tests that attempt the escape.
 
-What these do **not** cover, stated plainly: the jail binds the harness's own
-tools. A command the harness runs — `cargo test`, `pytest`, anything on the
-allowlist — executes with your user's filesystem and network permissions, in a
-cleared environment (only an allowlist of variables, never provider keys). It is
-an environment jail for child processes, not a workspace jail. If the code under
-test must be confined too, run Knossos inside a container or VM; nothing here
-pretends to replace that.
+What these do **not** cover, stated plainly. On Windows there is no
+unprivileged filesystem confinement: a child runs with your user's permissions
+in the scrubbed environment, and the result object says so ("child processes
+ran without filesystem confinement"). Network access is not cut by default,
+because a project's own test suite is entitled to bind loopback;
+`Sandbox::deny_network` (or `knossos exec --deny-network`) closes TCP where
+the kernel can (Landlock ABI 4, macOS), and UDP and Unix sockets are never
+covered. `KNOSSOS_CONFINE=require` refuses to run children on a host that
+cannot confine them; `prefer` (the default) runs and records the level; `off`
+is for debugging and is reported. `KNOSSOS_CONFINE_ALLOW_RO` and
+`KNOSSOS_CONFINE_ALLOW_RW` admit extra toolchain paths (PATH-style lists).
+`knossos exec -- <command>` runs any command under the same jail, which is
+how Field's terminal and adapters get it.
 
 ## The trace
 
