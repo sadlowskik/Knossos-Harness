@@ -202,10 +202,15 @@ impl Jail {
             read_only.extend(HOME_READ.iter().map(|d| home.join(d)));
             read_write.extend(HOME_WRITE.iter().map(|d| home.join(d)));
         }
-        // macOS puts the per-user temp directory under /var/folders and the
-        // toolchain assumes it can write there regardless of TMPDIR.
+        // macOS keeps a per-user cache directory next to the per-user temp
+        // directory under /var/folders (`.../C` beside `.../T`), and system
+        // frameworks write there regardless of TMPDIR. The temp directory
+        // itself is *not* granted: anything else on the machine (including a
+        // test's sibling directory) lives there, and the child has its own.
         if cfg!(target_os = "macos") {
-            read_write.push(std::env::temp_dir());
+            if let Some(user_dir) = std::env::temp_dir().parent() {
+                read_write.push(user_dir.join("C"));
+            }
         }
         for (path, access) in extra {
             match access {
