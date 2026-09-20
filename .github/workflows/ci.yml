@@ -49,6 +49,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # A wedged test would otherwise hold the runner for the six-hour default;
+    # run 19 sat 47 minutes before the runner was lost, with no log published.
+    timeout-minutes: 40
     # contents: write only so a failing job can publish its log to the public
     # ci-logs branch; workflow logs themselves need authentication to read.
     permissions:
