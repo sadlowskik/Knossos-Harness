@@ -24,6 +24,9 @@ Commands:
   /plan <task>       plan without executing
   /reset             clear the conversation, keep the workspace
   /steps <n>         change the step ceiling
+  /accept <reason>   accept the delivered mission (needs --persist-conversation)
+  /revise <text>     amend the delivered mission's contract with an instruction
+  /revert <reason>   rewind the delivered turn and close the mission as reverted
   /quit              leave
 
 Anything else is sent to the agent as an instruction.";
@@ -261,6 +264,20 @@ pub async fn run(
                     println!("Conversation cleared.");
                 }
                 "steps" => set_steps(&mut talos, arg),
+                "accept" => match talos.accept_mission(arg) {
+                    Ok(()) => println!("Mission accepted."),
+                    Err(e) => println!("Not accepted: {e:#}"),
+                },
+                "revise" => match talos.revise_mission(arg) {
+                    Ok(()) => println!("Contract revised; the next instruction acts on it."),
+                    Err(e) => println!("Not revised: {e:#}"),
+                },
+                "revert" => match talos.revert_mission(arg) {
+                    Ok(restored) => {
+                        println!("Mission reverted; {} file(s) restored.", restored.len())
+                    }
+                    Err(e) => println!("Not reverted: {e:#}"),
+                },
                 other => println!("Unknown command `/{other}`. /help for the list."),
             }
             continue;
@@ -636,7 +653,7 @@ mod tests {
     fn help_lists_every_command_the_loop_handles() {
         for cmd in [
             "/help", "/diff", "/apply", "/discard", "/verify", "/index", "/plan", "/reset",
-            "/steps", "/quit",
+            "/steps", "/accept", "/revise", "/revert", "/quit",
         ] {
             assert!(HELP.contains(cmd), "help text is missing {cmd}");
         }

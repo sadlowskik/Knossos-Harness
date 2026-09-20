@@ -350,6 +350,43 @@ impl Talos {
         })
     }
 
+    /// Revise a delivered handoff: journal the decision and amend the contract
+    /// with the operator's instruction, incrementing the contract revision and
+    /// keeping the original in history. The mission stays at handoff until the
+    /// next turn acts on the revised contract. This is the explicit verb behind
+    /// a follow-up prompt at handoff, so every interface can close the
+    /// accept/revise/revert lineage the same way.
+    pub fn revise_mission(&mut self, instruction: &str) -> Result<()> {
+        anyhow::ensure!(
+            !instruction.trim().is_empty(),
+            "a revision needs an instruction"
+        );
+        let (expected_revision, mut contract) = self
+            .mission
+            .as_ref()
+            .filter(|mission| mission.state().focus.phase == MissionPhase::Handoff)
+            .map(|mission| {
+                (
+                    mission.state().contract_revision,
+                    mission.state().contract.clone(),
+                )
+            })
+            .ok_or_else(|| anyhow::anyhow!("revise requires a mission at handoff"))?;
+        self.append_mission(MissionEvent::OutcomeDecided {
+            decision: OutcomeDecision::Revise,
+            reason: instruction.to_string(),
+            checkpoint: None,
+        })?;
+        contract
+            .constraints
+            .push(format!("operator revision: {instruction}"));
+        self.append_mission(MissionEvent::ContractAmended {
+            expected_revision,
+            contract,
+            reason: "operator revised the delivered outcome".into(),
+        })
+    }
+
     /// Revert the last delivered turn and journal the decision only after the
     /// workspace rewind succeeds. A restarted executor has no in-memory file
     /// undo log and therefore fails closed instead of pretending to revert.
@@ -369,6 +406,12 @@ impl Talos {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("mission has no safe handoff checkpoint"))?;
         let restored = self.undo_turn()?;
+        anyhow::ensure!(
+            !restored.is_empty() || self.changed.is_empty(),
+            "this process holds no undo log for the delivered turn, so the files were \
+             not rewound; revert from the session that produced the turn (serve, REPL \
+             or the editor), or restore the files by hand before deciding"
+        );
         self.append_mission(MissionEvent::OutcomeDecided {
             decision: OutcomeDecision::Reverted,
             reason,
@@ -964,31 +1007,7 @@ impl Talos {
             return Ok(());
         };
         match phase {
-            MissionPhase::Handoff => {
-                self.append_mission(MissionEvent::OutcomeDecided {
-                    decision: OutcomeDecision::Revise,
-                    reason: instruction.to_string(),
-                    checkpoint: None,
-                })?;
-                let (expected_revision, mut contract) = self
-                    .mission
-                    .as_ref()
-                    .map(|mission| {
-                        (
-                            mission.state().contract_revision,
-                            mission.state().contract.clone(),
-                        )
-                    })
-                    .expect("handoff phase has a mission");
-                contract
-                    .constraints
-                    .push(format!("operator revision: {instruction}"));
-                self.append_mission(MissionEvent::ContractAmended {
-                    expected_revision,
-                    contract,
-                    reason: "operator revised the delivered outcome".into(),
-                })?;
-            }
+            MissionPhase::Handoff => self.revise_mission(instruction)?,
             MissionPhase::Verify => {
                 self.transition_mission(MissionPhase::Replan, "verification needed revision")?;
             }

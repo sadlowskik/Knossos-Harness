@@ -77,6 +77,11 @@ pub enum Command {
     Revert {
         reason: String,
     },
+    /// Revise a delivered handoff: amend the contract with an instruction and
+    /// keep the mission open for the next turn.
+    Revise {
+        instruction: String,
+    },
     /// What this front end can do. Send before anything else.
     ///
     /// **Permission gating is opt-in, and it has to be.** A front end that does
@@ -646,6 +651,14 @@ async fn dispatch(
                 files: restored.iter().map(|path| rel(talos, path)).collect(),
             });
         }
+        Command::Revise { instruction } => {
+            talos.revise_mission(&instruction)?;
+            events.send(Event::MissionDecision {
+                decision: "revised".into(),
+                phase: "handoff".into(),
+                files: Vec::new(),
+            });
+        }
         // Both are intercepted before they get here: `Shutdown` by the loop,
         // `Permission` by the router. Reaching either would mean a reply was
         // queued behind the very command that is waiting for it — the deadlock
@@ -764,6 +777,7 @@ mod tests {
             r#"{"cmd":"undo"}"#,
             r#"{"cmd":"accept","reason":"reviewed the proof"}"#,
             r#"{"cmd":"revert","reason":"the result is not wanted"}"#,
+            r#"{"cmd":"revise","instruction":"also cover the empty case"}"#,
             r#"{"cmd":"interject","text":"use the existing helper"}"#,
             r#"{"cmd":"shutdown"}"#,
         ];

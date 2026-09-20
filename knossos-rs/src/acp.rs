@@ -56,6 +56,14 @@ pub fn is_fast_path(method: &str) -> bool {
     method == "session/cancel" || method == "session/interject"
 }
 
+/// Which lineage verb an `_knossos/*` extension method carries.
+#[derive(Clone, Copy)]
+enum Decision {
+    Accept,
+    Revise,
+    Revert,
+}
+
 /// `KNOSSOS_SCRIPT` sessions start in ask/preview/write the way Python
 /// `scripted_agent.py` mapped `KNOSSOS_EXECUTE` / `KNOSSOS_WRITE`.
 fn scripted_default_mode() -> (String, bool) {
@@ -170,6 +178,11 @@ impl Agent {
             "session/set_mode" => self.set_mode(&params),
             "session/set_context" => self.set_context(&params),
             "session/interject" => self.interject(&params),
+            // Extension methods (underscore-prefixed per ACP) closing the
+            // accept/revise/revert lineage from an editor.
+            "_knossos/accept" => self.decide(&params, Decision::Accept),
+            "_knossos/revise" => self.decide(&params, Decision::Revise),
+            "_knossos/revert" => self.decide(&params, Decision::Revert),
             // Answered rather than ignored: an unanswered request blocks the
             // editor for as long as it is willing to wait.
             other => Err(RpcError::new(
@@ -542,6 +555,43 @@ impl Agent {
             ));
         }
         Ok(json!({}))
+    }
+
+    /// `_knossos/accept|revise|revert`: `{sessionId, reason}` (revise takes
+    /// `instruction`). Refused while a turn is running; the decision is
+    /// journaled by Talos against the mission at handoff.
+    fn decide(&self, params: &Value, decision: Decision) -> Result<Value, RpcError> {
+        let live = self.live(params)?;
+        let key = if matches!(decision, Decision::Revise) {
+            "instruction"
+        } else {
+            "reason"
+        };
+        let text = params
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| RpcError::new(INVALID_PARAMS, format!("{key} is required")))?;
+        let mut talos = live
+            .talos
+            .try_lock()
+            .map_err(|_| RpcError::new(INVALID_PARAMS, "session is busy; decide between turns"))?;
+        let result = match decision {
+            Decision::Accept => talos
+                .accept_mission(text)
+                .map(|()| json!({"decision": "accepted", "files": []})),
+            Decision::Revise => talos
+                .revise_mission(text)
+                .map(|()| json!({"decision": "revised", "files": []})),
+            Decision::Revert => talos.revert_mission(text).map(|files| {
+                json!({
+                    "decision": "reverted",
+                    "files": files.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+                })
+            }),
+        };
+        result.map_err(|e| RpcError::new(INVALID_PARAMS, format!("{e:#}")))
     }
 
     fn set_mode(&self, params: &Value) -> Result<Value, RpcError> {
@@ -1215,6 +1265,38 @@ mod tests {
 
         let reply = ed.call("session/prompt", json!({"sessionId": "nope", "prompt": []}));
         assert_eq!(reply["error"]["code"], json!(INVALID_PARAMS));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn lineage_verbs_exist_and_refuse_without_a_handoff() {
+        let mut ed = Editor::connect(vec![]);
+        ed.call("initialize", json!({"protocolVersion": 1}));
+        let root = std::env::temp_dir();
+        let reply = ed.call("session/new", json!({"cwd": root, "mcpServers": []}));
+        let session = reply["result"]["sessionId"].clone();
+        for (method, key) in [
+            ("_knossos/accept", "reason"),
+            ("_knossos/revise", "instruction"),
+            ("_knossos/revert", "reason"),
+        ] {
+            let reply = ed.call(method, json!({"sessionId": session, key: "because"}));
+            let message = reply["error"]["message"].as_str().unwrap_or("").to_string();
+            assert_eq!(
+                reply["error"]["code"],
+                json!(INVALID_PARAMS),
+                "{method}: {message}"
+            );
+            assert!(
+                message.contains("handoff"),
+                "{method} must be refused for the right reason: {message}"
+            );
+            let reply = ed.call(method, json!({"sessionId": session}));
+            assert_eq!(
+                reply["error"]["code"],
+                json!(INVALID_PARAMS),
+                "{method} needs {key}"
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

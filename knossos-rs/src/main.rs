@@ -186,6 +186,35 @@ struct RecoveryArgs {
 }
 
 #[derive(Subcommand)]
+enum Decide {
+    /// Accept the verified handoff; the decision is journaled with your reason.
+    Accept {
+        /// Mission id (printed when the task ran with --persist-conversation).
+        #[arg(long)]
+        mission: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Amend the delivered contract with an instruction; the next
+    /// `task --resume-mission` turn acts on it.
+    Revise {
+        #[arg(long)]
+        mission: String,
+        #[arg(long)]
+        instruction: String,
+    },
+    /// Rewind the delivered turn and close the mission as reverted. Only the
+    /// process that produced the turn holds its undo log, so from a fresh
+    /// process this refuses rather than pretending.
+    Revert {
+        #[arg(long)]
+        mission: String,
+        #[arg(long)]
+        reason: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Launch Knossos Field, the local Roman multi-agent command surface.
     Field {
@@ -218,6 +247,16 @@ enum Command {
         task: String,
         #[command(flatten)]
         recovery: RecoveryArgs,
+        #[command(flatten)]
+        opts: LoopArgs,
+    },
+
+    /// Decide a delivered mission from the command line: accept it, revise
+    /// its contract, or revert its last turn. Works on missions checkpointed
+    /// with --persist-conversation.
+    Decide {
+        #[command(subcommand)]
+        decision: Decide,
         #[command(flatten)]
         opts: LoopArgs,
     },
@@ -365,6 +404,10 @@ async fn main() -> Result<()> {
             ref opts,
             ref recovery,
         } => run_repl(&cfg, task.clone(), opts, recovery).await,
+        Command::Decide {
+            ref decision,
+            ref opts,
+        } => run_decide(&cfg, decision, opts),
         Command::Serve {
             ref opts,
             ref recovery,
@@ -1407,6 +1450,37 @@ async fn run_task(
 
     if !outcome.succeeded() {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_decide(cfg: &Config, decision: &Decide, opts: &LoopArgs) -> Result<()> {
+    let (mut talos, _) = build_talos(cfg, opts, false)?;
+    let mission = match decision {
+        Decide::Accept { mission, .. }
+        | Decide::Revise { mission, .. }
+        | Decide::Revert { mission, .. } => mission,
+    };
+    talos.restore_conversation(mission)?;
+    match decision {
+        Decide::Accept { reason, .. } => {
+            talos.accept_mission(reason.as_str())?;
+            println!("Mission {mission} accepted.");
+        }
+        Decide::Revise { instruction, .. } => {
+            talos.revise_mission(instruction)?;
+            println!(
+                "Mission {mission} revised; run `task --resume-mission {mission}` with the next \
+                 instruction to act on it."
+            );
+        }
+        Decide::Revert { reason, .. } => {
+            let restored = talos.revert_mission(reason.as_str())?;
+            println!(
+                "Mission {mission} reverted; {} file(s) restored.",
+                restored.len()
+            );
+        }
     }
     Ok(())
 }
