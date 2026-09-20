@@ -10,16 +10,19 @@ const WorkspaceMode = lazy(() => import('./workspace/WorkspaceMode.jsx'));
 // The canvas RTS renderer is an opt-in lens; lazy so it never weighs on the default path.
 const FieldMode = lazy(() => import('./field/FieldMode.jsx'));
 
+// Plain words on the chrome. The Roman vocabulary belongs to the Rome theme
+// inside the Field view, which is the operator mode; the default face of the
+// app (Atlas) should need no glossary.
 const MODES = [
   { id: 'theater', name: 'Field', key: 'F' },
   { id: 'routines', name: 'Routines', key: 'R' },
-  { id: 'traces', name: 'Traces', key: 'T' },
+  { id: 'traces', name: 'History', key: 'T' },
 ];
 const FIELD_LENSES = [
   { id: 'theater', name: 'Board', key: 'V' },
-  { id: 'rts', name: 'RTS', key: 'G' },
-  { id: 'workspace', name: 'City', key: 'C' },
-  { id: 'campaigns', name: 'Senate', key: 'S' },
+  { id: 'rts', name: 'Map', key: 'G' },
+  { id: 'workspace', name: 'Project', key: 'C' },
+  { id: 'campaigns', name: 'Plans', key: 'S' },
 ];
 const FIELD_MODES = new Set(['theater', 'field', 'rts', 'campaigns', 'workspace']);
 
@@ -110,13 +113,13 @@ export default function App() {
         {st.error && <div className="fatal">Field server unreachable — {st.error}</div>}
         {(st.mode === 'theater' || st.mode === 'field') && <TheaterMode />}
         {st.mode === 'rts' && (
-          <Suspense fallback={<p role="status">Loading RTS…</p>}>
+          <Suspense fallback={<p role="status">Loading map…</p>}>
             <FieldMode />
           </Suspense>
         )}
         {st.mode === 'campaigns' && <CampaignMode />}
         {st.mode === 'workspace' && (
-          <Suspense fallback={<p role="status">Loading City…</p>}>
+          <Suspense fallback={<p role="status">Loading project…</p>}>
             <WorkspaceMode />
           </Suspense>
         )}

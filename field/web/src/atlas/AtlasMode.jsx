@@ -11,6 +11,23 @@ import PermissionRequests, { isPrivilegedTool } from '../hud/PermissionRequests.
 
 const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
 const ATTENTION = new Set(['blocked', 'error', 'waiting_permission']);
+// What a state word means to someone who did not write the harness.
+const PLAIN_STATE = {
+  waiting_permission: 'needs approval',
+  blocked: 'blocked',
+  running: 'working',
+  thinking: 'thinking',
+  idle: 'idle',
+  done: 'done',
+  cancelled: 'stopped',
+  interrupted: 'interrupted',
+  error: 'failed',
+};
+export function plainState(state) {
+  if (!state) return 'idle';
+  return PLAIN_STATE[state] ?? String(state).replaceAll('_', ' ');
+}
+
 const TRACE_KINDS = new Set([
   'session.spawned', 'session.message', 'session.thinking', 'session.tool_use',
   'session.tool_result', 'session.ended', 'permission.requested', 'permission.decided',
@@ -46,11 +63,11 @@ export default function AtlasMode({ settings, setSettings }) {
         <div className="atlas-stats" aria-live="polite">
           <span><b>{live.length}</b> live</span>
           <span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> need you</span>
-          <span><b>{workspaces.length}</b> workspaces</span>
+          <span><b>{workspaces.length}</b> projects</span>
         </div>
         <div className="atlas-actions">
           <button type="button" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
-            Rome map
+            Operator map
           </button>
         </div>
       </header>
@@ -67,8 +84,8 @@ export default function AtlasMode({ settings, setSettings }) {
           />
         )) : (
           <div className="atlas-empty">
-            <b>No mounted workspace.</b>
-            <p>Add paths in field/field.yaml. Atlas shows one column per live agent, grouped by workspace.</p>
+            <b>No project open.</b>
+            <p>Add project paths in field/field.yaml, then restart Field. Each running agent gets a column here, grouped by project.</p>
           </div>
         )}
       </div>
@@ -121,13 +138,13 @@ function AgentColumn({ column, identity, selected, permissions, campaigns }) {
         ) : (
           <div className="atlas-who idle">
             <span>
-              <b>{workspace?.name ?? 'Workspace'}</b>
-              <small>idle</small>
+              <b>{workspace?.name ?? 'Project'}</b>
+              <small>no agent yet</small>
             </span>
           </div>
         )}
         <div className="atlas-col-meta">
-          <span className={`atlas-state state-${session?.state ?? 'idle'}`}>{session?.state ?? 'idle'}</span>
+          <span className={`atlas-state state-${session?.state ?? 'idle'}`}>{plainState(session?.state)}</span>
           <span className="atlas-ws" title={workspace?.path}>{workspace?.name ?? session?.cwd ?? '—'}</span>
         </div>
       </header>
@@ -141,7 +158,7 @@ function AgentColumn({ column, identity, selected, permissions, campaigns }) {
       <div className="atlas-body">
         {session
           ? <ColumnTranscript session={session} campaigns={campaigns} />
-          : <p className="atlas-idle">No agent in this workspace yet.</p>}
+          : <p className="atlas-idle">No agent working on this project yet.</p>}
       </div>
       {session?.lastTool && <footer className="atlas-foot">{session.lastTool}{session.costUsd ? ` · $${Number(session.costUsd).toFixed(3)}` : ''}</footer>}
     </article>
@@ -177,7 +194,7 @@ export function ColumnTranscript({ session, campaigns }) {
 
   return (
     <div className="atlas-trace">
-      <p className="atlas-objective">{objective?.statement ?? session.target?.label ?? session.stateDetail ?? 'Awaiting assignment'}</p>
+      <p className="atlas-objective">{objective?.statement ?? session.target?.label ?? session.stateDetail ?? 'Waiting for a task'}</p>
       {rows.map((evt) => <TraceLine key={evt.seq} evt={evt} />)}
       <div ref={bottomRef} />
     </div>

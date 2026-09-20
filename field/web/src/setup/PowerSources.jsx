@@ -8,8 +8,8 @@ const KINDS = [
 ];
 const EMPTY = { id: '', name: '', kind: 'anthropic', model: '', base_url: '', key: '' };
 
-// Power sources = the models behind your units. Keys are write-only: they are sent once,
-// stored locally, and never returned to the UI.
+// Models: the providers behind your agents. Keys are write-only: they are sent once,
+// stored locally, and never returned to the UI. (Internally still "power sources".)
 export default function PowerSources({ onClose }) {
   const [list, setList] = useState([]);
   const [form, setForm] = useState(EMPTY);
@@ -55,8 +55,8 @@ export default function PowerSources({ onClose }) {
     <div className="cityhub-veil" onClick={onClose}>
       <div className="cityhub" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <header className="cityhub-head">
-          <span><Cpu /> Power sources</span>
-          <button type="button" onClick={onClose} aria-label="Close power sources"><X /></button>
+          <span><Cpu /> Models</span>
+          <button type="button" onClick={onClose} aria-label="Close models"><X /></button>
         </header>
         <div className="psrc-body">
           <section className="psrc-list">
@@ -73,7 +73,7 @@ export default function PowerSources({ onClose }) {
                 </div>
               </div>
             ))}
-            {!list.length && <p className="cityhub-empty">No power sources yet.</p>}
+            {!list.length && <p className="cityhub-empty">No models yet. Add one below.</p>}
           </section>
 
           <section className="psrc-form">
@@ -87,12 +87,12 @@ export default function PowerSources({ onClose }) {
             <label>Id<input value={form.id} onChange={(e) => patch({ id: e.target.value })} placeholder="auto from name" /></label>
             <label>Model<input value={form.model} onChange={(e) => patch({ model: e.target.value })} placeholder={needsUrl ? 'llama3 / local' : 'claude-sonnet-5'} /></label>
             {needsUrl && <label>Base URL<input value={form.base_url} onChange={(e) => patch({ base_url: e.target.value })} placeholder="http://127.0.0.1:11434/v1" /></label>}
-            <label>API key <small>(write-only; stored locally, never shown again)</small>
+            <label>API key <small>(stored on this machine only, never shown again)</small>
               <input type="password" value={form.key} onChange={(e) => patch({ key: e.target.value })} placeholder={needsUrl ? 'optional for local' : 'sk-ant-…'} autoComplete="off" />
             </label>
             {error && <p className="cityhub-error">{error}</p>}
             {note && <p className="cityhub-note">{note}</p>}
-            <button type="button" className="primary" disabled={busy || (!form.name && !form.id)} onClick={add}><Plus /> Add power source</button>
+            <button type="button" className="primary" disabled={busy || (!form.name && !form.id)} onClick={add}><Plus /> Add model</button>
           </section>
         </div>
       </div>
