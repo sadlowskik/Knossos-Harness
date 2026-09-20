@@ -2206,11 +2206,32 @@ async fn the_result_carries_residual_risk_and_recovery() {
         .run(vec![valid_write("1"), text_response("done")], 6)
         .await;
     assert_eq!(done.halt, Halt::Done, "{}", done.summary);
+    // The only residual risk a verified completion may carry is the one the
+    // host imposes. Windows cannot confine child processes, so the result
+    // must say so; a Linux or macOS host that is required to confine them
+    // must not.
+    let (host, own): (Vec<&String>, Vec<&String>) = done
+        .residual_risk
+        .iter()
+        .partition(|r| r.contains("filesystem confinement"));
     assert!(
-        done.residual_risk.is_empty(),
-        "a verified, written completion has no residual risk: {:?}",
+        own.is_empty(),
+        "a verified, written completion has no residual risk of its own: {:?}",
         done.residual_risk
     );
+    use knossos::confine::Policy;
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        if Policy::from_env() == Policy::Require {
+            assert!(host.is_empty(), "children were jailed, yet: {host:?}");
+        }
+    } else {
+        assert!(
+            !host.is_empty(),
+            "children ran unconfined on {} and the result must say so: {:?}",
+            std::env::consts::OS,
+            done.residual_risk
+        );
+    }
 }
 
 #[tokio::test]
