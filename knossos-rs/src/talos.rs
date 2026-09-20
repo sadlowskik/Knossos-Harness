@@ -1624,7 +1624,13 @@ impl Talos {
         let mut last_text = String::new();
         let mut redirects_used = 0usize;
         let mut forbidden: Vec<String> = Vec::new();
-        let mut reusable_verdict: Option<Verdict> = None;
+        // A verdict the engine asked for on the previous step, with whether
+        // it came from the full ladder. It may stand in for the closing
+        // verification only when it proves as much as that verification
+        // would: a quick (tier-0) verify is not proof of completion in a
+        // Full-mode run, and reusing it there let a run halt Done and exit 0
+        // without cargo check or the tests ever running.
+        let mut reusable_verdict: Option<(Verdict, bool)> = None;
         // Successful calls to tools that can change something outside the
         // conversation, this turn. The discriminator between "verified" and
         // "verified nothing": every tier is satisfied vacuously by an empty
@@ -1808,7 +1814,11 @@ impl Talos {
                 // the ladder; running it twice would tax the suite and teach
                 // the engine nothing.
                 let files: Vec<PathBuf> = self.changed.iter().cloned().collect();
-                let mut verdict = if let Some(prior) = reusable_verdict.take() {
+                let prior = reusable_verdict
+                    .take()
+                    .filter(|(_, was_full)| *was_full || !matches!(verify, VerifyMode::Full))
+                    .map(|(verdict, _)| verdict);
+                let mut verdict = if let Some(prior) = prior {
                     prior
                 } else if self.ctx.is_dry_run() {
                     // Nothing is on disk, so cargo would compile the old code
@@ -1929,7 +1939,7 @@ impl Talos {
                         self.record_verdict(&verdict, full)?;
                         let content = verdict.report();
                         last_verdict = Some(verdict.clone());
-                        reusable_verdict = Some(verdict);
+                        reusable_verdict = Some((verdict, full));
                         crate::tools::ToolOutput::ok(content)
                     } else {
                         self.tools.dispatch(name, input, &self.ctx).await

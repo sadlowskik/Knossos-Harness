@@ -2051,6 +2051,77 @@ async fn verify_mid_loop_does_not_complete_the_run() {
     assert_eq!(verifies, 1);
 }
 
+/// A quick `verify` on the step before "done" used to be reused as the closing
+/// verdict. Quick is tier 0 (syntax) only, so a type error that parses would
+/// pass quick, the engine would say "done", and the run would halt `Done` with
+/// exit 0 without `cargo check` ever running. The closing verification of a
+/// Full-mode run must run the full ladder unless the prior verify was full.
+#[tokio::test]
+async fn a_quick_verify_cannot_stand_in_for_the_closing_verification() {
+    let h = Harness::new("passing");
+    let outcome = h
+        .run(
+            vec![
+                // Type error: parses fine, fails cargo check.
+                tool_call(
+                    "1",
+                    "write_file",
+                    serde_json::json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn double(x: u32) -> u32 { \"not a number\" }\n"
+                    }),
+                ),
+                tool_call("2", "verify", serde_json::json!({})),
+                text_response("Done."),
+                text_response("Still done."),
+            ],
+            4,
+        )
+        .await;
+
+    assert_ne!(
+        outcome.halt,
+        Halt::Done,
+        "a syntax-only verify must not complete the run: {}",
+        outcome.summary
+    );
+    assert!(!outcome.succeeded());
+    let verdict = outcome.verdict.expect("the closing verification ran");
+    assert!(!verdict.passed);
+    let failed = verdict.failure().unwrap();
+    assert_eq!(
+        failed.label, "cargo check",
+        "the full ladder ran, not tier 0"
+    );
+}
+
+/// The mirror case: a *full* verify on the previous step is real proof and is
+/// still reused, so the suite is not paid for twice.
+#[tokio::test]
+async fn a_full_verify_is_reused_as_the_closing_verification() {
+    let h = Harness::new("passing");
+    let outcome = h
+        .run(
+            vec![
+                valid_write("1"),
+                tool_call("2", "verify", serde_json::json!({"full": true})),
+                text_response("done"),
+            ],
+            6,
+        )
+        .await;
+    assert_eq!(outcome.halt, Halt::Done, "{}", outcome.summary);
+    let ladders = h
+        .trace_events()
+        .iter()
+        .filter(|e| e["event"] == "oracle_verdict" && e["tier"] == "cargo test")
+        .count();
+    assert_eq!(
+        ladders, 1,
+        "the full ladder ran once, not again at the close"
+    );
+}
+
 #[tokio::test]
 async fn verify_report_reaches_the_engine() {
     let h = Harness::new("passing");
