@@ -317,7 +317,11 @@ async fn pytest(root: &Path, node_ids: &[String]) -> (TestStatus, String) {
     // then makes fixture modules importable without hiding user-site pytest.
     // Plugin autoload, config, and conftest are independently disabled.
     const BOOTSTRAP: &str = "import os,sys; os.environ['PYTEST_DISABLE_PLUGIN_AUTOLOAD']='1'; import pytest; sys.path.insert(0,os.getcwd()); raise SystemExit(pytest.main())";
-    args.extend(["-E", "-P", "-c", BOOTSTRAP].into_iter().map(OsString::from));
+    args.extend(
+        ["-E", "-P", "-c", BOOTSTRAP]
+            .into_iter()
+            .map(OsString::from),
+    );
     args.extend(node_ids.iter().map(OsString::from));
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     args.extend(
