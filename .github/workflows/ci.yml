@@ -39,6 +39,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # contents: write only so a failing job can publish its log to the public
+    # ci-logs branch; workflow logs themselves need authentication to read.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,14 +54,24 @@ jobs:
       - name: Clippy
         working-directory: knossos-rs
         run: cargo clippy --all-targets --locked -- -D warnings
-      - working-directory: knossos-rs
+      - name: Test
+        working-directory: knossos-rs
+        shell: bash
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
-        run: cargo test --all-targets --locked
+        run: |
+          set -o pipefail
+          cargo test --all-targets --locked 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-rust.log ci-rust-${{ matrix.os }}-${{ github.run_id }}.log
 
   field:
     name: Knossos Field
@@ -66,6 +80,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -78,10 +94,19 @@ jobs:
         run: npm ci
       - name: Security, gameplay, state, asset, and stress suites
         working-directory: field
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$GITHUB_WORKSPACE/ci-field.log"
       - name: Production build
         working-directory: field
         run: npm run build
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-field.log ci-field-${{ matrix.os }}-${{ github.run_id }}.log
 
   conformance:
     name: ACP conformance
@@ -94,6 +119,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: knossos-rs
+      # The product agent is the Rust binary; run.mjs spawns
+      # knossos-rs/target/debug/knossos unless KNOSSOS_ACP=python. This job
+      # predates that switch and never built it, so every run failed at spawn.
+      - name: Build the agent under test
+        working-directory: knossos-rs
+        run: cargo build --locked --bin knossos
       - working-directory: conformance
         run: npm install
       # No live model in CI, so the live checks stay skipped -- but the
@@ -138,23 +173,6 @@ jobs:
           KNOSSOS_LIVE_STRICT: "1"
         run: cargo test --test live_engine
 
-  cross_language:
-    name: Lapce ACP client vs the real agent
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Drive the Python agent from the Rust client
-        working-directory: editor
-        env:
-          # Without these the suite skips and reports ok. STRICT makes that a
-          # failure, which is the whole reason this job exists.
-          LAPCE_ACP_TEST_PYTHON: python
-          LAPCE_ACP_TEST_AGENT_CWD: ${{ github.workspace }}/model
-          LAPCE_ACP_TEST_STRICT: "1"
-        run: cargo test -p lapce-acp --tests
+  # The former `cross_language` job drove the *Python* agent from a Rust Lapce
+  # client. The Python agent is research-only and the Rust agent is covered
+  # over ACP by the `conformance` job with the official client, so it is retired.
