@@ -17,9 +17,13 @@ fs.mkdirSync(path.join(nested, 'field', 'roles'), { recursive: true });
 fs.writeFileSync(path.join(root, 'core', 'placement', 'src', 'lib.rs'), '// x');
 fs.writeFileSync(path.join(nested, 'field', 'roles', 'scout.md'), '# scout');
 
+// The same native realpath locate() applies to tool paths: on Windows CI the temp
+// dir is an 8.3 short name (RUNNER~1) that only the native call expands, and a
+// fixture canonicalised the other way never matches what locate() computes.
+const real = fs.realpathSync.native ?? fs.realpathSync;
 const workspaces = [
-  { id: 'outer', path: root, canonicalPath: fs.realpathSync(root) },
-  { id: 'inner', path: nested, canonicalPath: fs.realpathSync(nested) },
+  { id: 'outer', path: root, canonicalPath: real(root) },
+  { id: 'inner', path: nested, canonicalPath: real(nested) },
 ];
 const ctx = { workspaces, cwd: root };
 const p = (...parts) => path.join(root, ...parts);

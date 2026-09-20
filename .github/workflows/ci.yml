@@ -17,6 +17,8 @@ jobs:
   python:
     name: Knossos (Python)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,10 +29,18 @@ jobs:
         run: pip install -r requirements-knossos.txt pytest
       - name: Fast suite
         working-directory: model
-        run: pytest -q
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee "$GITHUB_WORKSPACE/ci-python.log"
       - name: Audit frozen evaluation suites
         working-directory: model
         run: python scripts/audit_suites.py --lock ../knossos-rs/cases/suite-lock.json
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-python.log ci-python-${{ github.run_id }}.log
 
   rust:
     name: Knossos (Rust, ${{ matrix.os }})
