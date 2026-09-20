@@ -6,7 +6,7 @@ codebase is the map and the agents are the units. Each phase lists the code chan
 runtime impact, the security impact, and how each is mitigated.
 
 Companion docs: [`cities-plan.md`](cities-plan.md) (the map substrate, built).
-Last updated: **2026-09-19**.
+Last updated: **2026-09-20** (amendment below).
 
 ---
 
@@ -311,3 +311,85 @@ reveal the event behind any element.
 - **The world comes alive** (H): the same actions rendered as a real-time RTS over faithful events.
 - **Native & everywhere** (E + mobile): download the app and command your codebase from desktop
   and phone, over your own network — the thing the category can't match, on the axes we chose.
+
+
+---
+
+## Amendment 2026-09-20 — all-Rust runtime, ACP agents, reach from anywhere via Cameo
+
+Canonical record: `PRODUCTIZATION_PLAN.md` in the Cameo repository (workstreams B, G, L
+and the issue queue `KNS-*` / `FIELD-*`). This amendment changes three things in the
+phases above and adds one; everything else stands.
+
+### 1. "Port field-core to Rust" moves from *Later* to the spine (`KNS-RUST-001`)
+
+The harness is all Rust: every process a user runs is the `knossos` binary. `knossos field`
+today launches a Node sidecar; that sidecar is retired by a strangler port of
+`server/src` into the crate behind the interfaces the SPA already speaks. The SPA and
+`contracts/field-event-v1.schema.json` do not change, which is what keeps this a port and
+not a rewrite of the product.
+
+| Order | Moves | Parity oracle (existing tests, ported to Rust one by one) |
+|---|---|---|
+| 1 | event log (`node:sqlite` + JSONL backends) and the projection fold | `eventlog`, `replay`, `api-pagination`, `stress` (100,004 events) |
+| 2 | API, bootstrap-cookie auth, origin/host/cookie/WebSocket gates, body caps | `security`, `body`, `browser-url`, `workspace-path`, `ws` |
+| 3 | harness adapters: Knossos becomes in-process; ACP adapter; adapter contract | `adapter-contract`, `event-schema`, `acp-session`, `knossos-session`, `process-generation` |
+| 4 | budget ledger, admission, registry, routines, campaign director, world projection | `budget-ledger`, `registry-resilience`, `routines`, `routine-queue-recovery`, `campaign`, `director`, `world` |
+
+Rules: the Node server stays selectable by a flag until every ported test is green; each
+step ships behind that flag; the `npm` dependency and `server/` are deleted only at full
+parity. Phase E's "wrap the Node server as a Tauri sidecar" is therefore withdrawn: the
+native shell, when built, wraps the Rust core directly.
+
+**Impact → mitigation.** Large surface (~8k lines JS) → the test suite is the spec and is
+ported first per step, never after. SQLite in Rust → `rusqlite` bundled (the crate already
+compiles C for tree-sitter); the JSONL backend remains the honest fallback. Behaviour drift
+→ both servers run the same suite until the flag flips.
+
+### 2. Plug-and-play agents standardise on ACP (`FIELD-ACP-001`)
+
+Phase G's first new adapter is **generic-ACP**. Knossos is an ACP agent; Claude Code, Codex,
+Gemini CLI and a user's own agent that speaks ACP become units on the same map with no
+adapter code, only a manifest. Manifest-only CLI/HTTP agents follow. Two non-negotiables:
+every adapter, including user-authored ones, passes the adapter conformance suite; and one
+Field-level permission gate decides every consequential action, never the adapter's own
+report. Field's own terminal spawns a real shell outside that gate today; it goes under
+Knossos policy or is removed, and Field launches every mission with persistence on
+(`FIELD-POLICY-001`).
+
+### 3. "Reach it from anywhere" is built on the Cameo origin (`FIELD-REMOTE-001`)
+
+The Cameo box already serves HTTPS with a self-signed certificate and a console key.
+`cameod` reverse-proxies `/field/` to `knossos field` on loopback, so Field shares that
+certificate, key and origin, and the console links to it. Off the LAN, access is the
+operator's **own private network**: Cameo ships `wireguard-tools`, and `cameo remote` mints
+a peer configuration and a QR code for a phone; Headscale/Tailscale stay optional. Field
+ships a PWA manifest so it installs on a phone like an app, and because the event log is
+the session store, any device resumes the same operation. No public relay, no hosted
+accounts, no token reselling: that is the line that keeps this "sovereign" and is why it
+is not a T3 clone.
+
+Installed by `cameo knossos install`; runs as a systemd unit under the operator account,
+not the `cameo` daemon user, because units edit the operator's workspaces.
+
+### 4. Retire Python from the product path (`KNS-PY-001`)
+
+`model/` keeps Daedalus training and trace tooling under a research marker outside the CI
+gate. The Rust evaluator and the frozen suite lock become the only grading truth; the
+"faithful port of codeval.py" dependency is removed by making the Rust suite the reference.
+
+### Revised sequencing
+
+1. ✅ Harness-adapter contract.
+2. Knossos CI truth (`KNS-CI-001`) and the runtime P0 (`KNS-VERIFY-001`): a mission may
+   never report success on a reused quick verify.
+3. **A — Power Sources** (finish), then **B — Folders → Cities**.
+4. **Rust port step 1–2** (event log, projection, API, gates) — the SPA keeps working
+   against either server.
+5. **G breadth — generic-ACP adapter** + conformance; **C — Barracks**.
+6. **Rust port step 3–4**; Node server deleted at parity; `KNS-PY-001` alongside.
+7. **D — first-run wizard**; **Cameo origin + `cameo remote` + PWA**.
+8. **H — RTS surface** (can start earlier on the web side: it is a projection over an
+   unchanged event schema).
+9. **E — native shell** over the Rust core (no sidecar).
+10. **F** continuous.
