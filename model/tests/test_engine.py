@@ -1341,6 +1341,9 @@ def test_a_body_within_the_limit_is_not_refused(monkeypatch):
         return io.BytesIO(b"{}")
 
     monkeypatch.setattr("urllib.request.urlopen", capture)
+    # The engine insists on a provider key at construction; the network is
+    # captured above, so any value works and CI has none.
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
     engine = _engine()
     engine.profile = EngineProfile(max_request_bytes=100_000)
     engine._post("/chat/completions", {"m": "x" * 100})
@@ -1351,6 +1354,7 @@ def test_an_unknown_limit_is_not_treated_as_zero(monkeypatch):
     """`None` means unknown, which must not behave like "refuse everything"."""
     monkeypatch.setattr("urllib.request.urlopen",
                         lambda req, **k: io.BytesIO(b"{}"))
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
     engine = _engine()
     assert engine.profile.max_request_bytes is None
     engine._post("/chat/completions", {"m": "x" * 50_000})

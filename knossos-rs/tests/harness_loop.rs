@@ -2199,16 +2199,11 @@ async fn the_result_carries_residual_risk_and_recovery() {
         broken.recovery
     );
 
-    let done = h
-        .run(
-            vec![
-                valid_write("1"),
-                text_response("done"),
-                text_response("done"),
-                text_response("done"),
-            ],
-            6,
-        )
+    // A fresh fixture: the broken case above left a type error in this one's
+    // lib.rs, which would keep the ladder failing for the completion case.
+    let fresh = Harness::new("passing");
+    let done = fresh
+        .run(vec![valid_write("1"), text_response("done")], 6)
         .await;
     assert_eq!(done.halt, Halt::Done, "{}", done.summary);
     assert!(
