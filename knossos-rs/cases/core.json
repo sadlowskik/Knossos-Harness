@@ -1,0 +1,14 @@
+[
+  {
+    "id": "mean-empty",
+    "prompt": "mean([]) should return 0 instead of raising",
+    "kind": "bugfix",
+    "tier": "core",
+    "files": {
+      "stats.py": "def mean(xs):\n    return sum(xs) / len(xs)\n",
+      "tests/test_stats.py": "from stats import mean\n\ndef test_mean_of_values():\n    assert mean([2, 4]) == 3\n\ndef test_mean_of_empty_is_zero():\n    assert mean([]) == 0\n"
+    },
+    "fail_to_pass": ["tests/test_stats.py::test_mean_of_empty_is_zero"],
+    "pass_to_pass": ["tests/test_stats.py::test_mean_of_values"]
+  }
+]

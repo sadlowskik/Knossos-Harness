@@ -49,16 +49,38 @@ class Head(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    """Several attention heads in parallel, concatenated and projected."""
+    """Several attention heads in parallel, concatenated and projected.
 
-    def __init__(self, n_embd: int, n_head: int, block_size: int):
+    Mathematically identical to stacking `Head` above, but computed as one fused
+    QKV projection and dispatched to `F.scaled_dot_product_attention`, which
+    picks a fused kernel (FlashAttention, Dao et al. 2022) when one is available.
+    That matters at training scale for two reasons: the per-head Python loop is
+    replaced by a single batched matmul, and Flash never materialises the
+    (T, T) attention matrix, so memory stops growing quadratically with context.
+
+    `Head` is kept as the readable reference implementation -- read that one to
+    understand the mechanism, run this one.
+    """
+
+    def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float = 0.0):
         super().__init__()
-        head_size = n_embd // n_head
-        self.heads = nn.ModuleList([Head(n_embd, head_size, block_size) for _ in range(n_head)])
+        assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
+        self.n_head, self.hd = n_head, n_embd // n_head
+        self.qkv = nn.Linear(n_embd, 3 * n_embd, bias=False)
         self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = dropout
+        self.block_size = block_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.proj(torch.cat([h(x) for h in self.heads], dim=-1))
+        b, t, c = x.shape
+        q, k, v = self.qkv(x).split(c, dim=2)
+        q = q.view(b, t, self.n_head, self.hd).transpose(1, 2)   # (B, H, T, hd)
+        k = k.view(b, t, self.n_head, self.hd).transpose(1, 2)
+        v = v.view(b, t, self.n_head, self.hd).transpose(1, 2)
+        out = F.scaled_dot_product_attention(
+            q, k, v, is_causal=True,
+            dropout_p=self.dropout if self.training else 0.0)
+        return self.proj(out.transpose(1, 2).reshape(b, t, c))
 
 
 class FeedForward(nn.Module):
@@ -81,22 +103,36 @@ class Block(nn.Module):
     Maps (B, T, n_embd) -> (B, T, n_embd), which is what makes it stackable AND
     loopable (see Labyrinth).
 
-    `mixer` selects how tokens talk to each other: "softmax" (default, standard
-    causal self-attention) or "moirai" (gated fast-weight linear attention, see
-    moirai.MoiraiMixer). Both are (B, T, C) -> (B, T, C), so they are
-    interchangeable; only "softmax" keeps a growing KV cache.
+    `mixer` selects how tokens talk to each other:
+
+        softmax         standard causal self-attention (default, unchanged)
+        moirai          gated fast weights, one gate for erase and write
+        moirai-untied   the same with the gates decoupled
+
+    All three are (B, T, C) -> (B, T, C) and interchangeable; only "softmax"
+    keeps a growing KV cache.
+
+    `moirai` is the tied form -- plain Gated DeltaNet. The decoupled variant is
+    reachable but is no longer what the plain name selects: at n=5 it measured
+    nominally worse in both regimes and cost 5% more parameters
+    (scripts/moirai_sweep.py). It stays available so the ablation can be re-run,
+    not because it is recommended.
     """
+
+    MIXERS = ("softmax", "moirai", "moirai-untied")
 
     def __init__(self, n_embd: int, n_head: int, block_size: int, mixer: str = "softmax"):
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
         if mixer == "softmax":
             self.attn = MultiHeadAttention(n_embd, n_head, block_size)
-        elif mixer == "moirai":
+        elif mixer in ("moirai", "moirai-untied"):
             from .moirai import MoiraiMixer          # local: avoids an import cycle
-            self.attn = MoiraiMixer(n_embd, n_head, block_size)
+            self.attn = MoiraiMixer(n_embd, n_head, block_size,
+                                    tied=mixer == "moirai")
         else:
-            raise ValueError(f"unknown mixer: {mixer!r} (expected 'softmax' or 'moirai')")
+            raise ValueError(
+                f"unknown mixer: {mixer!r} (expected one of {', '.join(self.MIXERS)})")
         self.ln2 = nn.LayerNorm(n_embd)
         self.ff = FeedForward(n_embd)
 

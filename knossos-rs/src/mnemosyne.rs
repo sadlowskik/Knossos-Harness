@@ -55,8 +55,18 @@ pub struct Chunk {
 impl Chunk {
     pub fn location(&self) -> String {
         match &self.symbol {
-            Some(s) => format!("{}:{}-{} ({s})", self.path.display(), self.start_line, self.end_line),
-            None => format!("{}:{}-{}", self.path.display(), self.start_line, self.end_line),
+            Some(s) => format!(
+                "{}:{}-{} ({s})",
+                self.path.display(),
+                self.start_line,
+                self.end_line
+            ),
+            None => format!(
+                "{}:{}-{}",
+                self.path.display(),
+                self.start_line,
+                self.end_line
+            ),
         }
     }
 }
@@ -113,7 +123,12 @@ impl Mnemosyne {
             chunks.iter().map(|c| c.length as f64).sum::<f64>() / chunks.len() as f64
         };
 
-        Mnemosyne { root, chunks, df, avg_length }
+        Mnemosyne {
+            root,
+            chunks,
+            df,
+            avg_length,
+        }
     }
 
     pub fn chunk_count(&self) -> usize {
@@ -157,7 +172,11 @@ impl Mnemosyne {
             .filter(|h| h.score > 0.0)
             .collect();
 
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hits.truncate(limit);
         hits
     }
@@ -230,7 +249,15 @@ fn make_chunk(
         *terms.entry(token).or_insert(0) += 1;
     }
 
-    Chunk { path: path.to_path_buf(), start_line, end_line, symbol, text, terms, length }
+    Chunk {
+        path: path.to_path_buf(),
+        start_line,
+        end_line,
+        symbol,
+        text,
+        terms,
+        length,
+    }
 }
 
 /// Code-aware tokenization.
@@ -265,7 +292,11 @@ pub fn tokenize(text: &str) -> Vec<String> {
 }
 
 /// `parseHTTPResponse` -> ["parse", "http", "response"]
-fn split_camel(s: &str) -> Vec<String> {
+///
+/// Shared with [`crate::argus`], which tokenizes on different rules but needs
+/// the same answer to the one genuinely fiddly question: where a camel-case
+/// word breaks when acronyms are involved.
+pub(crate) fn split_camel(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut parts = Vec::new();
     let mut current = String::new();
@@ -352,7 +383,11 @@ mod tests {
         let m = index(&dir);
         let hits = m.search("password hashing", 3);
         assert!(!hits.is_empty());
-        assert!(hits[0].chunk.path.ends_with("auth.rs"), "{}", hits[0].chunk.location());
+        assert!(
+            hits[0].chunk.path.ends_with("auth.rs"),
+            "{}",
+            hits[0].chunk.location()
+        );
     }
 
     #[test]
@@ -425,7 +460,10 @@ mod tests {
         .unwrap();
 
         let m = Mnemosyne::build(dir.path(), &RustAdapter).unwrap();
-        assert!(m.chunk_count() > 1, "a 300-line function must not be one chunk");
+        assert!(
+            m.chunk_count() > 1,
+            "a 300-line function must not be one chunk"
+        );
         assert!(m
             .chunks
             .iter()

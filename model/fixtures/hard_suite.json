@@ -1,0 +1,242 @@
+[
+  {
+    "id": "the-second-call-remembers-the-first",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "collect_errors() returns entries from a previous call when it is called more than once. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/validate.py": "\ndef collect_errors(fields, into=[]):\n    \"\"\"Append a message for each empty field and return the accumulator.\n\n    Callers may pass their own list to gather errors across several calls.\n    \"\"\"\n    for name, value in fields.items():\n        if not value:\n            into.append(f\"{name} is required\")\n    return into\n",
+      "tests/__init__.py": "",
+      "tests/test_validate.py": "\nfrom pkg.validate import collect_errors\n\n\ndef test_a_second_call_does_not_see_the_first():\n    collect_errors({\"a\": \"\"})\n    assert collect_errors({\"b\": \"\"}) == [\"b is required\"]\n\n\ndef test_one_call_still_works():\n    assert collect_errors({\"a\": \"\"}) == [\"a is required\"]\n",
+      "tests/test_accumulating.py": "\nfrom pkg.validate import collect_errors\n\n\ndef test_an_explicit_accumulator_is_still_appended_to():\n    \"\"\"The documented use: gather errors across several calls.\"\"\"\n    bucket = [\"existing\"]\n    collect_errors({\"a\": \"\"}, bucket)\n    collect_errors({\"b\": \"\"}, bucket)\n    assert bucket == [\"existing\", \"a is required\", \"b is required\"]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_validate.py::test_a_second_call_does_not_see_the_first"
+    ],
+    "pass_to_pass": [
+      "tests/test_validate.py::test_one_call_still_works",
+      "tests/test_accumulating.py::test_an_explicit_accumulator_is_still_appended_to"
+    ],
+    "note": "Clearing `into` at the top also passes the named test and breaks the caller."
+  },
+  {
+    "id": "dedupe-must-not-reorder",
+    "kind": "regression_trap",
+    "tier": "hard",
+    "prompt": "unique() keeps duplicates. Make it return each item once.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/seq.py": "\ndef unique(items):\n    \"\"\"Return the items with duplicates removed, in first-seen order.\"\"\"\n    return [item for item in items]\n",
+      "tests/__init__.py": "",
+      "tests/test_seq.py": "\nfrom pkg.seq import unique\n\n\ndef test_duplicates_are_removed():\n    assert len(unique([3, 1, 3, 2, 1])) == 3\n",
+      "tests/test_ordering.py": "\nfrom pkg.seq import unique\n\n\ndef test_order_is_preserved_when_there_are_no_duplicates():\n    \"\"\"Downstream rendering depends on this; see the docstring.\"\"\"\n    assert unique([3, 1, 2]) == [3, 1, 2]\n\n\ndef test_a_longer_run_keeps_its_order():\n    assert unique([5, 3, 9, 1]) == [5, 3, 9, 1]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_seq.py::test_duplicates_are_removed"
+    ],
+    "pass_to_pass": [
+      "tests/test_ordering.py::test_order_is_preserved_when_there_are_no_duplicates",
+      "tests/test_ordering.py::test_a_longer_run_keeps_its_order"
+    ],
+    "note": "`list(set(items))` passes the named test and breaks two already-passing ones."
+  },
+  {
+    "id": "one-fix-is-not-enough",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "parse_row() returns the wrong fields for a quoted CSV row. Make it handle the sample correctly.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/csvparse.py": "\ndef parse_row(line):\n    \"\"\"Split one CSV row on commas, honouring double quotes.\n\n    A quoted field may contain commas. Quotes are stripped from the result.\n    \"\"\"\n    out, field, quoted = [], \"\", False\n    for char in line:\n        if char == \"'\":                 # defect 1: wrong quote character\n            quoted = not quoted\n        elif char == \",\" and quoted:    # defect 2: inverted condition\n            out.append(field)\n            field = \"\"\n        else:\n            field += char\n    out.append(field)\n    return out\n",
+      "tests/__init__.py": "",
+      "tests/test_csvparse.py": "\nfrom pkg.csvparse import parse_row\n\n\ndef test_a_quoted_field_may_contain_a_comma():\n    assert parse_row('a,\"b,c\",d') == [\"a\", \"b,c\", \"d\"]\n\n\ndef test_a_plain_row_still_splits():\n    assert parse_row(\"a,b,c\") == [\"a\", \"b\", \"c\"]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_csvparse.py::test_a_quoted_field_may_contain_a_comma",
+      "tests/test_csvparse.py::test_a_plain_row_still_splits"
+    ],
+    "pass_to_pass": [],
+    "note": "Two independent defects; fixing one leaves both tests red."
+  },
+  {
+    "id": "the-contract-is-in-the-docstring",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "normalise_tags() lowercases but leaves duplicates. Remove them.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/tags.py": "\ndef normalise_tags(tags):\n    \"\"\"Return a new lowercased, de-duplicated list, in first-seen order.\n\n    Never mutates the argument: callers reuse the list they passed in.\n    \"\"\"\n    return [t.lower() for t in tags]\n",
+      "pkg/report.py": "\nfrom pkg.tags import normalise_tags\n\n\ndef summarise(tags):\n    \"\"\"Report on the caller's tags without disturbing them.\"\"\"\n    return {\"normalised\": normalise_tags(tags), \"original_count\": len(tags)}\n",
+      "tests/__init__.py": "",
+      "tests/test_tags.py": "\nfrom pkg.tags import normalise_tags\n\n\ndef test_duplicates_are_removed():\n    assert normalise_tags([\"A\", \"b\", \"a\"]) == [\"a\", \"b\"]\n",
+      "tests/test_report.py": "\nfrom pkg.report import summarise\n\n\ndef test_the_callers_list_is_left_alone():\n    tags = [\"A\", \"b\", \"a\"]\n    result = summarise(tags)\n    assert result[\"original_count\"] == 3\n    assert tags == [\"A\", \"b\", \"a\"], \"summarise must not mutate its argument\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_tags.py::test_duplicates_are_removed"
+    ],
+    "pass_to_pass": [
+      "tests/test_report.py::test_the_callers_list_is_left_alone"
+    ],
+    "note": "An in-place fix passes the named test and violates the documented contract."
+  },
+  {
+    "id": "wrong-answers-without-an-error",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "running_total() disagrees with the expected totals on the sample invoice. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/money.py": "\ndef running_total(amounts):\n    \"\"\"Cumulative totals in cents, rounded to whole cents at each step.\n\n    Amounts arrive as floating point dollars.\n    \"\"\"\n    total, out = 0, []\n    for amount in amounts:\n        total += int(amount * 100)          # truncates instead of rounding\n        out.append(total)\n    return out\n",
+      "tests/__init__.py": "",
+      "tests/test_money.py": "\nfrom pkg.money import running_total\n\n\ndef test_fractional_cents_round_rather_than_truncate():\n    assert running_total([0.29, 0.29, 0.29]) == [29, 58, 87]\n\n\ndef test_whole_amounts_are_unaffected():\n    assert running_total([1.00, 2.00]) == [100, 300]\n"
+    },
+    "fail_to_pass": [
+      "tests/test_money.py::test_fractional_cents_round_rather_than_truncate"
+    ],
+    "pass_to_pass": [
+      "tests/test_money.py::test_whole_amounts_are_unaffected"
+    ],
+    "note": "No exception; 0.29*100 is 28.999... and int() truncates to 28."
+  },
+  {
+    "id": "right-the-first-time-only",
+    "kind": "bugfix",
+    "tier": "hard",
+    "prompt": "price_for() returns the wrong currency after the first lookup. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/pricing.py": "\n_RATES = {\"USD\": 1.0, \"EUR\": 0.9, \"GBP\": 0.8}\n_cache = {}\n\n\ndef price_for(sku, currency):\n    \"\"\"Price of `sku` in `currency`, memoised.\"\"\"\n    if sku in _cache:                       # key ignores currency\n        return _cache[sku]\n    price = round(100 * _RATES[currency], 2)\n    _cache[sku] = price\n    return price\n",
+      "tests/__init__.py": "",
+      "tests/test_pricing.py": "\nfrom pkg.pricing import price_for\n\n\ndef test_a_second_currency_is_not_served_from_the_first():\n    assert price_for(\"widget\", \"USD\") == 100.0\n    assert price_for(\"widget\", \"EUR\") == 90.0\n\n\ndef test_the_first_lookup_is_still_right():\n    assert price_for(\"gadget\", \"GBP\") == 80.0\n"
+    },
+    "fail_to_pass": [
+      "tests/test_pricing.py::test_a_second_currency_is_not_served_from_the_first"
+    ],
+    "pass_to_pass": [
+      "tests/test_pricing.py::test_the_first_lookup_is_still_right"
+    ],
+    "note": "Module-level cache; the agent must notice the key, not add a clear()."
+  },
+  {
+    "id": "cache-invalidation-is-scoped",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "rename_product() succeeds, but product_label() still returns the old label afterwards. Fix it.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/catalog.py": "_products = {\"chair\": \"Reading chair\", \"desk\": \"Writing desk\"}\n_labels = {}\n_loads = {}\n\n\ndef product_label(sku):\n    \"\"\"Return a product label, loading each unchanged SKU at most once.\"\"\"\n    if sku not in _labels:\n        _loads[sku] = _loads.get(sku, 0) + 1\n        _labels[sku] = _products[sku]\n    return _labels[sku]\n\n\ndef rename_product(sku, label):\n    \"\"\"Rename one product without invalidating labels for other products.\"\"\"\n    _products[sku] = label\n    _labels.pop(label, None)       # defect: cache is keyed by SKU, not label\n\n\ndef load_count(sku):\n    return _loads.get(sku, 0)\n\n\ndef reset_cache():\n    _labels.clear()\n    _loads.clear()\n",
+      "tests/__init__.py": "",
+      "tests/test_catalog.py": "from pkg.catalog import load_count, product_label, rename_product, reset_cache\n\n\ndef test_rename_is_visible_on_the_next_lookup():\n    reset_cache()\n    assert product_label(\"chair\") == \"Reading chair\"\n    rename_product(\"chair\", \"Office chair\")\n    assert product_label(\"chair\") == \"Office chair\"\n\n\ndef test_renaming_one_product_keeps_another_cached():\n    reset_cache()\n    product_label(\"desk\")\n    product_label(\"chair\")\n    rename_product(\"chair\", \"Office chair\")\n    assert product_label(\"desk\") == \"Writing desk\"\n    assert load_count(\"desk\") == 1\n"
+    },
+    "fail_to_pass": [
+      "tests/test_catalog.py::test_rename_is_visible_on_the_next_lookup"
+    ],
+    "pass_to_pass": [
+      "tests/test_catalog.py::test_renaming_one_product_keeps_another_cached"
+    ],
+    "note": "Clearing the complete cache fixes the stale chair but regresses the unrelated desk."
+  },
+  {
+    "id": "request-options-do-not-leak-headers",
+    "kind": "state_isolation",
+    "tier": "hard",
+    "prompt": "request_options() leaks a header from one request into the next. Make each call independent.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/options.py": "DEFAULT_HEADERS = {\"Accept\": \"application/json\"}\n\n\ndef request_options(extra_headers=None):\n    \"\"\"Return fresh request options without mutating defaults or caller data.\"\"\"\n    options = {\"timeout\": 5, \"headers\": DEFAULT_HEADERS}\n    if extra_headers:\n        options[\"headers\"].update(extra_headers)\n    return options\n",
+      "pkg/client.py": "from pkg.options import request_options\n\n\ndef headers_for(extra_headers=None):\n    \"\"\"The HTTP client forwards exactly the options it receives.\"\"\"\n    return request_options(extra_headers)[\"headers\"]\n",
+      "tests/__init__.py": "",
+      "tests/test_options.py": "from pkg.client import headers_for\n\n\ndef test_headers_from_one_request_do_not_reach_the_next():\n    assert headers_for({\"X-Request-ID\": \"first\"})[\"X-Request-ID\"] == \"first\"\n    assert headers_for() == {\"Accept\": \"application/json\"}\n\n\ndef test_default_timeout_and_accept_header_are_preserved():\n    from pkg.options import request_options\n    options = request_options()\n    assert options[\"timeout\"] == 5\n    assert options[\"headers\"][\"Accept\"] == \"application/json\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_options.py::test_headers_from_one_request_do_not_reach_the_next"
+    ],
+    "pass_to_pass": [
+      "tests/test_options.py::test_default_timeout_and_accept_header_are_preserved"
+    ],
+    "note": "The mutation is hidden in a nested default dictionary and appears only across calls."
+  },
+  {
+    "id": "failed-transfer-leaves-no-debit",
+    "kind": "state_transition",
+    "tier": "hard",
+    "prompt": "Ledger.transfer() debits the sender when a transfer to a frozen account fails. Make failed transfers atomic.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/ledger.py": "class Ledger:\n    def __init__(self, balances, frozen=()):\n        self.balances = dict(balances)\n        self.frozen = set(frozen)\n\n    def transfer(self, source, target, cents):\n        \"\"\"Move positive cents atomically; errors leave every balance unchanged.\"\"\"\n        if cents <= 0:\n            raise ValueError(\"amount must be positive\")\n        if self.balances[source] < cents:\n            raise ValueError(\"insufficient funds\")\n        self.balances[source] -= cents\n        if target in self.frozen:\n            raise RuntimeError(\"target account is frozen\")\n        self.balances[target] += cents\n",
+      "pkg/report.py": "def total_balance(ledger):\n    \"\"\"Audits use this after both successful and failed transfers.\"\"\"\n    return sum(ledger.balances.values())\n",
+      "tests/__init__.py": "",
+      "tests/test_ledger.py": "import pytest\n\nfrom pkg.ledger import Ledger\nfrom pkg.report import total_balance\n\n\ndef test_a_failed_transfer_does_not_debit_the_sender():\n    ledger = Ledger({\"alice\": 100, \"vault\": 20}, frozen={\"vault\"})\n    with pytest.raises(RuntimeError):\n        ledger.transfer(\"alice\", \"vault\", 30)\n    assert ledger.balances == {\"alice\": 100, \"vault\": 20}\n\n\ndef test_a_successful_transfer_keeps_the_total_and_moves_money():\n    ledger = Ledger({\"alice\": 100, \"bob\": 20})\n    ledger.transfer(\"alice\", \"bob\", 30)\n    assert ledger.balances == {\"alice\": 70, \"bob\": 50}\n    assert total_balance(ledger) == 120\n"
+    },
+    "fail_to_pass": [
+      "tests/test_ledger.py::test_a_failed_transfer_does_not_debit_the_sender"
+    ],
+    "pass_to_pass": [
+      "tests/test_ledger.py::test_a_successful_transfer_keeps_the_total_and_moves_money"
+    ],
+    "note": "Checking the frozen target before changing either balance is simpler than compensating later."
+  },
+  {
+    "id": "add-a-summary-field-end-to-end",
+    "kind": "feature",
+    "tier": "hard",
+    "prompt": "Add an `open_count` field to the project summary returned by the public API.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/projects.py": "def project_summary(project):\n    \"\"\"Return the JSON-ready summary for one project.\"\"\"\n    return {\"name\": project[\"name\"], \"task_count\": len(project[\"tasks\"])}\n",
+      "pkg/api.py": "from pkg.projects import project_summary\n\n\ndef get_project(project):\n    \"\"\"HTTP handlers return this dictionary unchanged.\"\"\"\n    return project_summary(project)\n",
+      "tests/__init__.py": "",
+      "tests/test_api.py": "from pkg.api import get_project\n\n\ndef test_summary_includes_the_number_of_open_tasks():\n    project = {\"name\": \"Roadmap\", \"tasks\": [{\"done\": False}, {\"done\": True}, {\"done\": False}]}\n    assert get_project(project)[\"open_count\"] == 2\n\n\ndef test_existing_summary_fields_are_preserved():\n    assert get_project({\"name\": \"Roadmap\", \"tasks\": []})[\"name\"] == \"Roadmap\"\n"
+    },
+    "fail_to_pass": [
+      "tests/test_api.py::test_summary_includes_the_number_of_open_tasks"
+    ],
+    "pass_to_pass": [
+      "tests/test_api.py::test_existing_summary_fields_are_preserved"
+    ],
+    "note": "The feature is small but must travel through the implementation seam the public API uses."
+  },
+  {
+    "id": "rename-parser-and-update-call-sites",
+    "kind": "cross_file",
+    "tier": "hard",
+    "prompt": "Rename parse_record() to parse_event() and update the application to use the new public symbol.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/parser.py": "def parse_record(text):\n    \"\"\"Parse a `kind:value` event line.\"\"\"\n    kind, value = text.split(\":\", 1)\n    return {\"kind\": kind, \"value\": value}\n",
+      "pkg/service.py": "from pkg.parser import parse_record\n\n\ndef ingest(text):\n    return parse_record(text)\n",
+      "tests/__init__.py": "",
+      "tests/test_service.py": "from pkg.service import ingest\n\n\ndef test_ingest_uses_the_renamed_public_parser():\n    assert ingest(\"note:hello\") == {\"kind\": \"note\", \"value\": \"hello\"}\n",
+      "tests/test_public_api.py": "def test_old_parser_symbol_is_not_left_as_a_compatibility_alias():\n    import pkg.parser as parser\n    assert hasattr(parser, \"parse_event\")\n    assert not hasattr(parser, \"parse_record\")\n"
+    },
+    "fail_to_pass": [
+      "tests/test_public_api.py::test_old_parser_symbol_is_not_left_as_a_compatibility_alias"
+    ],
+    "pass_to_pass": [
+      "tests/test_service.py::test_ingest_uses_the_renamed_public_parser"
+    ],
+    "note": "A correct migration updates both definition and import; retaining an alias evades the requested API change."
+  },
+  {
+    "id": "fix-renderer-not-generated-schema",
+    "kind": "boundary",
+    "tier": "hard",
+    "prompt": "The displayed task title is always upper-case. Fix the renderer; do not edit generated schema files.",
+    "files": {
+      "pkg/__init__.py": "",
+      "pkg/generated_schema.py": "# GENERATED FILE -- changes are overwritten by the schema compiler.\nTITLE_STYLE = \"upper\"\n",
+      "pkg/render.py": "from pkg.generated_schema import TITLE_STYLE\n\n\ndef render_title(title):\n    \"\"\"Render source titles exactly as users entered them.\"\"\"\n    return title.upper() if TITLE_STYLE == \"upper\" else title\n",
+      "tests/__init__.py": "",
+      "tests/test_render.py": "from pkg.render import render_title\n\n\ndef test_titles_keep_their_original_case():\n    assert render_title(\"Ship v2\") == \"Ship v2\"\n",
+      "tests/test_boundary.py": "from pathlib import Path\n\n\ndef test_generated_schema_was_not_edited():\n    text = Path(\"pkg/generated_schema.py\").read_text(encoding=\"utf-8\")\n    assert text == '# GENERATED FILE -- changes are overwritten by the schema compiler.\\nTITLE_STYLE = \"upper\"\\n'\n"
+    },
+    "fail_to_pass": [
+      "tests/test_render.py::test_titles_keep_their_original_case"
+    ],
+    "pass_to_pass": [
+      "tests/test_boundary.py::test_generated_schema_was_not_edited"
+    ],
+    "note": "Changing the generated constant is the easy shortcut; the renderer must own the policy."
+  }
+]

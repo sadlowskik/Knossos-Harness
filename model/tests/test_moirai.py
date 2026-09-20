@@ -9,10 +9,49 @@ gating, or the delta rule is wrong, this fails.
 import torch
 import torch.nn.functional as F
 
+import pytest
+
 from daedalus import MoiraiMixer, MultiHeadAttention, Labyrinth
+from daedalus.layers import Block
 
 B, T, C, V = 2, 4, 32, 256
 H = 4
+
+
+# ------------------------------------------------------- reaching the ablation
+
+def test_the_plain_name_selects_the_supported_configuration():
+    """`moirai` is the tied form -- plain Gated DeltaNet.
+
+    Decoupling measured nominally worse in both regimes at n=5 and cost 5% more
+    parameters, so it is no longer what the unqualified name builds. It stays
+    reachable for the ablation. See scripts/moirai_sweep.py.
+    """
+    assert Block(C, H, T, mixer="moirai").attn.tied is True
+    assert Block(C, H, T, mixer="moirai-untied").attn.tied is False
+    assert MoiraiMixer(C, H).tied is True, "the module default agrees"
+
+
+def test_a_tied_mixer_has_no_separate_write_projection():
+    tied = Block(C, H, T, mixer="moirai").attn
+    untied = Block(C, H, T, mixer="moirai-untied").attn
+
+    assert not hasattr(tied, "write")
+    assert hasattr(untied, "write")
+    assert sum(p.numel() for p in untied.parameters()) > \
+        sum(p.numel() for p in tied.parameters()), \
+        "decoupling costs parameters; the sweep must report that honestly"
+
+
+def test_all_three_mixers_are_interchangeable_at_the_call_site():
+    x = torch.randn(B, T, C)
+    for mixer in Block.MIXERS:
+        assert Block(C, H, T, mixer=mixer)(x).shape == (B, T, C)
+
+
+def test_an_unknown_mixer_names_the_valid_ones():
+    with pytest.raises(ValueError, match="moirai-untied"):
+        Block(C, H, T, mixer="nonsense")
 
 
 def _reference(mix: MoiraiMixer, x: torch.Tensor) -> torch.Tensor:
@@ -76,15 +115,17 @@ def test_moirai_is_causal():
         assert torch.allclose(o1[:, :-1], mix(x2)[:, :-1], atol=1e-5)
 
 
-def test_moirai_gradients_reach_the_gates():
-    mix = MoiraiMixer(C, H)
+@pytest.mark.parametrize("tied", [True, False])
+def test_moirai_gradients_reach_the_gates(tied):
+    mix = MoiraiMixer(C, H, tied=tied)
     x = torch.randn(B, T, C, requires_grad=True)
     mix(x).pow(2).mean().backward()
     for name, p in mix.named_parameters():
         assert p.grad is not None, f"no gradient for {name}"
         assert torch.isfinite(p.grad).all(), f"non-finite gradient in {name}"
     assert mix.erase.weight.grad.abs().sum() > 0      # erase gate is trained
-    assert mix.write.weight.grad.abs().sum() > 0      # write gate is trained
+    if not tied:
+        assert mix.write.weight.grad.abs().sum() > 0  # write gate is trained
     assert torch.isfinite(x.grad).all()
 
 

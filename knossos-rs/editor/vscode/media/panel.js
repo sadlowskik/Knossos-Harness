@@ -1,4 +1,4 @@
-// Webview front end. Renders events streamed from `daedalus serve` and sends
+// Webview front end. Renders events streamed from `knossos serve` and sends
 // user intent back to the extension host.
 //
 // No framework: the DOM here is small enough that one would be overhead, and
@@ -444,7 +444,7 @@
       fileList = msg.files || [];
       return;
     }
-    if (msg.type !== "daedalus") {
+    if (msg.type !== "knossos") {
       return;
     }
     const ev = msg.event;

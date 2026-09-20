@@ -261,20 +261,48 @@ def _mean(values: Sequence[float]) -> float:
     return statistics.fmean(values) if values else 0.0
 
 
+def _held_out_ids() -> set:
+    from .evalset import CASES
+    return {c.id for c in CASES if c.held_out}
+
+
+def _retrieval_totals(label: str, grades: Sequence[RetrievalGrade]) -> None:
+    if not grades:
+        return
+    hits = [g for g in grades if g.hit]
+    top3 = [g for g in hits if g.rank and g.rank <= 3]
+    print(f"\n  {label}")
+    print(f"    recall     {len(hits)}/{len(grades)}")
+    print(f"    in top 3   {len(top3)}/{len(grades)}")
+    if hits:
+        print(f"    mean rank  {_mean([float(g.rank) for g in hits if g.rank]):.1f}")
+
+
 def report_retrieval(grades: Sequence[RetrievalGrade]) -> None:
+    """Score in-sample and held-out cases separately.
+
+    The ranker was shaped against the original cases, so a combined number
+    measures fit as much as retrieval. Only the held-out column says how this
+    does on questions it was never fitted to -- and if the two diverge, the
+    in-sample figure is the one that is lying.
+    """
+    held = _held_out_ids()
     print("\nRETRIEVAL  (no model; deterministic)")
-    print(f"  {'case':<24} {'hit':<5} {'rank':<5} first expected file")
-    print("  " + "-" * 66)
+    print(f"  {'case':<24} {'set':<10} {'hit':<5} {'rank':<5} first expected file")
+    print("  " + "-" * 76)
     for g in grades:
         mark = "yes" if g.hit else "NO"
         rank = str(g.rank) if g.rank else "-"
-        print(f"  {g.case_id:<24} {mark:<5} {rank:<5} {g.expected[0]}")
-    hits = [g for g in grades if g.hit]
-    top3 = [g for g in hits if g.rank and g.rank <= 3]
-    print(f"\n  recall     {len(hits)}/{len(grades)}")
-    print(f"  in top 3   {len(top3)}/{len(grades)}")
-    if hits:
-        print(f"  mean rank  {_mean([float(g.rank) for g in hits if g.rank]):.1f}")
+        which = "held-out" if g.case_id in held else "in-sample"
+        print(f"  {g.case_id:<24} {which:<10} {mark:<5} {rank:<5} {g.expected[0]}")
+
+    in_sample = [g for g in grades if g.case_id not in held]
+    held_out = [g for g in grades if g.case_id in held]
+    _retrieval_totals(f"in-sample  (tuned against, n={len(in_sample)})", in_sample)
+    _retrieval_totals(f"held-out   (never tuned against, n={len(held_out)})", held_out)
+    if not held_out:
+        print("\n  no held-out cases ran; quote no headline recall figure from this")
+    _retrieval_totals(f"combined   (n={len(grades)})", grades)
 
 
 def report_answers(grades: Sequence[AnswerGrade], conditions: Sequence[str]) -> None:

@@ -78,14 +78,25 @@ pub fn diff_file(path: &Path, before: Option<&str>, after: &str) -> FileDiff {
         .unified_diff()
         .context_radius(CONTEXT)
         .header(
-            &if existed { format!("a/{label}") } else { "/dev/null".to_string() },
+            &if existed {
+                format!("a/{label}")
+            } else {
+                "/dev/null".to_string()
+            },
             &format!("b/{label}"),
         )
         .to_string();
 
     let hunks = build_hunks(&td);
 
-    FileDiff { path: path.to_path_buf(), existed, unified, added, removed, hunks }
+    FileDiff {
+        path: path.to_path_buf(),
+        existed,
+        unified,
+        added,
+        removed,
+        hunks,
+    }
 }
 
 /// Split a diff into independently acceptable hunks.
@@ -206,12 +217,7 @@ pub fn render(diffs: &[FileDiff]) -> String {
         .iter()
         .fold((0, 0), |(a, r), d| (a + d.added, r + d.removed));
 
-    let mut out = format!(
-        "{} file(s) changed, +{} -{}\n\n",
-        diffs.len(),
-        add,
-        rem
-    );
+    let mut out = format!("{} file(s) changed, +{} -{}\n\n", diffs.len(), add, rem);
     for d in diffs {
         out.push_str(&format!("  {}\n", d.stat()));
     }

@@ -1,0 +1,228 @@
+# Everything that can run without a model, plus the cross-harness suites.
+#
+# The point of the last two jobs is that they are *configured*. Both existed
+# before this file and both reported success without ever contacting the agent,
+# because an unset environment variable made them skip silently. STRICT turns
+# that into a failure here, so the same thing cannot happen again unnoticed.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Knossos (Python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install optional extras
+        working-directory: model
+        run: pip install -r requirements-knossos.txt pytest
+      - name: Fast suite
+        working-directory: model
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee "$GITHUB_WORKSPACE/ci-python.log"
+      - name: Audit frozen evaluation suites
+        working-directory: model
+        run: python scripts/audit_suites.py --lock ../knossos-rs/cases/suite-lock.json
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-python.log ci-python-${{ github.run_id }}.log
+
+  rust:
+    name: Knossos (Rust, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # A wedged test would otherwise hold the runner for the six-hour default;
+    # run 19 sat 47 minutes before the runner was lost, with no log published.
+    timeout-minutes: 40
+    # contents: write only so a failing job can publish its log to the public
+    # ci-logs branch; workflow logs themselves need authentication to read.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        working-directory: knossos-rs
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: knossos-rs
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        working-directory: knossos-rs
+        shell: bash
+        # The jail is binding where the OS can provide it: a Linux or macOS
+        # runner that cannot confine children fails the suite instead of
+        # passing it vacuously. Windows has no such jail and runs `prefer`.
+        env:
+          KNOSSOS_CONFINE: ${{ runner.os == 'Windows' && 'prefer' || 'require' }}
+        # `live_engine` skips here -- there is no model server on a runner --
+        # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
+        # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
+        # The suite has hung on ubuntu runners intermittently (runs 19, 20,
+        # 22) and the job cap fires as a cancellation, which publishes no
+        # log. Time out from inside instead, so the step *fails*, the log
+        # names every test that finished, and the process tree shows what
+        # was still running.
+        # Output goes to a file rather than through a pipe: a test binary
+        # that outlives cargo would otherwise hold the pipe open and keep
+        # the step alive past any timeout, which is exactly what happened
+        # with `timeout(1)` in front of cargo.
+        run: |
+          LOG="$GITHUB_WORKSPACE/ci-rust.log"
+          if command -v setsid >/dev/null 2>&1; then
+            setsid cargo test --all-targets --locked > "$LOG" 2>&1 &
+          else
+            cargo test --all-targets --locked > "$LOG" 2>&1 &
+          fi
+          pid=$!
+          deadline=$((SECONDS + 1500))
+          while kill -0 "$pid" 2>/dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              {
+                echo "=== cargo test still running after 25 minutes; processes alive:"
+                ps -eo pid,ppid,pgid,etime,stat,args 2>/dev/null || ps -ef || true
+                echo "=== tests that never reported (compare against a green run)"
+              } >> "$LOG"
+              kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+              pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
+              cat "$LOG"
+              exit 124
+            fi
+            sleep 5
+          done
+          wait "$pid"; status=$?
+          cat "$LOG"
+          exit "$status"
+      - name: Release build
+        working-directory: knossos-rs
+        run: cargo build --release --locked --bin knossos
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-rust.log ci-rust-${{ matrix.os }}-${{ github.run_id }}.log
+
+  field:
+    name: Knossos Field
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: field/package-lock.json
+      - name: Install locked dependencies
+        working-directory: field
+        run: npm ci
+      - name: Security, gameplay, state, asset, and stress suites
+        working-directory: field
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$GITHUB_WORKSPACE/ci-field.log"
+      - name: Production build
+        working-directory: field
+        run: npm run build
+      - name: Publish failure log to ci-logs branch
+        if: failure()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci/publish-log.sh ci-field.log ci-field-${{ matrix.os }}-${{ github.run_id }}.log
+
+  conformance:
+    name: ACP conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: knossos-rs
+      # The product agent is the Rust binary; run.mjs spawns
+      # knossos-rs/target/debug/knossos unless KNOSSOS_ACP=python. This job
+      # predates that switch and never built it, so every run failed at spawn.
+      - name: Build the agent under test
+        working-directory: knossos-rs
+        run: cargo build --locked --bin knossos
+      - working-directory: conformance
+        run: npm install
+      # No live model in CI, so the live checks stay skipped -- but the
+      # deterministic ones must all run, and the summary says plainly which
+      # did not.
+      - working-directory: conformance
+        env:
+          KNOSSOS_PYTHON: python
+        run: npm test
+
+  # Everything above runs on GitHub's runners and never touches a model. The
+  # live checks cannot: the model server is on the LAN, so no hosted runner can
+  # reach it. That is what a self-hosted runner is for here -- not speed.
+  #
+  # Skipped unless KNOSSOS_LIVE_ENABLED=1 and a `knossos-live` runner is ready,
+  # so the rest of CI is unaffected when it is not. When enabled the STRICT
+  # variables make an unconfigured skip a failure, which is the whole point:
+  # §2.5 was about tests that silently do not run.
+  live:
+    name: Live model (self-hosted)
+    runs-on: [self-hosted, knossos-live]
+    # Pull requests from forks must not reach a self-hosted runner: a workflow
+    # is code, and this one would execute it on a personal machine.
+    if: github.event_name == 'push' && vars.KNOSSOS_LIVE_ENABLED == '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Knossos against a live provider
+        working-directory: conformance
+        env:
+          KNOSSOS_LIVE: "1"
+          KNOSSOS_STRICT: "1"
+          OLLAMA_HOST: ${{ vars.OLLAMA_HOST }}
+          KNOSSOS_LIVE_MODEL: ${{ vars.KNOSSOS_LIVE_MODEL }}
+        run: |
+          npm install
+          npm test
+      - name: knossos-rs against a live engine
+        working-directory: knossos-rs
+        env:
+          KNOSSOS_LIVE_OLLAMA: http://${{ vars.OLLAMA_HOST }}:11434
+          KNOSSOS_LIVE_MODEL: ${{ vars.KNOSSOS_LIVE_MODEL }}
+          KNOSSOS_LIVE_STRICT: "1"
+        run: cargo test --test live_engine
+
+  # The former `cross_language` job drove the *Python* agent from a Rust Lapce
+  # client. The Python agent is research-only and the Rust agent is covered
+  # over ACP by the `conformance` job with the official client, so it is retired.

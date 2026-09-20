@@ -1,0 +1,82 @@
+/* Field — Cameo graphite and copper, tuned down for a command surface.
+   The canvas is darker than the Cameo site so ember reads as signal, not decoration. */
+
+:root {
+  --bg:        #131210;
+  --bg-2:      #1A1812;
+  --panel:     rgba(28, 26, 21, 0.92);
+  --panel-2:   rgba(38, 35, 29, 0.86);
+  --raised:    rgba(58, 54, 46, 0.42);
+  --inset:     rgba(12, 11, 9, 0.6);
+
+  --line:      #302D28;
+  --line-2:    #45413A;
+  --line-3:    #5A554B;
+
+  --ink:       #F6F4F2;
+  --body:      #D8D2C8;
+  --muted:     #A39C91;
+  --faint:     #7C776D;
+  --ghost:     #898277;
+
+  --ember:     #FF7A1A;
+  --ember-dim: #B4571A;
+  --amber:     #FFD08A;
+  --rust:      #B4472F;
+  --verify:    #6FA88A;
+  --steel:     #7E8B94;
+
+  --disp: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  --r-sm: 3px;
+  --r:    5px;
+  --r-lg: 8px;
+
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --topbar-h: 38px;
+  --rail-h: 44px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--body);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: rgba(255, 122, 26, 0.28); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--line-3); }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+.label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }

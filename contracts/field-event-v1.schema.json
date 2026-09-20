@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knossos.local/contracts/field-event-v1.schema.json",
+  "title": "Field harness event vocabulary v1",
+  "description": "The canonical internal event vocabulary that every Field harness adapter emits (via `emit('event', kind, data)`) and that the store projection and campaign director consume. Versioned by $id/filename; Field events themselves carry no version field, so no `schema_version` property is required on the instance. Contextual enrichment added by the registry (campaignId, team, objectiveId, and similar) is permitted via `additionalProperties`.",
+  "type": "object",
+  "required": ["kind", "sessionId"],
+  "properties": {
+    "kind": {
+      "description": "The canonical Field event kind. This 'kind' names a Field-internal event and is unrelated to the endpoint/engine kind (anthropic/openai-compatible/...) or the harness kind (cli-stream-json/ndjson-serve/...).",
+      "enum": [
+        "session.state",
+        "session.message",
+        "session.thinking",
+        "session.tool_use",
+        "session.tool_result",
+        "session.usage",
+        "session.progress",
+        "session.turn_complete",
+        "session.verification",
+        "session.delegated",
+        "session.ended",
+        "endpoint.routed",
+        "browser.navigated",
+        "harness.permission_requested"
+      ]
+    },
+    "sessionId": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "session.state" } } },
+      "then": { "required": ["state"], "properties": { "state": { "type": "string" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.message" } } },
+      "then": {
+        "required": ["role", "text"],
+        "properties": {
+          "role": { "enum": ["user", "assistant"] },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.thinking" } } },
+      "then": { "required": ["text"], "properties": { "text": { "type": "string" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.tool_use" } } },
+      "then": {
+        "required": ["toolId", "name"],
+        "properties": {
+          "toolId": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.tool_result" } } },
+      "then": {
+        "required": ["toolId", "ok"],
+        "properties": {
+          "toolId": { "type": "string", "minLength": 1 },
+          "ok": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.turn_complete" } } },
+      "then": { "required": ["isError"], "properties": { "isError": { "type": "boolean" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.verification" } } },
+      "then": { "required": ["passed"], "properties": { "passed": { "type": "boolean" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.delegated" } } },
+      "then": {
+        "required": ["parentSessionId", "childSessionId"],
+        "properties": {
+          "parentSessionId": { "type": "string", "minLength": 1 },
+          "childSessionId": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "session.ended" } } },
+      "then": { "required": ["reason"], "properties": { "reason": { "type": "string" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "endpoint.routed" } } },
+      "then": { "required": ["endpointId"], "properties": { "endpointId": { "type": "string", "minLength": 1 } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "browser.navigated" } } },
+      "then": {
+        "required": ["url", "domain"],
+        "properties": {
+          "url": { "type": "string", "minLength": 1 },
+          "domain": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "harness.permission_requested" } } },
+      "then": {
+        "required": ["requestId", "toolName"],
+        "properties": {
+          "toolName": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

@@ -48,7 +48,7 @@ impl LanguageAdapter for RustAdapter {
         out
     }
 
-    fn parses_cleanly(&self, source: &str) -> bool {
+    fn parses_cleanly(&self, source: &str, _path: &Path) -> bool {
         let mut parser = Self::parser();
         match parser.parse(source, None) {
             Some(tree) => !tree.root_node().has_error(),
@@ -58,35 +58,26 @@ impl LanguageAdapter for RustAdapter {
 
     fn verify_commands(&self) -> Vec<VerifyCommand> {
         vec![
-            VerifyCommand {
-                tier: 1,
-                label: "cargo check",
-                program: "cargo",
-                args: vec![
-                    "check".into(),
-                    "--message-format=json".into(),
-                    "--quiet".into(),
-                ],
-                structured: true,
-            },
-            VerifyCommand {
-                tier: 2,
-                label: "cargo clippy",
-                program: "cargo",
-                args: vec![
-                    "clippy".into(),
-                    "--message-format=json".into(),
-                    "--quiet".into(),
-                ],
-                structured: true,
-            },
-            VerifyCommand {
-                tier: 3,
-                label: "cargo test",
-                program: "cargo",
-                args: vec!["test".into(), "--quiet".into()],
-                structured: false,
-            },
+            VerifyCommand::new(
+                1,
+                "cargo check",
+                "cargo",
+                ["check", "--message-format=json", "--quiet"],
+            )
+            .structured()
+            .required(),
+            // Label is "clippy", not "cargo clippy", so a polyglot report can
+            // say "rust: clippy" without doubling the toolchain name. Matches
+            // the Python ladder (`oracle.py` RUST_TIERS).
+            VerifyCommand::new(
+                2,
+                "clippy",
+                "cargo",
+                ["clippy", "--message-format=json", "--quiet"],
+            )
+            .structured()
+            .advisory(),
+            VerifyCommand::new(3, "cargo test", "cargo", ["test", "--quiet"]).required(),
         ]
     }
 }
@@ -160,7 +151,11 @@ fn visibility(node: Node, src: &str) -> Visibility {
     for child in node.children(&mut cursor) {
         if child.kind() == "visibility_modifier" {
             let t = text(child, src);
-            return if t == "pub" { Visibility::Public } else { Visibility::Restricted };
+            return if t == "pub" {
+                Visibility::Public
+            } else {
+                Visibility::Restricted
+            };
         }
     }
     Visibility::Private
@@ -169,7 +164,7 @@ fn visibility(node: Node, src: &str) -> Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     const SAMPLE: &str = r#"
 use std::collections::HashMap;
@@ -202,7 +197,9 @@ const LIMIT: usize = 10;
     }
 
     fn find<'a>(s: &'a [Symbol], name: &str) -> &'a Symbol {
-        s.iter().find(|x| x.name == name).unwrap_or_else(|| panic!("no symbol named {name}"))
+        s.iter()
+            .find(|x| x.name == name)
+            .unwrap_or_else(|| panic!("no symbol named {name}"))
     }
 
     #[test]
@@ -221,7 +218,10 @@ const LIMIT: usize = 10;
     fn signature_excludes_the_body() {
         let s = syms(SAMPLE);
         let build = find(&s, "build");
-        assert_eq!(build.signature, "pub fn build(name: &str, retries: u32) -> Config");
+        assert_eq!(
+            build.signature,
+            "pub fn build(name: &str, retries: u32) -> Config"
+        );
         assert!(!build.signature.contains("to_string"));
     }
 
@@ -255,8 +255,8 @@ pub struct StillHere;
 
     #[test]
     fn parses_cleanly_distinguishes_valid_from_broken() {
-        assert!(RustAdapter.parses_cleanly("pub fn a() {}"));
-        assert!(!RustAdapter.parses_cleanly("pub fn a( {{{ ~~~"));
+        assert!(RustAdapter.parses_cleanly("pub fn a() {}", Path::new("lib.rs")));
+        assert!(!RustAdapter.parses_cleanly("pub fn a( {{{ ~~~", Path::new("lib.rs")));
     }
 
     #[test]

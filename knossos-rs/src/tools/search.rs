@@ -39,6 +39,10 @@ impl Tool for Search {
         })
     }
 
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let pattern = req_str(input, "pattern")?;
         let re = match regex::Regex::new(pattern) {
@@ -54,8 +58,9 @@ impl Tool for Search {
         let glob = input.get("glob").and_then(|v| v.as_str()).map(String::from);
 
         // Walking a tree is blocking work; keep it off the async runtime.
-        let hits = tokio::task::spawn_blocking(move || search_tree(&root, &re, glob.as_deref(), limit))
-            .await??;
+        let hits =
+            tokio::task::spawn_blocking(move || search_tree(&root, &re, glob.as_deref(), limit))
+                .await??;
 
         if hits.is_empty() {
             return Ok(ToolOutput::ok("no matches"));
@@ -63,7 +68,9 @@ impl Tool for Search {
         let truncated = hits.len() >= limit;
         let mut body = hits.join("\n");
         if truncated {
-            body.push_str(&format!("\n\n[stopped at {limit} matches — narrow the pattern]"));
+            body.push_str(&format!(
+                "\n\n[stopped at {limit} matches — narrow the pattern]"
+            ));
         }
         Ok(ToolOutput::ok(body))
     }
@@ -147,6 +154,10 @@ impl Tool for SearchCode {
         })
     }
 
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, _ctx: &ToolCtx) -> Result<ToolOutput> {
         let query = req_str(input, "query")?;
         let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
@@ -165,7 +176,11 @@ impl Tool for SearchCode {
 
         let mut body = String::new();
         for hit in hits {
-            let block = format!("\n## {}\n```\n{}\n```\n", hit.chunk.location(), hit.chunk.text);
+            let block = format!(
+                "\n## {}\n```\n{}\n```\n",
+                hit.chunk.location(),
+                hit.chunk.text
+            );
             if body.len() + block.len() > MAX_RETRIEVAL_BYTES {
                 body.push_str("\n[further results omitted for length]\n");
                 break;
@@ -191,9 +206,7 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("math.rs"), "pub fn add(a: u32) -> u32 { a }\n").unwrap();
 
-        let index = Arc::new(
-            Mnemosyne::build(&root, &crate::scribe::RustAdapter).unwrap(),
-        );
+        let index = Arc::new(Mnemosyne::build(&root, &crate::scribe::RustAdapter).unwrap());
         let tool = SearchCode::new(index);
         let ctx = ToolCtx::new(root);
 

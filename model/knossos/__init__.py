@@ -35,7 +35,7 @@ from .argus import Argus, Symbol, FileRecord, Retrieved, ScanReport
 from .engine import (Engine, RetrievalOnlyEngine, StaticEngine,
                      OpenAICompatEngine, Provider, PROVIDERS, Thought,
                      ThinkSplitter)
-from .acp import DaedalusAgent, Session, PROTOCOL_VERSION
+from .acp import KnossosAgent, DaedalusAgent, Session, PROTOCOL_VERSION
 from .workspace import Workspace, PathEscape
 from .tools import (Tool, ToolSpec, ToolResult, ToolCall, ToolRegistry,
                     parse_calls, tokenize)
@@ -47,7 +47,7 @@ __all__ = [
     "Argus", "Lethe", "LspClient", "Location", "path_to_uri", "uri_to_path", "McpClient", "McpServer", "McpTool", "connect_all", "CompactionResult", "extractive_summary", "Symbol", "FileRecord", "Retrieved", "ScanReport",
     "Engine", "RetrievalOnlyEngine", "StaticEngine", "OpenAICompatEngine",
     "Provider", "PROVIDERS", "Thought", "ThinkSplitter",
-    "DaedalusAgent", "Session", "PROTOCOL_VERSION",
+    "KnossosAgent", "DaedalusAgent", "Session", "PROTOCOL_VERSION",
     "Workspace", "PathEscape",
     "Tool", "ToolSpec", "ToolResult", "ToolCall", "ToolRegistry",
     "parse_calls", "tokenize",

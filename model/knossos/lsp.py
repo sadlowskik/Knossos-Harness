@@ -24,9 +24,12 @@ anything is actually connected.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -80,6 +83,79 @@ class Location:
         start = rng.get("start") or {}
         return cls(uri_to_path(uri), int(start.get("line", 0)),
                    int(start.get("character", 0)))
+
+
+#: Language servers worth trying, per file extension, cheapest first. Each entry
+#: is the argv to launch. Nothing is installed on the user's behalf: an absent
+#: server means the exact-reference tools report that they are unavailable,
+#: which is a better answer than guessing at symbol positions.
+#: `[sys.executable, "-m", ...]` entries matter more than they look. `pip install
+#: python-lsp-server` puts `pylsp.exe` in a Scripts directory that is frequently
+#: not on PATH -- the default on Windows -- so a `shutil.which("pylsp")` check
+#: reports "no language server" for a server that is installed and importable.
+#: Observed on this machine, where it would have made `rename_symbol` refuse
+#: forever with a message blaming the user's setup.
+SERVERS: Dict[str, List[List[str]]] = {
+    ".py": [["pyright-langserver", "--stdio"],
+            ["pylsp"],
+            [sys.executable, "-m", "pylsp"],
+            ["jedi-language-server"],
+            [sys.executable, "-m", "jedi_language_server"]],
+    ".rs": [["rust-analyzer"]],
+    ".ts": [["typescript-language-server", "--stdio"]],
+    ".go": [["gopls"]],
+}
+
+
+def _launchable(argv: List[str]) -> bool:
+    """Whether this command can actually be started.
+
+    A `-m` form is available when the module imports, which is the question
+    that matters -- not whether someone put a wrapper script on PATH.
+    """
+    if len(argv) >= 3 and argv[1] == "-m":
+        return importlib.util.find_spec(argv[2]) is not None
+    return shutil.which(argv[0]) is not None
+
+
+def for_workspace(root: str | Path, timeout: float = DEFAULT_TIMEOUT
+                  ) -> Optional["LspClient"]:
+    """Start a language server suited to what is actually in `root`.
+
+    Picks by counting extensions rather than by configuration, so a mixed tree
+    gets the server for its majority language and a tree with no recognised
+    source gets nothing. Returns None -- never raises -- when no candidate is
+    installed or the handshake fails: exact references are an enhancement, and
+    an agent that cannot start without one is worse than one that says so.
+    """
+    root = Path(root).resolve()
+    counts: Dict[str, int] = {}
+    for suffix in SERVERS:
+        # `rglob` on a large tree is slow; stop as soon as the answer is clear.
+        found = 0
+        for _ in root.rglob(f"*{suffix}"):
+            found += 1
+            if found >= 25:
+                break
+        if found:
+            counts[suffix] = found
+    if not counts:
+        return None
+
+    suffix = max(counts, key=lambda s: counts[s])
+    for argv in SERVERS[suffix]:
+        if not _launchable(argv):
+            continue
+        client = LspClient(argv, root, timeout=timeout)
+        try:
+            if client.start():
+                log(f"[lsp] {argv[0]} for {suffix} in {root}")
+                return client
+        except Exception as exc:
+            log(f"[lsp] {argv[0]} failed to start: {exc}")
+        client.stop()
+    log(f"[lsp] no language server available for {suffix}")
+    return None
 
 
 class LspClient:

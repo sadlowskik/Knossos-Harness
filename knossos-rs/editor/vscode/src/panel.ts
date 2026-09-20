@@ -1,13 +1,13 @@
 // The sidebar session panel.
 //
-// Owns one long-lived `daedalus serve` process and relays between it and the
+// Owns one long-lived `knossos serve` process and relays between it and the
 // webview. The panel does no harness work of its own — it renders events and
 // forwards intent — so it cannot drift from what the CLI does.
 
 import * as path from "path";
 import * as vscode from "vscode";
 
-import { DaedalusClient, DaedalusEvent } from "./client";
+import { KnossosClient, KnossosEvent } from "./client";
 import {
   childEnv,
   globalArgs,
@@ -19,7 +19,7 @@ import {
 } from "./config";
 
 /** Virtual documents backing the diff viewer. */
-export const SCHEME = "daedalus";
+export const SCHEME = "knossos";
 
 export class ProposedContentProvider implements vscode.TextDocumentContentProvider {
   private readonly contents = new Map<string, string>();
@@ -57,10 +57,10 @@ const MENTION_BUDGET = 20_000;
 const MAX_FILES = 5000;
 
 export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposable {
-  static readonly viewType = "daedalus.session";
+  static readonly viewType = "knossos.session";
 
   private view: vscode.WebviewView | undefined;
-  private readonly client = new DaedalusClient();
+  private readonly client = new KnossosClient();
   /** Latest proposed content, keyed by workspace-relative path. */
   private diffs = new Map<string, DiffFile>();
   /** Guards against re-reporting a failed start on every webview message. */
@@ -112,7 +112,7 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
     if (!root) {
       this.post({
         event: "error",
-        message: "Open a folder (File → Open Folder) to start a Daedalus session.",
+        message: "Open a folder (File → Open Folder) to start a Knossos session.",
       });
       this.startFailed = true;
       return;
@@ -151,7 +151,7 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
   /**
    * Report a missing executable once, with a way to fix it.
    *
-   * Repeating "set daedalus.binaryPath" on every retry is noise, and telling
+   * Repeating "set knossos.binaryPath" on every retry is noise, and telling
    * someone to go find a setting is a worse answer than opening a picker.
    */
   private async reportMissingBinary(binary: string | undefined): Promise<void> {
@@ -163,14 +163,14 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
     this.post({
       event: "error",
       message:
-        "Could not find the daedalus executable. Build it with `cargo build --release`, " +
+        "Could not find the Knossos executable. Build it with `cargo build --release`, " +
         "then use Locate to point at it.",
     });
 
     const choice = await vscode.window.showErrorMessage(
       binary
-        ? `Daedalus: could not run '${binary}'.`
-        : "Daedalus: could not find the daedalus executable.",
+        ? `Knossos: could not run '${binary}'.`
+        : "Knossos: could not find the Knossos executable.",
       "Locate…",
       "Open Output"
     );
@@ -186,7 +186,7 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
     }
   }
 
-  private async onServerEvent(event: DaedalusEvent): Promise<void> {
+  private async onServerEvent(event: KnossosEvent): Promise<void> {
     if (event.event === "missing_binary") {
       await this.reportMissingBinary(event.binary as string);
       return;
@@ -333,8 +333,8 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
     );
   }
 
-  private post(event: DaedalusEvent): void {
-    void this.view?.webview.postMessage({ type: "daedalus", event });
+  private post(event: KnossosEvent): void {
+    void this.view?.webview.postMessage({ type: "knossos", event });
   }
 
   /** Ask the panel to run a task, e.g. from a command-palette entry. */
@@ -361,12 +361,17 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${asset("panel.css")}" rel="stylesheet">
-<title>Daedalus</title>
+<title>Knossos</title>
 </head>
 <body>
+  <header id="harness-head">
+    <span class="harness-seal" aria-hidden="true">K</span>
+    <span class="harness-title"><strong>KNOSSOS</strong><small>AGENT SESSION</small></span>
+    <span class="harness-live"><i></i> READY</span>
+  </header>
   <div id="status">
     <span id="status-left">starting…</span>
     <span id="status-right"></span>
@@ -380,7 +385,7 @@ export class SessionPanel implements vscode.WebviewViewProvider, vscode.Disposab
     <div class="row">
       <button id="send">Send</button>
       <button id="verify" class="secondary">Verify</button>
-      <button id="reset" class="secondary">Reset</button>
+      <button id="reset" class="secondary">New session</button>
       <span class="spacer"></span>
       <span id="busy"></span>
     </div>

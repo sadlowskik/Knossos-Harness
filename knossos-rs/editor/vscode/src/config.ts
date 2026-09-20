@@ -6,16 +6,17 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 export function config(): vscode.WorkspaceConfiguration {
-  return vscode.workspace.getConfiguration("daedalus");
+  return vscode.workspace.getConfiguration("knossos");
 }
 
-const EXE = process.platform === "win32" ? "daedalus.exe" : "daedalus";
+const EXE = process.platform === "win32" ? "knossos.exe" : "knossos";
+const LEGACY_EXE = process.platform === "win32" ? "daedalus.exe" : "daedalus";
 
 /**
  * Find the harness executable without making the user configure anything.
  *
  * Order: an explicit setting, then a build inside the workspace, then a
- * sibling `daedalus-harness` checkout, then PATH. Requiring a path up front
+ * sibling `Knossos-Harness` checkout, then PATH. Requiring a path up front
  * was the single worst thing about first-run — most of the time it is
  * discoverable, so it should be discovered.
  *
@@ -24,7 +25,7 @@ const EXE = process.platform === "win32" ? "daedalus.exe" : "daedalus";
  */
 export function resolveBinary(root: string | undefined): string | undefined {
   const configured = config().get<string>("binaryPath")?.trim();
-  if (configured && configured !== "daedalus") {
+  if (configured && configured !== "knossos") {
     return fs.existsSync(configured) ? configured : undefined;
   }
 
@@ -35,7 +36,7 @@ export function resolveBinary(root: string | undefined): string | undefined {
   }
 
   // Fall back to PATH and let the spawn decide.
-  return "daedalus";
+  return "knossos";
 }
 
 function candidates(root: string | undefined): string[] {
@@ -44,10 +45,23 @@ function candidates(root: string | undefined): string[] {
     return out;
   }
 
-  const roots = [root, path.join(path.dirname(root), "daedalus-harness")];
+  const roots = [
+    root,
+    path.join(path.dirname(root), "Knossos-Harness"),
+    path.join(path.dirname(root), "knossos-harness"),
+    path.join(path.dirname(root), "daedalus-harness"),
+  ];
   for (const base of roots) {
     out.push(path.join(base, "target", "release", EXE));
     out.push(path.join(base, "target", "debug", EXE));
+    out.push(path.join(base, "knossos-rs", "target", "release", EXE));
+    out.push(path.join(base, "knossos-rs", "target", "debug", EXE));
+    // v0.1 shipped the binary as `daedalus`; keep discovering it during the
+    // Knossos rename so existing local builds continue to work.
+    out.push(path.join(base, "target", "release", LEGACY_EXE));
+    out.push(path.join(base, "target", "debug", LEGACY_EXE));
+    out.push(path.join(base, "knossos-rs", "target", "release", LEGACY_EXE));
+    out.push(path.join(base, "knossos-rs", "target", "debug", LEGACY_EXE));
   }
   return out;
 }
@@ -55,7 +69,7 @@ function candidates(root: string | undefined): string[] {
 /** Whether the user pinned a path explicitly. */
 export function binaryIsConfigured(): boolean {
   const configured = config().get<string>("binaryPath")?.trim();
-  return !!configured && configured !== "daedalus";
+  return !!configured && configured !== "knossos";
 }
 
 /**
@@ -67,8 +81,8 @@ export function binaryIsConfigured(): boolean {
 export async function promptForBinary(): Promise<string | undefined> {
   const picked = await vscode.window.showOpenDialog({
     canSelectMany: false,
-    openLabel: "Use this daedalus executable",
-    title: "Locate the daedalus executable",
+    openLabel: "Use this Knossos executable",
+    title: "Locate the Knossos executable",
     filters: process.platform === "win32" ? { Executable: ["exe"] } : undefined,
   });
 
@@ -126,7 +140,7 @@ export async function requireRoot(): Promise<string | undefined> {
   const root = workspaceRoot();
   if (!root) {
     const choice = await vscode.window.showErrorMessage(
-      "Daedalus needs an open folder to use as its workspace.",
+      "Knossos needs an open folder to use as its workspace.",
       "Open Folder"
     );
     if (choice === "Open Folder") {
@@ -137,7 +151,8 @@ export async function requireRoot(): Promise<string | undefined> {
   return root;
 }
 
-export const API_KEY_SECRET = "daedalus.anthropicApiKey";
+export const API_KEY_SECRET = "knossos.anthropicApiKey";
+const LEGACY_API_KEY_SECRET = "daedalus.anthropicApiKey";
 
 /**
  * Environment for the child process.
@@ -151,7 +166,9 @@ export async function childEnv(
 ): Promise<NodeJS.ProcessEnv> {
   const env = { ...process.env };
   if (!env.ANTHROPIC_API_KEY) {
-    const stored = await secrets.get(API_KEY_SECRET);
+    const stored =
+      (await secrets.get(API_KEY_SECRET)) ??
+      (await secrets.get(LEGACY_API_KEY_SECRET));
     if (stored) {
       env.ANTHROPIC_API_KEY = stored;
     }

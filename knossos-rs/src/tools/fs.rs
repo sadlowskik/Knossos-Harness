@@ -18,7 +18,10 @@ fn truncate(s: String, note: &str) -> String {
     while !s.is_char_boundary(cut) {
         cut -= 1;
     }
-    format!("{}\n\n[truncated at {MAX_OUTPUT} bytes — {note}]", &s[..cut])
+    format!(
+        "{}\n\n[truncated at {MAX_OUTPUT} bytes — {note}]",
+        &s[..cut]
+    )
 }
 
 pub struct ReadFile;
@@ -45,14 +48,28 @@ impl Tool for ReadFile {
         })
     }
 
+    /// Reading is how the agent finds out what to do; it is not doing it.
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let text = match ctx.read(&path) {
             Ok(t) => t,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot read {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
-        let offset = input.get("offset").and_then(|v| v.as_u64()).unwrap_or(1).max(1) as usize;
+        let offset = input
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1) as usize;
         let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(2000) as usize;
 
         let numbered: String = text
@@ -93,9 +110,26 @@ impl Tool for WriteFile {
         })
     }
 
+    fn consequential(&self) -> bool {
+        true
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let content = req_str(input, "content")?;
+
+        // A whole-file write replaces everything, including whatever changed
+        // since the agent last looked at it. Refusing costs a re-read and a
+        // retry; overwriting costs somebody their work, silently, with the
+        // transcript showing a successful write.
+        if let Some(conflict) = ctx.conflict(&path) {
+            return Ok(ToolOutput::error(format!(
+                "{} {}. Read it again before writing — the version you composed \
+                 this content from is no longer what is there.",
+                ctx.display(&path),
+                conflict.describe()
+            )));
+        }
 
         ctx.write(&path, content)?;
 
@@ -129,6 +163,10 @@ impl Tool for EditFile {
         })
     }
 
+    fn consequential(&self) -> bool {
+        true
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let path = ctx.resolve(req_str(input, "path")?)?;
         let old = req_str(input, "old_string")?;
@@ -136,7 +174,12 @@ impl Tool for EditFile {
 
         let text = match ctx.read(&path) {
             Ok(t) => t,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot read {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot read {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
         // Uniqueness is enforced rather than assumed: a silent multi-replace is
@@ -148,7 +191,11 @@ impl Tool for EditFile {
             ))),
             1 => {
                 ctx.write(&path, &text.replacen(old, new, 1))?;
-                let verb = if ctx.is_dry_run() { "staged edit to" } else { "edited" };
+                let verb = if ctx.is_dry_run() {
+                    "staged edit to"
+                } else {
+                    "edited"
+                };
                 Ok(ToolOutput::ok(format!("{verb} {}", ctx.display(&path))).changed(path))
             }
             n => Ok(ToolOutput::error(format!(
@@ -178,13 +225,22 @@ impl Tool for ListDir {
         })
     }
 
+    fn consequential(&self) -> bool {
+        false
+    }
+
     async fn run(&self, input: &serde_json::Value, ctx: &ToolCtx) -> Result<ToolOutput> {
         let requested = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let path = ctx.resolve(requested)?;
 
         let mut entries = match tokio::fs::read_dir(&path).await {
             Ok(e) => e,
-            Err(e) => return Ok(ToolOutput::error(format!("cannot list {}: {e}", ctx.display(&path)))),
+            Err(e) => {
+                return Ok(ToolOutput::error(format!(
+                    "cannot list {}: {e}",
+                    ctx.display(&path)
+                )))
+            }
         };
 
         let mut names = Vec::new();
@@ -198,7 +254,10 @@ impl Tool for ListDir {
         if names.is_empty() {
             return Ok(ToolOutput::ok(format!("{} is empty", ctx.display(&path))));
         }
-        Ok(ToolOutput::ok(truncate(names.join("\n"), "narrow the path")))
+        Ok(ToolOutput::ok(truncate(
+            names.join("\n"),
+            "narrow the path",
+        )))
     }
 }
 
@@ -231,11 +290,17 @@ mod tests {
     async fn edit_refuses_ambiguous_matches() {
         let (_d, c) = ctx();
         WriteFile
-            .run(&json!({"path": "d.rs", "content": "let x = 1;\nlet x = 1;\n"}), &c)
+            .run(
+                &json!({"path": "d.rs", "content": "let x = 1;\nlet x = 1;\n"}),
+                &c,
+            )
             .await
             .unwrap();
         let e = EditFile
-            .run(&json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}), &c)
+            .run(
+                &json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(e.is_error);
@@ -250,7 +315,10 @@ mod tests {
             .await
             .unwrap();
         let e = EditFile
-            .run(&json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}), &c)
+            .run(
+                &json!({"path": "d.rs", "old_string": "let x = 1;", "new_string": "let y = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(!e.is_error, "{}", e.content);
@@ -286,21 +354,33 @@ mod tests {
         let c = c.dry_run();
 
         EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+                &c,
+            )
             .await
             .unwrap();
 
         let read = ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
-        assert!(read.content.contains("let x = 2;"), "read must see the staged edit");
+        assert!(
+            read.content.contains("let x = 2;"),
+            "read must see the staged edit"
+        );
 
         // A second edit chains off the first.
         let second = EditFile
-            .run(&json!({"path": "a.rs", "old_string": "let x = 2;", "new_string": "let x = 3;"}), &c)
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 2;", "new_string": "let x = 3;"}),
+                &c,
+            )
             .await
             .unwrap();
         assert!(!second.is_error, "{}", second.content);
 
-        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "let x = 1;\n");
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "let x = 1;\n"
+        );
     }
 
     #[tokio::test]
@@ -381,7 +461,10 @@ mod tests {
         assert!(!after.contains("FIFTEEN"));
 
         // The file stays staged, since part of it is still unreviewed.
-        assert!(!c.diffs().is_empty(), "remaining hunk should still be pending");
+        assert!(
+            !c.diffs().is_empty(),
+            "remaining hunk should still be pending"
+        );
     }
 
     #[tokio::test]
@@ -398,7 +481,10 @@ mod tests {
         let ids: Vec<usize> = c.diffs()[0].hunks.iter().map(|h| h.id).collect();
         c.apply_hunks(&[("a.rs".to_string(), ids)]).unwrap();
 
-        assert_eq!(std::fs::read_to_string(c.root().join("a.rs")).unwrap(), "beta\n");
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "beta\n"
+        );
         assert!(c.diffs().is_empty(), "fully accepted files leave staging");
     }
 
@@ -421,6 +507,147 @@ mod tests {
             .run(&json!({"path": "../escaped.rs", "content": "x"}), &c)
             .await
             .is_err());
+    }
+
+    /// The case this exists for: the agent reads a file, someone else changes
+    /// it, and the agent writes back content composed from what it read.
+    #[tokio::test]
+    async fn a_whole_file_write_after_an_external_edit_is_refused() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "fn one() {}\n").unwrap();
+
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        // The user saves the file in their editor while the agent is thinking.
+        std::fs::write(c.root().join("a.rs"), "fn one() {}\nfn theirs() {}\n").unwrap();
+
+        let w = WriteFile
+            .run(
+                &json!({"path": "a.rs", "content": "fn one() {}\nfn mine() {}\n"}),
+                &c,
+            )
+            .await
+            .unwrap();
+
+        assert!(w.is_error, "the write should have been refused");
+        assert!(w.content.contains("changed on disk"));
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "fn one() {}\nfn theirs() {}\n",
+            "their edit must survive"
+        );
+    }
+
+    #[tokio::test]
+    async fn creating_a_file_the_agent_has_never_read_is_not_a_conflict() {
+        let (_d, c) = ctx();
+        let w = WriteFile
+            .run(&json!({"path": "new.rs", "content": "fresh\n"}), &c)
+            .await
+            .unwrap();
+        assert!(!w.is_error, "{}", w.content);
+    }
+
+    /// The harness's own writes are not external changes. Without re-stamping
+    /// on write, the second write to any file would be refused.
+    #[tokio::test]
+    async fn consecutive_writes_by_the_agent_do_not_conflict() {
+        let (_d, c) = ctx();
+        for content in ["one\n", "two\n", "three\n"] {
+            let w = WriteFile
+                .run(&json!({"path": "a.rs", "content": content}), &c)
+                .await
+                .unwrap();
+            assert!(!w.is_error, "{}", w.content);
+        }
+        assert_eq!(
+            std::fs::read_to_string(c.root().join("a.rs")).unwrap(),
+            "three\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_deleted_after_being_read_is_reported_as_such() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "gone soon\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+        std::fs::remove_file(c.root().join("a.rs")).unwrap();
+
+        let w = WriteFile
+            .run(&json!({"path": "a.rs", "content": "back\n"}), &c)
+            .await
+            .unwrap();
+        assert!(w.is_error);
+        assert!(w.content.contains("deleted"));
+    }
+
+    /// `edit_file` needs no freshness check because it re-reads and requires an
+    /// exact match. This pins that reasoning: if the targeted region changed,
+    /// the edit fails on its own.
+    #[tokio::test]
+    async fn an_edit_whose_region_changed_externally_fails_on_the_match() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        std::fs::write(c.root().join("a.rs"), "let x = 99;\n").unwrap();
+
+        let e = EditFile
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 2;"}),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(e.is_error);
+        assert!(e.content.contains("not found"));
+    }
+
+    /// The other half of that reasoning: an external change elsewhere in the
+    /// file must not block an edit that still matches. Refusing here would make
+    /// the agent unable to work in any file the user is also touching.
+    #[tokio::test]
+    async fn an_edit_elsewhere_in_an_externally_changed_file_still_applies() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "let x = 1;\nlet y = 2;\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+
+        std::fs::write(
+            c.root().join("a.rs"),
+            "let x = 1;\nlet y = 2;\nlet z = 3;\n",
+        )
+        .unwrap();
+
+        let e = EditFile
+            .run(
+                &json!({"path": "a.rs", "old_string": "let x = 1;", "new_string": "let x = 7;"}),
+                &c,
+            )
+            .await
+            .unwrap();
+        assert!(!e.is_error, "{}", e.content);
+
+        let after = std::fs::read_to_string(c.root().join("a.rs")).unwrap();
+        assert!(after.contains("let x = 7;"), "the edit applied");
+        assert!(after.contains("let z = 3;"), "their addition survived");
+    }
+
+    #[tokio::test]
+    async fn accepting_the_current_state_clears_a_conflict() {
+        let (_d, c) = ctx();
+        std::fs::write(c.root().join("a.rs"), "one\n").unwrap();
+        ReadFile.run(&json!({"path": "a.rs"}), &c).await.unwrap();
+        std::fs::write(c.root().join("a.rs"), "theirs\n").unwrap();
+
+        assert!(c.conflict(&c.root().join("a.rs")).is_some());
+        c.accept_current(&c.root().join("a.rs"));
+        assert!(c.conflict(&c.root().join("a.rs")).is_none());
+
+        let w = WriteFile
+            .run(&json!({"path": "a.rs", "content": "mine\n"}), &c)
+            .await
+            .unwrap();
+        assert!(!w.is_error, "{}", w.content);
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 # Knossos
 
 An agentic coding harness whose components are the **system-level form of the
-mechanisms in the [Daedalus](https://github.com/korbinsadlowski/daedalus) model
+mechanisms in the [Daedalus](https://github.com/sadlowskik/Daedalus) model
 architecture**.
 
 The engine is a swappable slot. Everything around it — exact symbol memory, an
@@ -11,8 +11,16 @@ the model architecture is a long research project, and the harness is the half
 that can have real capability today, because it is not compute-bound.
 
 ```bash
-daedalus task "add a triple() function next to double()" -w ./my-crate
+knossos task "add a triple() function next to double()" -w ./my-crate
+knossos acp                          # editor agent (ACP on stdio)
+knossos eval --cases suite.json      # fail_to_pass / pass_to_pass grader
 ```
+
+`python -m knossos` is training/legacy. The product binary is `knossos`.
+With no API key, `knossos acp` still starts (retrieval-only: search the
+tree, no edits). Pass `--engine ollama` or `--engine cameo` for a local
+model, or set `ANTHROPIC_API_KEY`. Editors that advertise `fs`, `terminal`,
+or elicitation get those channels; everyone else stays on the workspace jail.
 
 ## The mapping
 
@@ -87,30 +95,61 @@ Tier 4  model vs constitution   expensive, gated on all of the above
 ## Install
 
 ```bash
-git clone <this-repo> && cd daedalus-harness && cargo build --release
+git clone https://github.com/sadlowskik/Knossos-Harness.git
+cd Knossos-Harness/knossos-rs
+cargo build --release
 ```
 
 ## Usage
 
 ```bash
 # exact symbol index — no engine required
-daedalus index -w ./my-crate
-daedalus index -w ./my-crate --lookup Adder
+knossos index -w ./my-crate
+knossos index -w ./my-crate --lookup Adder
 
 # verification ladder — no engine required
-daedalus verify -w ./my-crate
+knossos verify -w ./my-crate
 
 # plan without executing
-daedalus plan "add a --json flag" -w ./my-crate
+knossos plan "add a --json flag" -w ./my-crate
 
 # plan and execute, verifying as it goes
-daedalus task "add a --json flag" -w ./my-crate --max-steps 12 --target-steps 6
+knossos task "add a --json flag" -w ./my-crate --max-steps 12 --target-steps 6
 
 # propose changes without writing them, and print unified diffs
-daedalus task "add a --json flag" -w ./my-crate --dry-run
+knossos task "add a --json flag" -w ./my-crate --dry-run
 
 # interactive session that keeps context between turns
-daedalus repl -w ./my-crate --dry-run
+knossos repl -w ./my-crate --dry-run
+
+# Agent Client Protocol — this is what an editor spawns (no Python)
+knossos acp --engine cameo --model qwen2.5-0.5b
+```
+
+### In a code editor (ACP)
+
+You do **not** need the Python agent. Any editor that speaks [ACP](https://agentclientprotocol.com) (Zed, JetBrains ACP, VS Code ACP, this repo's Lapce fork) can spawn the Rust binary on stdio:
+
+```
+command: /absolute/path/to/knossos
+args:    acp
+env:     CAMEO_BASE_URL=http://127.0.0.1:9090/v1
+         CAMEO_MODEL=qwen2.5-0.5b
+         CAMEO_SERVE_KEY=…          # consumer /v1
+         CAMEO_CONSOLE_KEY=…        # optional; loads a cold model
+```
+
+Implemented: `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/list`, `session/close`, `session/set_mode` (`ask`/`preview`/`write`), `session/interject`, plus `session/update` and `session/request_permission`. Assistant prose still arrives as one chunk until engines stream.
+
+Zed-style agent server (shape; field names follow your editor's schema):
+
+```json
+{
+  "name": "knossos",
+  "command": "/absolute/path/to/knossos",
+  "args": ["acp"],
+  "env": { "CAMEO_BASE_URL": "http://127.0.0.1:9090/v1" }
+}
 ```
 
 ### Dry run
@@ -127,7 +166,7 @@ reach tier 4**, and every message it produces says "preview, not verification".
 
 ### Interactive session
 
-`daedalus repl` keeps the conversation, the symbol index and the staged changes
+`knossos repl` keeps the conversation, the symbol index and the staged changes
 alive between turns, so you can redirect the agent without losing what it
 already worked out.
 
@@ -158,7 +197,7 @@ there, so the editor cannot drift from the CLI.
 cd editor/vscode && npm install && npm run compile
 ```
 
-Then open that folder in VS Code and press F5. **Daedalus: Preview Task** is the
+Then open that folder in VS Code and press F5. **Knossos: Preview Task** is the
 command worth reaching for first — it gives you the accept/reject step that
 makes an agent safe to point at a real repository.
 
@@ -166,10 +205,10 @@ makes an agent safe to point at a real repository.
 
 ```bash
 export ANTHROPIC_API_KEY=...
-daedalus task "..." --engine anthropic --model claude-opus-5
+knossos task "..." --engine anthropic --model claude-opus-5
 
 # or fully local
-daedalus task "..." --engine ollama --model qwen3-coder:30b
+knossos task "..." --engine ollama --model qwen3-coder:30b
 ```
 
 Anthropic has native tool use. Ollama's varies by model, so engines declare
@@ -179,18 +218,41 @@ it exists so that "swappable engine" is a fact rather than a claim.
 
 ## Safety
 
-Two properties are structural rather than advisory:
+Three properties are structural rather than advisory:
 
 - **Path jail.** Every filesystem tool resolves through `ToolCtx::resolve`,
   which rejects `../` traversal, absolute paths outside the root, and symlinks
   pointing out of the tree.
+- **Workspace jail for child processes.** On Linux every command the harness
+  runs (`cargo test`, `pytest`, a delegated unit, anything on the allowlist)
+  is placed under a Landlock ruleset before it starts: it can read and execute
+  the system and the toolchain, write the workspace, a per-run temp directory
+  and the cargo cache, and reach nothing else, so the rest of your home
+  directory does not exist for it. On macOS the same policy is applied through
+  `sandbox-exec`. Every descendant inherits it and none can drop it. Children
+  also get a cleared environment: an allowlist of variables, never provider
+  keys.
 - **No shell.** Commands are split into program plus argument vector and
   executed directly. No shell interpreter is involved, so `&&`, `|`, `;` and
   backticks are inert — they arrive as literal arguments. On top of that the
   program must be on an allowlist (`cargo`, `rustc`, `rustfmt`, `git`), and
   `git` is restricted to read-only subcommands.
 
-Both are covered by tests that attempt the escape.
+All three are covered by tests that attempt the escape.
+
+What these do **not** cover, stated plainly. On Windows there is no
+unprivileged filesystem confinement: a child runs with your user's permissions
+in the scrubbed environment, and the result object says so ("child processes
+ran without filesystem confinement"). Network access is not cut by default,
+because a project's own test suite is entitled to bind loopback;
+`Sandbox::deny_network` (or `knossos exec --deny-network`) closes TCP where
+the kernel can (Landlock ABI 4, macOS), and UDP and Unix sockets are never
+covered. `KNOSSOS_CONFINE=require` refuses to run children on a host that
+cannot confine them; `prefer` (the default) runs and records the level; `off`
+is for debugging and is reported. `KNOSSOS_CONFINE_ALLOW_RO` and
+`KNOSSOS_CONFINE_ALLOW_RW` admit extra toolchain paths (PATH-style lists).
+`knossos exec -- <command>` runs any command under the same jail, which is
+how Field's terminal and adapters get it.
 
 ## The trace
 
@@ -239,20 +301,29 @@ What the tests defend:
 
 ## Honest scope
 
-**This is v1 and it is small.** What it does: plans a task, executes it with
+**This is pre-v1 and intentionally bounded.** What it does: plans a task, executes it with
 real file edits and build commands, verifies with a tiered ladder, and stops on
 evidence or on a budget. That is a working agent, not a frontier one.
 
+**What is in the harness today.** Scribe indexes Rust, Python, Go and Node
+(tree-sitter for Rust; scanners for the rest). Oracle runs the matching
+ladder. Lethe shrinks oversized tool results in place. Failed hypotheses
+land in `{workspace}/.knossos/episodes.jsonl` and are injected after compact
+and on the next run. First `Stuck` redirects once; the second is an honest
+halt. Product spawn is `knossos acp` (stdio JSON-RPC). `session/load`
+replays already-sent updates; it does not re-run tools.
+
 **Not implemented, deliberately:**
 
-- **Apollo** (routing to specialist sub-agents) — the core loop should be proven
-  before adding a routing layer on top of it.
-- **Naiads** (per-task memory namespaces) — follows conversation compaction,
-  which is itself still unbuilt.
-- **Conversation compaction** — Mnemosyne indexes the *codebase*; the running
-  transcript is still uncompressed, so very long sessions will eventually run
-  into the context window.
-- **Echo** (trajectory distillation) — traces are *captured*, not consumed.
+- **Apollo** (routing to specialist sub-agents) — `delegate` already runs a
+  child agent; a routing layer on top waits until the core loop is the only
+  ACP server editors spawn.
+- **Naiads** (per-task memory namespaces) — episode store is workspace-scoped,
+  not per-task.
+- **Echo** (trajectory distillation / SFT) — collection and deterministic
+  SFT/DPO curation are implemented in `model/scripts/curate_traces.py` with
+  v2 external labels, secret quarantine, task-level splits, and exact-prompt
+  DPO pairing. The actual model-training job remains a separate pipeline.
 - **Proteus** (self-modifying weights → self-editing prompts) — **excluded
   permanently, not deferred.** It has the same runaway failure mode as the
   tensor-level version, but at system level there is no `‖W‖` to watch; you lose
@@ -262,14 +333,14 @@ evidence or on a budget. That is a working agent, not a frontier one.
 - **Tab completion.** Calling an API per keystroke is 300ms–2s where Cursor Tab
   is under 100ms, and it costs tokens continuously. The version worth having is
   a small FIM-trained model, which is a separate project.
-- **Token-level streaming.** Progress streams (steps, tool calls, verdicts) but
-  assistant prose arrives whole.
+- **Token-level streaming on every backend.** OpenAI-compat and Cameo stream
+  SSE into `agent_message_chunk` / `agent_thought_chunk` as tokens arrive.
+  Anthropic and Ollama still complete in one shot (they inherit the default).
+  `MockEngine` does not stream, so the halt tests stay one-shot.
 - **Inline gutter accept/reject.** Hunk-level review happens in the panel, not
   as decorations over your editor buffer.
-- **A second language.** The `LanguageAdapter` trait exists and Rust is its only
-  implementation. The trait will need revision when a second one lands —
-  interfaces designed against one example usually do. It is there to keep
-  `cargo` strings out of the agent loop, not because it is already right.
+- **Editor `fs/*` / `terminal/*`.** The path jail is the product. The agent
+  reads and writes through its own tools, not through the client.
 
 **Known limits.** Quality tracks the engine, not the harness: a weak local model
 will look like a harness bug. Ollama tool-use reliability varies by model. The

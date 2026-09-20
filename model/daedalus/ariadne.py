@@ -56,25 +56,41 @@ class Ariadne(nn.Module):
 
 
 def ponder_loss(p: torch.Tensor, logits: torch.Tensor, targets: torch.Tensor,
-                lambda_prior: float = 0.2, beta: float = 0.01
+                lambda_prior: float = 0.2, beta: float = 0.01,
+                ignore_index: int = -100
                 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """PonderNet loss = expected reconstruction CE + beta * KL(p || geometric prior).
 
     `lambda_prior` sets the target mean number of steps (~1/lambda_prior);
     `beta` is the accuracy-vs-compute dial. Returns (total, L_rec, L_kl).
+
+    Positions whose target is `ignore_index` are excluded from **both** terms.
+    That exclusion has to be explicit here, unlike everywhere else in the repo:
+    the other losses call `F.cross_entropy(..., reduction="mean")`, which already
+    divides by the number of unignored targets. This one needs `reduction="none"`
+    to weight each step by its halting probability, and a plain `.mean()` over
+    the result would divide by B*T -- counting the ignored positions in the
+    denominator while they contribute zero to the numerator. The loss would come
+    out scaled by the supervised fraction, quietly shrinking L_rec relative to
+    `beta * l_kl` and the caller's `alpha * aux` and pushing halting toward the
+    prior. With no ignored targets this is exactly the old `.mean()`.
     """
     n_steps, b, t, v = logits.shape
     ce = torch.stack([
-        F.cross_entropy(logits[n].reshape(-1, v), targets.reshape(-1), reduction="none").reshape(b, t)
+        F.cross_entropy(logits[n].reshape(-1, v), targets.reshape(-1),
+                        reduction="none", ignore_index=ignore_index).reshape(b, t)
         for n in range(n_steps)
     ], dim=0)
-    l_rec = (p * ce).sum(0).mean()
+    keep = (targets != ignore_index).to(ce.dtype)                 # (B, T)
+    n_sup = keep.sum().clamp(min=1.0)
+    l_rec = ((p * ce).sum(0) * keep).sum() / n_sup
 
     steps = torch.arange(1, n_steps + 1, device=p.device, dtype=torch.float)
     prior = lambda_prior * (1 - lambda_prior) ** (steps - 1)
     prior = (prior / prior.sum()).view(n_steps, 1, 1)
     eps = 1e-9
-    l_kl = (p * (torch.log(p + eps) - torch.log(prior + eps))).sum(0).mean()
+    kl = (p * (torch.log(p + eps) - torch.log(prior + eps))).sum(0)
+    l_kl = (kl * keep).sum() / n_sup
     return l_rec + beta * l_kl, l_rec, l_kl
 
 

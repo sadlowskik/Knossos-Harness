@@ -43,16 +43,23 @@ class MoiraiMixer(nn.Module):
     positional table to size) so the two are interchangeable at the call site.
 
     Args:
-        tied: if True, one gate drives both erase and write (plain Gated
-            DeltaNet). If False (default), erase and write are separate
-            projections.
+        tied: if True (default), one gate drives both erase and write -- plain
+            Gated DeltaNet. If False, erase and write are separate projections,
+            which is the extension this module was written to test.
+
+            The default changed to True on 2026-07-27. `scripts/moirai_sweep.py`
+            at n=5 put decoupling at +0.0005 against a 0.0029 spread at the
+            training length and +0.0395 against a 0.109 spread at 4x length --
+            nominally worse in both, neither distinguishable from noise, for 5%
+            more parameters. Shipping it as the default would be shipping the
+            arm the evidence does not support.
         erase_bias: init bias of the erase gate. The default (+4.0, sigmoid
             ~0.982) makes the state forget slowly at init, which is what keeps
             the recurrence from washing out before it has learned anything.
     """
 
     def __init__(self, n_embd: int, n_head: int, block_size: Optional[int] = None,
-                 tied: bool = False, erase_bias: float = 4.0):
+                 tied: bool = True, erase_bias: float = 4.0):
         super().__init__()
         assert n_embd % n_head == 0, "n_embd must divide evenly into heads"
         self.n_head, self.hd, self.tied = n_head, n_embd // n_head, tied
@@ -86,15 +93,31 @@ class MoiraiMixer(nn.Module):
         gb = torch.sigmoid(self._heads(self.erase(x), b, n))
         gw = gb if self.tied else torch.sigmoid(self._heads(self.write(x), b, n))
 
+        # The scan is sequential by nature -- W_t depends on W_{t-1} -- so the
+        # only thing to remove is per-step overhead, and at these sizes that is
+        # most of the cost. Three changes, none touching the recurrence:
+        #
+        #   * `unbind` once instead of indexing `[:, :, t]` five times a step.
+        #     Each index built a new view and its autograd node; unbind builds
+        #     them all in one go.
+        #   * `matmul` on an explicit trailing axis instead of `einsum`, whose
+        #     equation is re-parsed on every one of the T calls.
+        #   * gates pre-shaped to (B, H, T, hd, 1) so the broadcast axis is not
+        #     re-created inside the loop.
+        #
+        # Verified against the longhand recurrence in tests/test_moirai.py,
+        # which recomputes the whole scan independently of this code.
+        ks, vs, qs = k.unbind(2), v.unbind(2), q.unbind(2)
+        gbs, gws = gb.unsqueeze(-1).unbind(2), gw.unsqueeze(-1).unbind(2)
+
         W = x.new_zeros(b, self.n_head, self.hd, self.hd)            # (B, H, d_v, d_k)
         outs = []
-        for t in range(n):
-            k_t, v_t, q_t = k[:, :, t], v[:, :, t], q[:, :, t]       # (B, H, hd)
-            v_hat = torch.einsum("bhvk,bhk->bhv", W, k_t)            # current content
-            r_t = v_t - v_hat                                        # delta-rule residual
-            outer = r_t.unsqueeze(-1) * k_t.unsqueeze(-2)            # (B, H, d_v, d_k)
-            W = gb[:, :, t].unsqueeze(-1) * W + gw[:, :, t].unsqueeze(-1) * outer
-            outs.append(torch.einsum("bhvk,bhk->bhv", W, q_t))
+        for k_t, v_t, q_t, gb_t, gw_t in zip(ks, vs, qs, gbs, gws):
+            k_col = k_t.unsqueeze(-1)                                # (B, H, hd, 1)
+            v_hat = torch.matmul(W, k_col)                           # current content
+            r_t = v_t.unsqueeze(-1) - v_hat                          # delta-rule residual
+            W = gb_t * W + gw_t * (r_t * k_t.unsqueeze(-2))
+            outs.append(torch.matmul(W, q_t.unsqueeze(-1)).squeeze(-1))
 
         y = torch.stack(outs, dim=2).transpose(1, 2).reshape(b, n, c)
         out = self.proj(self.ln(y))

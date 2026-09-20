@@ -17,6 +17,7 @@ each name describing what the piece does:
     Proteus      weights that rewrite themselves (experimental, isolated)
 """
 from .tokenizer import ByteTokenizer
+from .bpe import BPETokenizer, SPLIT_PATTERN
 from .layers import Embeddings, Head, MultiHeadAttention, FeedForward, Block
 from .models import Daedalus, Labyrinth
 from .ariadne import Ariadne, ponder_loss, expected_steps
@@ -34,7 +35,7 @@ from .proteus import SelfModifyingLinear, ProteusBlock, DaedalusProteus
 __version__ = "0.3.0"
 
 __all__ = [
-    "ByteTokenizer",
+    "ByteTokenizer", "BPETokenizer", "SPLIT_PATTERN",
     "Embeddings", "Head", "MultiHeadAttention", "FeedForward", "Block",
     "Daedalus", "Labyrinth",
     "Ariadne", "ponder_loss", "expected_steps",

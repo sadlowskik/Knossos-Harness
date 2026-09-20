@@ -1,0 +1,18 @@
+id: nightly-verify
+name: Nightly verification sweep
+enabled: false
+trigger:
+  kind: schedule
+  cron: "0 3 * * *"
+role: verifier
+endpoint: anthropic-opus
+thinking: high
+workspace: cameo
+orders: |
+  Run the full check suite for the Cameo workspace: cargo check across the workspace,
+  shellcheck over archiso/, and the site build. Report only what failed, with real output.
+  Do not fix anything.
+budget_usd: 2.00
+completion:
+  kind: report
+  requires_verification: false

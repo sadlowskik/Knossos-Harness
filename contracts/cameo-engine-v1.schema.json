@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cameoconstruct.xyz/contracts/cameo-engine-v1.schema.json",
+  "title": "Cameo engine discovery v1",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "node",
+    "openai_base_path",
+    "auth_required",
+    "engine_state",
+    "models",
+    "model_profiles",
+    "capabilities",
+    "limits"
+  ],
+  "properties": {
+    "contract_version": { "const": "cameo-engine/v1" },
+    "node": { "type": "string", "minLength": 1 },
+    "openai_base_path": { "const": "/v1" },
+    "auth_required": { "type": "boolean" },
+    "engine_state": { "enum": ["idle", "ready"] },
+    "models": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "model_profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["model", "context_tokens"],
+        "properties": {
+          "model": { "type": "string", "minLength": 1 },
+          "context_tokens": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": true
+      }
+    },
+    "capabilities": { "type": "object" },
+    "limits": {
+      "type": "object",
+      "required": ["max_request_bytes"],
+      "properties": {
+        "max_request_bytes": { "type": "integer", "minimum": 1 },
+        "max_completion_tokens": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

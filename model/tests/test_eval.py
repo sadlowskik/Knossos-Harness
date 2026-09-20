@@ -18,6 +18,35 @@ from knossos.eval import AnswerGrade, grade_answer, grade_retrieval, report_answ
 from knossos.evalset import Case, CASES
 
 
+# ------------------------------------------------------------ the held-out set
+
+def test_there_are_enough_held_out_cases():
+    """PLAN.md §3.4 asked for 6-8. Below that the held-out figure is anecdote."""
+    assert len([c for c in CASES if c.held_out]) >= 6
+
+
+def test_held_out_cases_target_files_no_in_sample_case_mentions():
+    """Otherwise they are not held out, they are rephrasings.
+
+    A case whose expected file already appears in the tuned set cannot say
+    whether ranking generalises -- the ranker has seen that file win before.
+    """
+    tuned = {f for c in CASES if not c.held_out for f in c.expect_files}
+    held = {f for c in CASES if c.held_out for f in c.expect_files}
+
+    assert held, "no held-out case names a file"
+    assert not (held & tuned), f"these are already tuned against: {held & tuned}"
+
+
+def test_every_held_out_case_is_gradeable():
+    for c in (c for c in CASES if c.held_out):
+        if c.kind == "negative":
+            assert not c.expect_files, f"{c.id}: a negative case expects no file"
+        else:
+            assert c.expect_files, f"{c.id} has nothing to check against"
+            assert c.expect_terms, f"{c.id} has no answer terms"
+
+
 def case(**kw):
     base = dict(id="t", prompt="p", kind="repo_specific")
     base.update(kw)

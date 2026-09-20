@@ -1,0 +1,84 @@
+# Field — root civilization configuration.
+# This file is durable, human-readable, and lives in Git.
+# Live operational state (sessions, events, health, costs) lives in the database, never here.
+
+field:
+  name: Knossos Field
+  api_port: 7749
+  web_port: 7748
+
+defaults:
+  role: builder
+  endpoint: auto
+  thinking: medium
+  permission_mode: manual        # manual | acceptEdits | auto | plan
+  max_delegation_depth: 2
+  max_children_per_session: 3
+  budget_usd_per_session: 5.00
+  max_concurrent_sessions: 16 # Global live harness cap; each endpoint defaults to 4.
+  completion_tokens_per_session: 32768
+  wall_minutes_per_session: 120
+
+# Real mounted workspaces. Each path must exist on disk; Field refuses to mount what it cannot stat.
+workspaces:
+  - id: knossos
+    name: Knossos
+    path: ../..
+    git: true
+    watch:
+      # field/ is mounted as its own workspace below; watching it here would report
+      # every Field file twice, once under each region.
+      ignore: ["**/node_modules/**", "**/target/**", "**/.git/**", "**/dist/**",
+               "**/work/**", "field/**"]
+    region: { x: -520, y: -180, w: 900, h: 360 }
+
+  - id: field
+    name: Field
+    path: ..
+    git: true
+    watch:
+      ignore: ["**/node_modules/**", "**/dist/**", "**/.field-state/**"]
+    region: { x: 470, y: -180, w: 600, h: 300 }
+
+# Real inference connections. Field probes each one and reports actual health.
+endpoints:
+  - id: anthropic-opus
+    name: Opus 5
+    kind: anthropic
+    model: claude-opus-5
+    probe: cli                   # verified through the local harness credentials
+    cost_per_mtok: { input: 5.00, output: 25.00 }
+
+  - id: anthropic-sonnet
+    name: Sonnet 5
+    kind: anthropic
+    model: claude-sonnet-5
+    probe: cli
+    cost_per_mtok: { input: 3.00, output: 15.00 }
+
+  - id: anthropic-haiku
+    name: Haiku 4.5
+    kind: anthropic
+    model: claude-haiku-4-5-20251001
+    probe: cli
+    cost_per_mtok: { input: 1.00, output: 5.00 }
+
+  - id: cameod-local
+    name: Local inference · cameod
+    kind: openai-compatible
+    base_url: http://127.0.0.1:8080/v1
+    model: local
+    probe: http
+    cost_per_mtok: { input: 0, output: 0 }
+
+# Domains Field is allowed to observe and open live browser surfaces for.
+websites:
+  - id: docs-anthropic
+    domain: docs.claude.com
+    label: Claude Docs
+  - id: cameo-site
+    domain: cameo.sailops.ai
+    label: Cameo
+  - id: arch-wiki
+    domain: wiki.archlinux.org
+    label: Arch Wiki

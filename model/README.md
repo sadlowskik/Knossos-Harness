@@ -90,9 +90,11 @@ generate.py      sampling from a checkpoint (temperature, top-k, repetition pena
 data.py          byte-level corpus builder, split BY FILE
 scripts/
   fetch_rust.py     clone a Rust corpus from GitHub
-  naiads_eval.py    acceptance gate: n memory banks vs one                (new)
-  echo_sweep.py     acceptance gate: loop-count sweep with/without Echo   (new)
-  proteus_probe.py  acceptance gate: weight-norm stability + adaptation   (new)
+  seeds.py          run an arm over n seeds; report mean, spread, exclusions
+  moirai_sweep.py   acceptance gate: decoupled gates vs tied vs softmax
+  naiads_eval.py    acceptance gate: routing vs capacity, at matched params
+  echo_sweep.py     acceptance gate: loop-count sweep with/without Echo
+  proteus_probe.py  acceptance gate: adaptation vs attention + norm stability
 tests/           one isolation test file per component
 ```
 
@@ -135,6 +137,84 @@ is the argument for `-m slow` existing at all.
 The `—` cells still need **training runs** — passing tests is not a measurement.
 Do not quote a val loss for any of them until the acceptance gates below have run.
 
+**What each gate isolates (updated 2026-07-27).** All four now exist and run on
+CPU in minutes, over `--seeds 5` by default per rule 4. The design point is that
+three of them needed a *control arm*, not just a measurement — the obvious
+comparison in each case confounds the mechanism with something cheaper:
+
+| Gate | Naive comparison | What it confounds | The control |
+|---|---|---|---|
+| `moirai_sweep.py` | Moirai vs attention | the published Gated DeltaNet it extends | `moirai-tied`: one gate for both erase and write |
+| `naiads_eval.py` | n banks vs 1 bank | n× the memory parameters | n banks, **no routing**, all updated (differs by 1,024 router params) |
+| `proteus_probe.py` | adaptation gap > 0 | attention solves this task too (induction heads) | a dense softmax model on the identical task |
+| `echo_sweep.py` | — | (already an ablation: one flag, same seed and data order) | — |
+
+Each script prints per-seed values, parameter counts, and — where an arm can
+fail, as Proteus can — the excluded seeds and why. A difference smaller than the
+seed-to-seed spread is reported as *not measured* rather than as a result.
+
+### Moirai gate — first result (2026-07-27, n=5)
+
+**This does not go in the table above, and the difference matters.** That table
+is ~0.68–0.8M params on the CPython standard library. This is 157k params, 600
+steps, on a synthetic repeated-motif corpus. Putting the number in the same
+table would invite exactly the comparison it cannot support.
+
+| arm | val loss @64 | @128 | @256 | params |
+|---|---|---|---|---|
+| softmax | 0.2091 ± 0.0044 | 0.7328 ± 0.0431 | 0.9886 ± 0.0626 | 149,120 |
+| moirai-tied | 0.2070 ± 0.0029 | 0.2871 ± 0.0466 | 0.3550 ± 0.0628 | 157,696 |
+| moirai | 0.2075 ± 0.0029 | 0.3084 ± 0.0889 | 0.3945 ± 0.1090 | 166,016 |
+
+**The decoupled-gate claim is not supported here.** Against `moirai-tied` — the
+published Gated DeltaNet it extends — decoupling is **+0.0005** at the training
+length against a spread of 0.0029, and **+0.0395** at 4× length against a spread
+of 0.109. Nominally worse in both, neither distinguishable from seed noise, and
+it costs 8,320 parameters (+5%). One corpus, one scale: this does not show the
+mechanism is useless, it shows the comparison that would support it does not.
+
+**Fast-weight extrapolation is real and large.** At 4× the training length,
+`moirai-tied` holds 0.3550 where softmax reaches 0.9886 — a 0.63 nat gap against
+spreads near 0.06, roughly ten times the noise. Read with the caveat the script
+prints: the softmax arm uses learned absolute positions whose rows past 64 are
+still at initialisation, so this is "fast-weight state extrapolates", not
+"Moirai beats attention". A RoPE baseline (`rope.py`) would be the fair test.
+
+**One observation, explicitly not a claim.** The untied arm's seed-to-seed
+spread at length is about double the tied arm's (0.109 vs 0.063 at 256). At n=5
+that is not a variance test. It is worth watching if the sweep is ever run at
+scale.
+
+**Cost, which the loss table does not show.** The scan is sequential by nature,
+so it is far slower than one batched matmul. Measured on 4 CPU threads,
+`n_embd=64`, after the per-step overhead was removed (unbind + matmul instead of
+re-indexing and re-parsing an einsum every step — a 1.9x win, numerically
+identical against the longhand reference):
+
+| | T/ctx 64 | 128 / 256 | 256 / 512 |
+|---|---|---|---|
+| training (fwd+bwd, batch 8) | 6.0x | 8.1x | 7.7x |
+| generation (one token, batch 1) | 4.0x | 7.4x | 8.4x |
+
+**The generation row refutes the obvious hypothesis.** O(1) state ought to beat a
+growing KV cache when decoding, so generation should have been Moirai's regime.
+It is not, and the gap *widens* with context — because neither mixer decodes
+incrementally: `generate.py` re-runs the whole prefix for every token, so Moirai
+re-scans the entire context each time, which is its worst case. The seam exists
+(`MoiraiMixer.forward(return_state=True)`), but nothing threads state through
+`Block` or `Labyrinth`.
+
+So the architectural claim is currently **unreachable**, not disproven. Two
+pieces of work stand between it and a fair test: the chunk-wise parallel scan
+(the docstring's "later optimization"), and incremental decoding for both
+mixers — a KV cache for softmax, carried `W` for Moirai. Until then, ~8x for a
+quality wash is not a trade worth making.
+
+**Caveat that limits all of the above:** every arm sits near 0.21 nats
+(0.30 bits/byte) at the training length — the synthetic corpus is close to
+solved by all three, so it has little power to separate mixers. The run that
+would actually test this needs a real corpus (`scripts/fetch_rust.py`).
+
 - **Ariadne** learns genuine per-token depth allocation (depth std ≈ 0.70;
   `corr(depth, difficulty) ≈ +0.12` — real but weak at this scale).
 - **Mnemosyne** memory helps: predicting a segment with the compressed gist of
@@ -166,6 +246,38 @@ Do not quote a val loss for any of them until the acceptance gates below have ru
   The deep end did not degrade, contrary to what this section used to predict —
   but at 0.003–0.005 nats those deltas are near-negligible in absolute terms,
   consistent in sign rather than large. Toy scale, synthetic corpus, 300 steps.
+
+### Retrieval — held out vs in-sample (2026-07-27)
+
+PLAN.md §3.4 asked for cases the ranker was never tuned against, and §3.5 said
+not to quote a headline recall figure until they existed. They exist now: eight
+questions about `knossos/`, which none of the original nineteen mention.
+
+```bash
+python -m knossos.eval --mode retrieval
+```
+
+| | recall | in top 3 | mean rank |
+|---|---|---|---|
+| in-sample (n=10) | 10/10 | 9/10 | **1.4** |
+| **held-out (n=8)** | **8/8** | **4/8** | **3.5** |
+| combined (n=18) | 18/18 | 13/18 | 2.3 |
+
+**Recall generalises; ranking does not, as well.** Argus still finds the right
+file every time — 18/18, and 8/8 on questions it was never fitted to. But the
+*position* it puts that file in degrades sharply: mean rank 1.4 → 3.5, and
+top-3 from 90% to 50%. Since context is assembled from the top of the ranking
+under a token budget, rank is what decides whether the right file is actually
+sent. The single combined figure was measuring fit as much as retrieval, which
+is what §3.4 existed to expose.
+
+**A confound this design cannot separate, stated rather than glossed.** The
+held-out cases are about `knossos/` and the in-sample ones about `daedalus/`,
+so the split is tuned-vs-untuned *and* a domain change. Harness modules are
+longer, more prose-heavy, and share far more vocabulary with each other — every
+one of them says "tool", "session", "call" — which could make ranking harder
+independently of any tuning. Both explanations predict this result. Separating
+them needs held-out cases inside `daedalus/`, which is the next thing to write.
 
 ### Acceptance gates (how the `—` rows get filled)
 
