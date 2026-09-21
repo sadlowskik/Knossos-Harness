@@ -47,7 +47,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # ubuntu-24.04-arm is a different VM pool: if it survives the build
+        # that ubuntu-latest x86 runners keep dying in, the pool is the cause.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # A wedged test would otherwise hold the runner for the six-hour default;
     # run 19 sat 47 minutes before the runner was lost, with no log published.
@@ -206,9 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04-arm is a different VM pool: if it survives the build
-        # that ubuntu-latest x86 runners keep dying in, the pool is the cause.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
