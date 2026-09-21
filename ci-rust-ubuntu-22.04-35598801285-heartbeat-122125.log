@@ -1,0 +1,14 @@
+heartbeat 12:21:25 91s
+=== phase build 12:19:54
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1342       10031          46        4614       14253
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9756       00:15  122 673132 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-
+   9794       00:03  5.0 22268 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -collect-logs
+   9798       00:03  4.0  6788 /lib/systemd/systemd-timedated
+   1836       02:44  2.3 135040 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1778       04:50  1.0 126964 /tmp/provjobd3464302349
+[   21.524744] mlx5_core 2ae2:00:02.0 enP10978s1: Link up
+[   21.550252] hv_netvsc 6045bdc7-62b9-6045-bdc7-62b96045bdc7 eth0: Data path switched to VF: enP10978s1
+[   49.236046] hv_balloon: Max. dynamic memory size: 16384 MB
