@@ -1,0 +1,19 @@
+heartbeat 14:51:43 163s
+mem used MB, last 15 s: 1459 1418 1449 1357 1416 1448 1419 1437 1441 1506 1609 1465 1473 1381 1305 peak: 1831
+=== phase build 14:49:29
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1355        8008          49        7020       14633
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  11165       00:00 97.2 202180 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name async_trait --edition=2021 /usr/local/cargo/registry/src/index.crates.io-1949cf8c6b5
+   1280       05:23  4.5 80668 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+   2167       04:04  1.9 210312 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   6279       02:14  1.7 186804 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   2110       05:10  1.4 139088 /tmp/provjobd3322121197
+/proc/pressure/io: some avg10=1.00 avg60=2.50 avg300=4.70 total=29105841 full avg10=0.86 avg60=2.28 avg300=4.36 total=27015974
+/proc/pressure/cpu: some avg10=13.04 avg60=6.17 avg300=2.60 total=12837148 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 8206872 147856 7048184    0    0     0     4 2297 1437 23  4 74  0  0  0
+[  199.902186] eth0: renamed from veth1b47513
+[  199.903445] docker0: port 1(veth4557096) entered blocking state
+[  199.903451] docker0: port 1(veth4557096) entered forwarding state
