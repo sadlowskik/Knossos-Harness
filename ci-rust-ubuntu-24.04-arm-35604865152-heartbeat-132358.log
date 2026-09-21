@@ -1,0 +1,14 @@
+heartbeat 13:23:58 184s
+=== phase test-codegen 13:23:42
+               total        used        free      shared  buff/cache   available
+Mem:           15947        1673       11134          50        3451       14274
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10452       00:09  100 867216 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered
+   2091       04:06  1.8 187484 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+  10285       00:16  1.1 82044 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   2076       04:08  0.5 103196 /home/runner/extracted/bin/Runner.Listener run
+      1       13:31  0.3 13564 /sbin/init
+[    9.758428] Initializing XFRM netlink socket
+[    9.911772] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.680375] hv_balloon: Max. dynamic memory size: 16384 MB
