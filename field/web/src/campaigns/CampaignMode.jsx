@@ -2,21 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../net/client.js';
 import { clearActiveAgent, openSenate, selectCampaign, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
+import AgentControls from '../hud/AgentControls.jsx';
 
-const PHASES = [
-  'draft', 'mobilizing', 'blue_building', 'red_challenging', 'contested',
-  'blue_mitigating', 'red_retesting', 'referee_review', 'verified', 'promoted',
-];
+// The server's director still keys rosters by lane. The client shows one flat list of
+// agents per plan and always files them under this lane until the server is simplified.
+const LANE = 'blue';
 
-const TEAM_ORDER = ['blue', 'red', 'referee', 'purple'];
+// Server phases → plain words. A plan is objectives plus the agents working on them.
+const PHASE_WORD = {
+  draft: 'not started', mobilizing: 'starting', blue_building: 'in progress', red_challenging: 'in review',
+  contested: 'in review', blue_mitigating: 'fixing', red_retesting: 'in review', referee_review: 'verifying',
+  verified: 'verified', promoted: 'promoted', cancelled: 'cancelled',
+};
+const OPEN_PHASES = new Set(['mobilizing', 'blue_building', 'red_challenging', 'contested', 'blue_mitigating', 'red_retesting', 'referee_review']);
 
 export default function CampaignMode() {
   const st = useField();
-  const senator = st.snap.sessions.find((session) => session.id === st.activeSessionId);
-  return senator ? <SenateSessionChamber session={senator} /> : <CampaignCommand />;
+  const agent = st.snap.sessions.find((session) => session.id === st.activeSessionId);
+  return agent ? <AgentChamber session={agent} /> : <PlansCommand />;
 }
 
-function SenateSessionChamber({ session }) {
+function AgentChamber({ session }) {
   const st = useField();
   const [trace, setTrace] = useState([]);
   const role = st.config?.roles?.find((item) => item.id === session.role);
@@ -44,23 +50,24 @@ function SenateSessionChamber({ session }) {
   const spawn = trace.find((event) => event.kind === 'session.spawned')?.data ?? {};
   const messages = trace.filter((event) => event.kind === 'session.message').slice(-10);
   const activity = trace.filter((event) => ['session.tool_use', 'session.tool_result', 'session.state'].includes(event.kind)).slice(-8).reverse();
+  const endpoint = st.snap.endpoints.find((item) => item.id === session.endpointId);
   return <main className="senate-session-shell">
-    <header className="senate-session-header"><div><span>SENATE CHAMBER</span><h1>{session.name}</h1><p>{session.role} · {session.state?.replaceAll('_', ' ')}</p></div><button type="button" onClick={clearActiveAgent}>Campaign command</button></header>
+    <header className="senate-session-header"><div><span>AGENT</span><h1>{session.name}</h1><p>{session.role} · {session.state?.replaceAll('_', ' ')}</p></div><button type="button" onClick={clearActiveAgent}>Back to plans</button></header>
     <section className="senate-dais">
       <div className="senate-agent-seal">{String(session.name || 'A').slice(0, 2).toUpperCase()}</div>
       <div><span>CURRENT OBJECTIVE</span><h2>{session.target?.label ?? session.stateDetail ?? 'Awaiting orders'}</h2><p>{workspace?.name ?? session.workspaceId}{campaign ? ` · ${campaign.name}` : ''}</p></div>
       <div className="senate-progress"><b>{pct}%</b><span role="progressbar" aria-label={`${session.name} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct}><i style={{ width: `${pct}%` }} /></span><small>{session.progress?.done ?? 0} / {session.progress?.total ?? 0} stages</small></div>
     </section>
     <div className="senate-chamber-grid">
-      {trace.length >= 2000 && <div className="label">Showing the first 2,000 events. Open Traces to load the rest.</div>}
-      <section className="senate-brief"><span>PROMPT</span><p>{spawn.initialOrders ?? spawn.systemPrompt ?? 'No prompt was recorded for this session.'}</p>{spawn.systemPrompt && spawn.systemPrompt !== spawn.initialOrders && <details><summary>System instructions</summary><p>{spawn.systemPrompt}</p></details>}<dl><div><dt>Model</dt><dd>{session.model ?? 'unreported'}</dd></div><div><dt>Endpoint</dt><dd>{session.endpointId ?? 'local'}</dd></div><div><dt>Authority</dt><dd>{(role?.tools_allow ?? []).join(', ') || 'none declared'}</dd></div></dl></section>
+      {trace.length >= 2000 && <div className="label">Showing the first 2,000 events. Open History to load the rest.</div>}
+      <section className="senate-brief"><span>PROMPT</span><p>{spawn.initialOrders ?? spawn.systemPrompt ?? 'No prompt was recorded for this session.'}</p>{spawn.systemPrompt && spawn.systemPrompt !== spawn.initialOrders && <details><summary>System instructions</summary><p>{spawn.systemPrompt}</p></details>}<dl><div><dt>Model</dt><dd>{session.model ?? 'unreported'}</dd></div><div><dt>Endpoint</dt><dd>{endpoint?.name ?? session.endpointId ?? 'local'}</dd></div><div><dt>Cost</dt><dd>${(session.costUsd ?? 0).toFixed(4)}{session.budgetUsd ? ` of $${Number(session.budgetUsd).toFixed(2)}` : ''}</dd></div><div><dt>Tools</dt><dd>{(role?.tools_allow ?? []).join(', ') || 'none declared'}</dd></div></dl><AgentControls session={session} /></section>
       <section className="senate-conversation"><span>CONVERSATION</span>{messages.length ? messages.map((event) => <article key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{event.data?.text ?? event.data?.content ?? event.data?.summary}</p></article>) : <em>No messages yet.</em>}</section>
-      <section className="senate-cohort"><span>WORKING WITH</span>{collaborators.length ? collaborators.map((item) => <button type="button" key={item.id} onClick={() => openSenate(item.id)}><i className={`state-${item.state}`} /><b>{item.name}</b><small>{item.role} · {item.state}</small></button>) : <em>No active links.</em>}<span className="senate-activity-title">RECENT ACTIVITY</span>{activity.map((event) => <article key={event.id ?? event.seq}><b>{event.kind.replace('session.', '')}</b><p>{event.data?.summary ?? event.data?.detail ?? event.data?.name ?? 'Status updated'}</p></article>)}</section>
+      <section className="senate-cohort"><span>WORKING WITH</span>{collaborators.length ? collaborators.map((item) => <button type="button" key={item.id} onClick={() => openSenate(item.id)}><i className={`state-${item.state}`} /><b>{item.name}</b><small>{item.role} · {item.state}</small></button>) : <em>No active links.</em>}<span className="senate-activity-title">RECENT ACTIVITY</span>{activity.length ? activity.map((event) => <article key={event.id ?? event.seq}><b>{event.kind.replace('session.', '')}</b><p>{event.data?.summary ?? event.data?.detail ?? event.data?.name ?? 'Status updated'}</p></article>) : <em>Nothing yet.</em>}</section>
     </div>
   </main>;
 }
 
-function CampaignCommand() {
+function PlansCommand() {
   const st = useField();
   const campaigns = st.snap.campaigns ?? [];
   const [selected, setSelected] = useState(st.activeCampaignId ?? campaigns[0]?.id ?? null);
@@ -95,56 +102,54 @@ function CampaignCommand() {
     finally { setBusy(false); }
   };
 
-  const mobilize = () => {
+  const start = () => {
     const objectiveId = campaign.objectives[0]?.id;
-    const byRole = (role) => st.config?.agents?.find((a) => a.role === role)?.id;
     const builders = st.config?.agents?.filter((a) => a.role === 'builder').slice(0, 2) ?? [];
-    const roster = [
-      ...builders.map((a) => ({ team: 'blue', agentId: a.id, role: a.role, objectiveId })),
-      { team: 'red', agentId: byRole('challenger') ?? byRole('scout'), role: 'challenger', objectiveId },
-      { team: 'referee', agentId: byRole('verifier'), role: 'verifier', objectiveId },
-    ].filter((x) => x.agentId);
+    const roster = (builders.length ? builders : (st.config?.agents ?? []).slice(0, 1))
+      .map((a) => ({ team: LANE, agentId: a.id, role: a.role, objectiveId }));
+    if (!roster.length) { setError('No agents are configured in field.yaml, so nothing can start.'); return; }
     act('mobilize', { roster });
   };
+
+  const members = campaign ? planMembers(campaign) : [];
+  const spent = members.reduce((sum, m) => sum + (sessions.get(m.sessionId)?.costUsd ?? 0), 0);
 
   return (
     <div className="campaign-shell">
       <aside className="campaign-index">
         <div className="campaign-index-head">
-          <span className="label">operations</span>
-          <button className="campaign-add" type="button" onClick={() => setCreating(true)} aria-label="Create operation">+</button>
+          <span className="label">plans</span>
+          <button className="campaign-add" type="button" onClick={() => setCreating(true)} aria-label="Create plan" title="Create plan">+</button>
         </div>
-        {campaigns.map((c) => (
-          <button
-            type="button" key={c.id}
-            className={`campaign-item${c.id === selected ? ' on' : ''}`}
-            onClick={() => { setSelected(c.id); selectCampaign(c.id); }}
-          >
-            <span className={`campaign-sigil phase-${c.phase}`} />
-            <span><b>{c.name}</b><small>{phaseLabel(c.phase)}</small></span>
-            {c.findings.some((f) => ['open', 'acknowledged', 'mitigating', 'ready_for_retest'].includes(f.status)) && (
-              <i>{c.findings.filter((f) => ['open', 'acknowledged', 'mitigating', 'ready_for_retest'].includes(f.status)).length}</i>
-            )}
-          </button>
-        ))}
-        {!campaigns.length && <div className="campaign-none">No active operations.</div>}
+        {campaigns.map((c) => {
+          const live = planMembers(c).filter((m) => m.status === 'active').length;
+          return (
+            <button
+              type="button" key={c.id}
+              className={`campaign-item${c.id === selected ? ' on' : ''}`}
+              onClick={() => { setSelected(c.id); selectCampaign(c.id); }}
+            >
+              <span className={`campaign-sigil phase-${c.phase}`} />
+              <span><b>{c.name}</b><small>{phaseLabel(c.phase)}{live ? ` · ${live} working` : ''}</small></span>
+            </button>
+          );
+        })}
+        {!campaigns.length && <div className="campaign-none">No plans yet.</div>}
       </aside>
 
       {campaign ? (
         <main className="campaign-table">
           <header className="campaign-titlebar">
             <div>
-              <span className="label">campaign</span>
+              <span className="label">plan · {phaseLabel(campaign.phase)}{campaign.paused ? ' · on hold' : ''}</span>
               <h1>{campaign.name}</h1>
+              {campaign.intent && <p className="campaign-intent">{campaign.intent}</p>}
             </div>
             <div className="campaign-meters mono">
               {historyOpen && <span className="history-status">replay · event {replay?.actualSeq ?? '…'}</span>}
-              {historyOpen && replay?.campaign?.checkpoints?.length > 0 && (
-                <span>baseline · {replay.campaign.checkpoints.at(-1).name}</span>
-              )}
               <span>{campaign.scope}</span>
-              <span>{activeMembers(campaign)} deployed</span>
-              <span>${campaign.budgetUsd.toFixed(0)} ceiling</span>
+              <span>{members.filter((m) => m.status === 'active').length} working</span>
+              <span>${spent.toFixed(2)} of ${campaign.budgetUsd.toFixed(0)}</span>
               <button type="button" onClick={() => { setHistoryOpen((value) => !value); setReplay(null); }}>
                 {historyOpen ? 'return live' : 'history'}
               </button>
@@ -155,94 +160,54 @@ function CampaignCommand() {
             <CampaignReplayRail campaign={liveCampaign} onReplay={setReplay} />
           )}
 
-          <PhaseRail campaign={campaign} onAdvance={(to) => act('advance', { to })} busy={busy || historyOpen} />
-
-          <section className="campaign-fronts">
+          <section className="campaign-fronts" aria-label="Objectives">
             {campaign.objectives.map((objective) => (
-              <ObjectiveFront
-                key={objective.id}
-                objective={objective}
-                campaign={campaign}
-                busy={busy || historyOpen}
-                onReady={(evidence) => act('satisfy_objective', { objectiveId: objective.id, evidence: [evidence] })}
-              />
+              <ObjectiveCard key={objective.id} objective={objective} campaign={campaign} sessions={sessions} />
             ))}
           </section>
 
-          <section className="formations">
-            {TEAM_ORDER.map((team) => (
-              <Formation
-                 key={team} kind={team} data={campaign.teams[team]}
-                 sessions={sessions} config={st.config} campaign={campaign}
-                 busy={busy || historyOpen} act={act}
-                 onOpen={(id) => openSenate(id)}
-              />
-            ))}
-          </section>
+          <PlanAgents
+            campaign={campaign}
+            members={members}
+            sessions={sessions}
+            config={st.config}
+            busy={busy || historyOpen}
+            act={act}
+            onOpen={(id) => openSenate(id)}
+          />
 
           <div className="campaign-actions">
             {historyOpen && <span className="history-readonly mono">historical state · controls locked</span>}
-            {campaign.phase === 'draft' && <Action disabled={busy || historyOpen} onClick={mobilize}>Mobilize core</Action>}
-            {!campaign.paused && !['draft', 'promoted', 'cancelled'].includes(campaign.phase) && (
+            {campaign.phase === 'draft' && <Action primary disabled={busy || historyOpen} onClick={start}>Start plan</Action>}
+            {!campaign.paused && OPEN_PHASES.has(campaign.phase) && (
               <Action disabled={busy || historyOpen} onClick={() => act('pause')}>Hold</Action>
             )}
             {campaign.paused && <Action disabled={busy || historyOpen} onClick={() => act('resume')}>Resume</Action>}
-            {campaign.phase === 'verified' && !campaign.checkpoints.length && (
-              <Action disabled={busy || historyOpen} onClick={() => {
-                if (window.confirm('Record the campaign against the target workspace’s current clean Git revision? Uncommitted changes make the checkpoint fail.')) {
-                  act('checkpoint', { name: `${campaign.name} verified`, confirmRisk: true });
-                }
-              }}>Record Git checkpoint</Action>
-            )}
-            {campaign.phase === 'verified' && campaign.checkpoints.length > 0 && (
-              <PromotionControl campaign={campaign} busy={busy || historyOpen} act={act} />
-            )}
-            {campaign.phase === 'promoted' && campaign.checkpoints.length > 0 && (
-              <RollbackControl campaign={campaign} busy={busy || historyOpen} act={act} />
-            )}
             {!['cancelled', 'promoted'].includes(campaign.phase) && (
-              <Action danger disabled={busy || historyOpen} onClick={() => act('cancel', { reason: 'operator cancelled from Campaign view' })}>Stand down</Action>
+              <Action danger disabled={busy || historyOpen} onClick={() => {
+                if (window.confirm('Cancel this plan? Its agents are stopped.')) act('cancel', { reason: 'operator cancelled from Plans' });
+              }}>Cancel plan</Action>
             )}
           </div>
-          {error && <div className="campaign-error mono">{error}</div>}
+          {error && <div className="campaign-error mono" role="alert">{error}</div>}
         </main>
       ) : (
         <main className="campaign-empty">
           <div className="campaign-empty-mark" />
-          <b>Campaign command is quiet.</b>
-          <span>Create an operation to mobilize blue, red, and referee formations.</span>
-          <Action onClick={() => setCreating(true)}>Create operation</Action>
+          <b>No plan yet.</b>
+          <span>A plan is an objective with a definition of done and the agents assigned to reach it. Field starts them, tracks their spend, and keeps the history replayable.</span>
+          <Action primary onClick={() => setCreating(true)}>Create a plan</Action>
         </main>
       )}
 
-      {campaign && <ContestPanel campaign={campaign} act={act} busy={busy || historyOpen} sessions={sessions} />}
       {creating && <CreateCampaign config={st.config} onClose={() => setCreating(false)} onCreated={(id) => { setSelected(id); selectCampaign(id); setCreating(false); }} />}
     </div>
   );
 }
 
-function PhaseRail({ campaign, onAdvance, busy }) {
-  const current = PHASES.indexOf(campaign.phase);
-  const legal = new Set(campaign.legalActions ?? []);
-  const options = new Map((campaign.transitionOptions ?? []).map((option) => [option.to, option]));
-  return (
-    <div className="phase-rail">
-      {PHASES.map((phase, i) => {
-        const can = legal.has(`advance:${phase}`);
-        return (
-          <button
-            key={phase} type="button" disabled={!can || busy}
-            className={`${i < current ? 'past ' : ''}${i === current ? 'now ' : ''}${can ? 'legal' : ''}`}
-            onClick={() => can && onAdvance(phase)}
-            title={can ? `Advance to ${phaseLabel(phase)}` : (options.get(phase)?.reason ?? phaseLabel(phase))}
-          >
-            <i />
-            <span>{phaseLabel(phase)}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+function planMembers(campaign) {
+  const teams = campaign.teams ?? {};
+  return Object.keys(teams).flatMap((lane) => (teams[lane]?.members ?? []).map((member) => ({ ...member, lane })));
 }
 
 function CampaignReplayRail({ campaign, onReplay }) {
@@ -273,267 +238,104 @@ function CampaignReplayRail({ campaign, onReplay }) {
   }, [campaign.id, cursor, onReplay, trace]);
 
   if (error) return <div className="campaign-replay error mono">{error}</div>;
-  if (!trace) return <div className="campaign-replay mono">loading campaign history…</div>;
+  if (!trace) return <div className="campaign-replay mono">loading plan history…</div>;
   const first = trace.events[0]?.seq ?? 0;
   const last = trace.events.at(-1)?.seq ?? first;
   const event = [...trace.events].reverse().find((item) => item.seq <= cursor);
   return (
     <div className="campaign-replay">
-      <span className="label">operational replay</span>
-      <input type="range" min={first} max={last} value={Math.min(cursor, last)} onChange={(e) => setCursor(Number(e.target.value))} />
+      <span className="label">replay</span>
+      <input type="range" min={first} max={last} value={Math.min(cursor, last)} onChange={(e) => setCursor(Number(e.target.value))} aria-label="Replay position" />
       <span className="mono">{cursor} / {last}{trace.nextFrom != null && ' · first page'}</span>
-      <b>{event ? eventLabel(event) : 'before mobilization'}</b>
+      <b>{event ? eventLabel(event) : 'before start'}</b>
     </div>
   );
 }
 
-function ObjectiveFront({ objective, campaign, onReady, busy }) {
-  const [evidence, setEvidence] = useState('');
-  const linked = campaign.findings.filter((f) => f.objectiveId === objective.id);
+function ObjectiveCard({ objective, campaign, sessions }) {
+  const working = planMembers(campaign)
+    .filter((m) => m.status === 'active' && (!m.objectiveId || m.objectiveId === objective.id))
+    .map((m) => sessions.get(m.sessionId)?.name ?? m.agentId ?? m.sessionId.slice(0, 6));
   return (
     <article className={`objective-front ${objective.status}`}>
       <div className="front-rank mono">{String(objective.priority).padStart(2, '0')}</div>
       <div className="front-copy">
-        <span className="label">objective · {objective.status}</span>
+        <span className="label">objective · {String(objective.status).replaceAll('_', ' ')}</span>
         <h2>{objective.statement}</h2>
         <div className="front-done">
           {objective.definitionOfDone.map((x, i) => <span key={i}>{x}</span>)}
         </div>
       </div>
       <div className="front-state">
-        {linked.length > 0 && <span className="front-contested">{linked.length} challenge{linked.length === 1 ? '' : 's'}</span>}
-        {campaign.phase === 'blue_building' && objective.status !== 'satisfied' && (
-          <div className="inline-order">
-            <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="readiness evidence" />
-            <button type="button" disabled={busy || !evidence.trim()} onClick={() => { onReady(evidence.trim()); setEvidence(''); }}>attach</button>
-          </div>
-        )}
+        {working.length ? <span className="front-working">{working.join(', ')}</span> : <span className="front-working idle">no agent yet</span>}
+        {objective.evidence?.length > 0 && <span className="front-evidence mono">{objective.evidence.length} evidence</span>}
       </div>
     </article>
   );
 }
 
-function Formation({ kind, data, sessions, config, campaign, busy, act, onOpen }) {
+function PlanAgents({ campaign, members, sessions, config, busy, act, onOpen }) {
   const [panel, setPanel] = useState(null);
   const [orders, setOrders] = useState('');
   const [agentId, setAgentId] = useState(config?.agents?.[0]?.id ?? '');
-  const active = data?.members?.filter((member) => member.status === 'active') ?? [];
-  const external = data?.members?.filter((member) => member.status === 'external') ?? [];
+  const active = members.filter((member) => member.status === 'active');
   const objectiveId = campaign.objectives[0]?.id;
   const submit = () => {
     if (panel === 'orders' && orders.trim()) {
-      act('issue_orders', { team: kind, objectiveId, orders: orders.trim() });
+      act('issue_orders', { team: active[0]?.lane ?? LANE, objectiveId, orders: orders.trim() });
       setOrders(''); setPanel(null);
     }
-    if (panel === 'reinforce' && agentId) {
+    if (panel === 'add' && agentId) {
       const agent = config?.agents?.find((item) => item.id === agentId);
       act('reinforce', {
-        team: kind, objectiveId, agentId, role: agent?.role,
+        team: LANE, objectiveId, agentId, role: agent?.role,
         workspaceId: campaign.target?.workspaceId,
       });
       setPanel(null);
     }
   };
   return (
-    <div className={`formation team-${kind}`}>
+    <section className="plan-agents" aria-label="Agents on this plan">
       <div className="formation-head">
-        <span className="team-crest">{crest(kind)}</span>
-        <div><b>{kind}</b><small>{active.length} live{external.length ? ` · ${external.length} external` : ''}</small></div>
+        <div><b>Agents</b><small>{active.length} working{members.length > active.length ? ` · ${members.length - active.length} finished` : ''}</small></div>
         <div className="formation-tools">
-          <button type="button" disabled={busy || !active.length} title={`Issue orders to ${kind}`} onClick={() => setPanel(panel === 'orders' ? null : 'orders')}>orders</button>
-          <button type="button" disabled={busy} title={`Reinforce ${kind}`} aria-label={`Reinforce ${kind}`} onClick={() => setPanel(panel === 'reinforce' ? null : 'reinforce')}>+</button>
+          <button type="button" disabled={busy || !active.length} onClick={() => setPanel(panel === 'orders' ? null : 'orders')}>Orders to all</button>
+          <button type="button" disabled={busy || campaign.phase === 'draft'} onClick={() => setPanel(panel === 'add' ? null : 'add')}>+ Add agent</button>
         </div>
       </div>
       <div className="formation-units">
-        {(data?.members ?? []).map((member) => {
+        {members.map((member) => {
           const session = sessions.get(member.sessionId);
           return (
             <div className="formation-unit" key={member.sessionId}>
               <button type="button" onClick={() => onOpen(member.sessionId)} title={session?.state ?? member.status}>
-                <i className={`unit-glyph role-${member.role ?? session?.role ?? 'builder'}`} />
+                <i className={`dot ${session?.state ?? 'idle'}`} />
                 <span>{session?.name ?? member.agentId ?? member.sessionId.slice(0, 6)}</span>
-                <small>{session?.state ?? member.status}</small>
+                <small>{member.role ?? session?.role ?? 'agent'} · {String(session?.state ?? member.status).replaceAll('_', ' ')}{session?.costUsd ? ` · $${session.costUsd.toFixed(3)}` : ''}</small>
               </button>
               {member.status === 'active' && (
-                <button className="formation-retreat" type="button" disabled={busy} title="Retreat unit" aria-label={`Retreat ${session?.name ?? member.agentId ?? 'unit'}`} onClick={() => act('retreat', { team: kind, sessionId: member.sessionId })}>×</button>
+                <button className="formation-retreat" type="button" disabled={busy} title="Remove from plan" aria-label={`Remove ${session?.name ?? member.agentId ?? 'agent'} from the plan`} onClick={() => act('retreat', { team: member.lane, sessionId: member.sessionId })}>×</button>
               )}
             </div>
           );
         })}
-        {!data?.members?.length && <span className="formation-vacant">vacant</span>}
+        {!members.length && <span className="formation-vacant">{campaign.phase === 'draft' ? 'Start the plan to assign agents.' : 'No agents assigned.'}</span>}
       </div>
       {panel === 'orders' && (
         <div className="formation-order">
-          <textarea value={orders} onChange={(event) => setOrders(event.target.value)} placeholder={`orders for ${kind}`} />
-          <button type="button" disabled={busy || !orders.trim()} onClick={submit}>dispatch</button>
+          <textarea value={orders} onChange={(event) => setOrders(event.target.value)} placeholder="Orders for every agent on this plan" aria-label="Orders" />
+          <button type="button" disabled={busy || !orders.trim()} onClick={submit}>Send</button>
         </div>
       )}
-      {panel === 'reinforce' && (
+      {panel === 'add' && (
         <div className="formation-order">
-          <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+          <select value={agentId} onChange={(event) => setAgentId(event.target.value)} aria-label="Agent to add">
             {(config?.agents ?? []).map((agent) => <option key={agent.id} value={agent.id}>{agent.name ?? agent.id} · {agent.role}</option>)}
           </select>
-          <button type="button" disabled={busy || !agentId} onClick={submit}>deploy</button>
+          <button type="button" disabled={busy || !agentId} onClick={submit}>Add</button>
         </div>
       )}
-    </div>
-  );
-}
-
-function ContestPanel({ campaign, act, busy }) {
-  const [form, setForm] = useState({ severity: 'high', category: 'correctness', claim: '', evidence: '', reproduction: '' });
-  const red = campaign.teams.red.members.find((m) => ['active', 'external'].includes(m.status));
-  const referee = campaign.teams.referee.members.find((m) => ['active', 'external'].includes(m.status));
-  const objective = campaign.objectives[0];
-  const submitFinding = () => {
-    if (!form.claim || !form.evidence || !form.reproduction || !red) return;
-    act('report_finding', {
-      objectiveId: objective.id, authorSessionId: red.sessionId,
-      severity: form.severity, category: form.category, claim: form.claim,
-      scope: objective.target?.id ?? campaign.target?.id ?? '',
-      evidence: [form.evidence], reproduction: [form.reproduction], confidence: 0.85,
-    });
-    setForm({ ...form, claim: '', evidence: '', reproduction: '' });
-  };
-  return (
-    <aside className="contest-panel">
-      <div className="contest-head"><span className="label">contest ledger</span><b>{campaign.findings.length}</b></div>
-      <div className="contest-list">
-        {campaign.findings.map((finding) => (
-          <FindingCard key={finding.id} finding={finding} campaign={campaign} act={act} busy={busy} red={red} />
-        ))}
-        {!campaign.findings.length && <div className="contest-clear">No findings recorded.</div>}
-      </div>
-      {campaign.phase === 'red_challenging' && (
-        <div className="finding-form">
-          <div className="finding-form-row">
-            <select value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })}>
-              {['low', 'medium', 'high', 'critical'].map((x) => <option key={x}>{x}</option>)}
-            </select>
-            <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="category" />
-          </div>
-          <textarea value={form.claim} onChange={(e) => setForm({ ...form, claim: e.target.value })} placeholder="claim" />
-          <input value={form.evidence} onChange={(e) => setForm({ ...form, evidence: e.target.value })} placeholder="evidence reference" />
-          <input value={form.reproduction} onChange={(e) => setForm({ ...form, reproduction: e.target.value })} placeholder="reproduction" />
-          <Action disabled={busy || !red} onClick={submitFinding}>Record challenge</Action>
-        </div>
-      )}
-      {campaign.phase === 'referee_review' && referee && (
-        <VerdictControl campaign={campaign} referee={referee} act={act} busy={busy} />
-      )}
-    </aside>
-  );
-}
-
-function FindingCard({ finding, campaign, act, busy, red }) {
-  const [claim, setClaim] = useState('');
-  const [evidence, setEvidence] = useState('');
-  const [retestResult, setRetestResult] = useState('fixed');
-  const blueOwner = campaign.teams.blue.members.find((m) => ['active', 'external'].includes(m.status));
-  const linked = finding.mitigationIds.map((id) => campaign.mitigations.find((m) => m.id === id)).filter(Boolean);
-  const liveMitigation = linked.some((m) => ['proposed', 'active', 'ready'].includes(m.status));
-  return (
-    <article className={`finding severity-${finding.severity}`}>
-      <div><span>{finding.severity}</span><i>{finding.status.replaceAll('_', ' ')}</i></div>
-      <b>{finding.claim}</b>
-      <small>{finding.category} · {Math.round(finding.confidence * 100)}% confidence</small>
-      {campaign.phase === 'contested' && finding.status === 'open' && (
-        <button type="button" disabled={busy} onClick={() => act('acknowledge_finding', { findingId: finding.id })}>acknowledge</button>
-      )}
-      {campaign.phase === 'blue_mitigating' && ['acknowledged', 'disputed'].includes(finding.status) && !liveMitigation && (
-        <div className="finding-inline">
-          <input value={claim} onChange={(e) => setClaim(e.target.value)} placeholder="mitigation claim" />
-          <button type="button" disabled={busy || !claim.trim() || !blueOwner} onClick={() => {
-            act('propose_mitigation', { findingIds: [finding.id], claim: claim.trim(), ownerSessionId: blueOwner?.sessionId });
-            setClaim('');
-          }}>link</button>
-        </div>
-      )}
-      {campaign.phase === 'blue_mitigating' && linked.map((mitigation) => {
-        if (mitigation.status === 'proposed') return (
-          <button key={mitigation.id} type="button" disabled={busy} onClick={() => act('start_mitigation', { mitigationId: mitigation.id, sessionId: mitigation.ownerSessionId })}>begin mitigation</button>
-        );
-        if (mitigation.status === 'active') return (
-          <div className="finding-inline" key={mitigation.id}>
-            <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="mitigation evidence" />
-            <button type="button" disabled={busy || !evidence.trim()} onClick={() => {
-              act('mark_mitigation_ready', { mitigationId: mitigation.id, sessionId: mitigation.ownerSessionId, evidence: [evidence.trim()] });
-              setEvidence('');
-            }}>ready</button>
-          </div>
-        );
-        return null;
-      })}
-      {campaign.phase === 'red_retesting' && finding.status === 'ready_for_retest' && red && (
-        <div className="finding-inline retest">
-          <select value={retestResult} onChange={(e) => setRetestResult(e.target.value)}>
-            {['fixed', 'persists', 'false_positive', 'inconclusive'].map((x) => <option key={x} value={x}>{x.replaceAll('_', ' ')}</option>)}
-          </select>
-          <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="retest evidence" />
-          <button type="button" disabled={busy || !evidence.trim()} onClick={() => {
-            act('record_retest', { findingId: finding.id, sessionId: red.sessionId, result: retestResult, evidence: [evidence.trim()] });
-            setEvidence('');
-          }}>record</button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function VerdictControl({ campaign, referee, act, busy }) {
-  const [evidence, setEvidence] = useState('');
-  const [rationale, setRationale] = useState('');
-  return (
-    <div className="verdict-strip">
-      <span className="label">independent verdict</span>
-      {campaign.review?.status !== 'active' && campaign.review?.status !== 'complete' && (
-        <button type="button" disabled={busy} onClick={() => act('begin_referee_review', { sessionId: referee.sessionId })}>begin review</button>
-      )}
-      {campaign.review?.status === 'active' && (
-        <>
-          <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="independent evidence" />
-          <textarea value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="rationale" />
-          <div>
-            {['verified', 'rejected', 'inconclusive'].map((verdict) => (
-              <button key={verdict} type="button" disabled={busy || !evidence.trim() || !rationale.trim()} onClick={() => {
-                act('record_verdict', { sessionId: referee.sessionId, verdict, evidence: [evidence.trim()], rationale: rationale.trim() });
-              }}>{verdict}</button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function PromotionControl({ campaign, busy, act }) {
-  const [name, setName] = useState(campaign.name);
-  return (
-    <div className="promotion-control">
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="capability name" />
-      <Action disabled={busy || !name.trim()} onClick={() => act('promote', {
-        checkpointId: campaign.checkpoints.at(-1).id,
-        capabilities: [{ id: crypto.randomUUID(), name: name.trim(), evidence: ['campaign referee verdict'] }],
-      })}>Promote</Action>
-    </div>
-  );
-}
-
-function RollbackControl({ campaign, busy, act }) {
-  const [reason, setReason] = useState('');
-  return (
-    <div className="promotion-control rollback-control">
-      <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="rollback reason" />
-      <Action danger disabled={busy || !reason.trim()} onClick={() => {
-        if (window.confirm('Record this campaign as rolled back? Field is currently record-only: this will not change workspace files.')) {
-          act('rollback', {
-            checkpointId: campaign.checkpoints.at(-1).id,
-            reason: reason.trim(),
-            confirmRisk: true,
-          });
-        }
-      }}>Record rollback</Action>
-    </div>
+    </section>
   );
 }
 
@@ -559,34 +361,30 @@ function CreateCampaign({ config, onClose, onCreated }) {
   };
   return (
     <div className="campaign-modal-shade" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form ref={dialogRef} className="campaign-modal" role="dialog" aria-modal="true" aria-label="Create a new operation" onSubmit={submit}>
-        <div><span className="label">new operation</span><button type="button" onClick={onClose} aria-label="Close new operation dialog">×</button></div>
-        <label><span>name</span><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-        <label><span>intent</span><textarea required value={form.intent} onChange={(e) => setForm({ ...form, intent: e.target.value })} /></label>
-        <label><span>workspace</span><select value={form.workspaceId} onChange={(e) => setForm({ ...form, workspaceId: e.target.value })}>{config?.workspaces?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
-        <label><span>objective</span><input required value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} /></label>
-        <label><span>definition of done</span><input required value={form.done} onChange={(e) => setForm({ ...form, done: e.target.value })} /></label>
+      <form ref={dialogRef} className="campaign-modal" role="dialog" aria-modal="true" aria-label="Create a plan" onSubmit={submit}>
+        <div><span className="label">new plan</span><button type="button" onClick={onClose} aria-label="Close new plan dialog">×</button></div>
+        <label><span>name</span><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ship the settings page" /></label>
+        <label><span>why</span><textarea required value={form.intent} onChange={(e) => setForm({ ...form, intent: e.target.value })} placeholder="What this plan is for, in a sentence or two." /></label>
+        <label><span>project</span><select value={form.workspaceId} onChange={(e) => setForm({ ...form, workspaceId: e.target.value })}>{config?.workspaces?.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>
+        <label><span>objective</span><input required value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} placeholder="What must be true when it is done" /></label>
+        <label><span>definition of done</span><input required value={form.done} onChange={(e) => setForm({ ...form, done: e.target.value })} placeholder="e.g. npm test passes and the page renders" /></label>
         {error && <div className="campaign-error mono" role="alert">{error}</div>}
-        <button className="btn primary" disabled={busy} type="submit">Establish campaign</button>
+        <button className="btn primary" disabled={busy} type="submit">{busy ? 'Creating…' : 'Create plan'}</button>
       </form>
     </div>
   );
 }
 
-function Action({ children, onClick, disabled, danger }) {
-  return <button className={`campaign-action${danger ? ' danger' : ''}`} type="button" onClick={onClick} disabled={disabled}>{children}</button>;
+function Action({ children, onClick, disabled, danger, primary }) {
+  return <button className={`campaign-action${danger ? ' danger' : ''}${primary ? ' primary' : ''}`} type="button" onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-function phaseLabel(phase) { return phase?.replaceAll('_', ' ') ?? 'unknown'; }
+function phaseLabel(phase) { return PHASE_WORD[phase] ?? phase?.replaceAll('_', ' ') ?? 'unknown'; }
 function eventLabel(event) {
   const d = event.data ?? {};
   if (event.kind === 'campaign.phase_changed') return `${phaseLabel(d.from)} → ${phaseLabel(d.to)}`;
-  if (event.kind === 'finding.reported') return `red finding · ${d.severity}`;
-  if (event.kind === 'retest.completed') return `retest · ${phaseLabel(d.result)}`;
-  if (event.kind === 'referee.verdict') return `referee · ${d.verdict}`;
-  if (event.kind === 'campaign.checkpoint_created') return `baseline · ${d.name}`;
-  if (event.kind === 'campaign.promoted') return 'capability promoted';
-  return phaseLabel(event.kind.replaceAll('.', ' · '));
+  if (event.kind === 'campaign.checkpoint_created') return `checkpoint · ${d.name}`;
+  if (event.kind === 'team.member_assigned') return 'agent assigned';
+  if (event.kind === 'objective.satisfied') return 'objective satisfied';
+  return event.kind.replaceAll('.', ' · ').replaceAll('_', ' ');
 }
-function activeMembers(c) { return TEAM_ORDER.flatMap((x) => c.teams[x]?.members ?? []).filter((m) => m.status === 'active').length; }
-function crest(kind) { return ({ blue: 'B', red: 'R', referee: 'V', purple: 'P' })[kind]; }

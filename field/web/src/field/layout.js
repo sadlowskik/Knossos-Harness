@@ -42,31 +42,6 @@ function formationSlot(i, count) {
   return { dx: t * spread, dy: 30 + row * 24 };
 }
 
-// Fold the synthetic rehearsal partition (snapshot().rehearsal) into a snapshot the
-// layout can lay out. The server keeps simulated sessions/folders/files in a separate
-// sub-projection so they never pollute live truth; the RTS lens opts in by merging them
-// here. Real facts always win a key collision, and when no simulation is running the
-// snapshot is returned untouched — so live behaviour is byte-for-byte unchanged.
-export function foldRehearsal(snap) {
-  const r = snap?.rehearsal;
-  if (!r) return snap;
-  const sessions = r.sessions ?? [];
-  const rFolders = r.folders ?? [];
-  const rFiles = r.files ?? [];
-  if (!sessions.length && !rFolders.length && !rFiles.length) return snap;
-
-  const haveFolder = new Set((snap.folders ?? []).map((f) => `${f.workspaceId}:${f.dir}`));
-  const haveFile = new Set((snap.files ?? []).map((f) => `${f.workspaceId}:${f.path}`));
-  const liveIds = new Set((snap.sessions ?? []).map((s) => s.id));
-
-  return {
-    ...snap,
-    sessions: [...(snap.sessions ?? []), ...sessions.filter((s) => !liveIds.has(s.id))],
-    folders: [...(snap.folders ?? []), ...rFolders.filter((f) => !haveFolder.has(`${f.workspaceId}:${f.dir}`))],
-    files: [...(snap.files ?? []), ...rFiles.filter((f) => !haveFile.has(`${f.workspaceId}:${f.path}`))],
-  };
-}
-
 export function computeLayout(snap, positions, now, config) {
   const regions = [];
   const regionById = new Map();
@@ -257,29 +232,6 @@ export function computeLayout(snap, positions, now, config) {
     });
   }
 
-  // Synthetic scenarios use a parade-grid inside each real workspace. Normal
-  // sessions retain their tight work-point formation; the wider simulation spacing
-  // exists so a dozen labeled units can be inspected at once without becoming a knot.
-  for (const region of regions) {
-    const formation = agents
-      .filter((a) => a.session.simulated && !a.onFile && a.session.workspaceId === region.id)
-      .sort((a, b) => (a.session.name ?? '').localeCompare(b.session.name ?? ''));
-    if (!formation.length) continue;
-    const cols = Math.min(4, formation.length);
-    const rows = Math.ceil(formation.length / cols);
-    const usableW = Math.max(180, region.w - 150);
-    const stepX = cols === 1 ? 0 : usableW / (cols - 1);
-    const startY = region.y + Math.max(132, region.h * 0.48);
-    const stepY = rows === 1 ? 0 : Math.min(78, (region.y + region.h - 58 - startY) / (rows - 1));
-    formation.forEach((agent, i) => {
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-      const rowCount = Math.min(cols, formation.length - row * cols);
-      const rowWidth = (rowCount - 1) * stepX;
-      agent.x = region.x + region.w / 2 - rowWidth / 2 + col * stepX;
-      agent.y = startY + row * stepY;
-    });
-  }
   const agentById = new Map(agents.map((a) => [a.id, a]));
 
   // --- routes: only for work that is actually happening ----------------------

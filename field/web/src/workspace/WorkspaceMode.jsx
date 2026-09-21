@@ -45,7 +45,7 @@ export default function WorkspaceMode() {
   const ws = st.snap.workspaces.find((w) => w.id === wsId);
 
   if (!workspaces.length) {
-    return <div className="empty"><b>No workspace is mounted.</b>Check the paths in field/field.yaml.</div>;
+    return <div className="empty"><b>No project is mounted.</b>Add a folder under <code>workspaces</code> in field/field.yaml and restart Field.</div>;
   }
 
   return (
@@ -310,7 +310,7 @@ function Transcript({ session }) {
   useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
 
   if (!sessionId) {
-    return <div className="empty"><b>No agent open.</b>Select an agent on the Field and press Open.</div>;
+    return <div className="empty"><b>No agent open.</b>Pick an agent on the Board or Map and choose Open transcript.</div>;
   }
 
   const rows = events.filter((e) => [
@@ -327,7 +327,7 @@ function Transcript({ session }) {
       <div className="agent-brief">
         <span className="label">current objective</span>
         <b>{objective?.statement ?? session?.target?.label ?? session?.target?.id ?? 'Awaiting assignment'}</b>
-        <span className="mono">{session?.team ? `${session.team} · ` : ''}{session?.state ?? 'unknown'}{objective?.status ? ` · ${objective.status}` : ''}</span>
+        <span className="mono">{session?.state?.replaceAll('_', ' ') ?? 'unknown'}{objective?.status ? ` · ${objective.status}` : ''}{session?.costUsd != null ? ` · $${session.costUsd.toFixed(4)}` : ''}</span>
         {objective?.progress?.total && (
           <progress max={objective.progress.total} value={objective.progress.done ?? 0} />
         )}
@@ -396,8 +396,8 @@ function TranscriptRow({ evt }) {
     case 'work.verified':
       return (
         <div className="tr tool">
-          <div className="who">verdict</div>
-          <div className="body">{d.result}</div>
+          <div className="who">verified</div>
+          <div className="body">{d.result}{d.tier ? ` · ${d.tier}` : ''}{d.summary ? ` — ${d.summary}` : ''}</div>
         </div>
       );
     case 'session.ended':

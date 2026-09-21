@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { computeLayout, foldRehearsal, pulseOf } from './layout.js';
+import { computeLayout, pulseOf } from './layout.js';
 import { draw, minimapRect, minimapToWorld, toScreen, toWorld } from './renderer.js';
 import {
-  addSelection, clearSelection, getState, selectOnly, setState, toggleSelection, useField,
+  addSelection, clearSelection, getState, openInWorkspace, selectOnly, setState, toggleSelection, useField,
 } from '../state/store.js';
 import { api } from '../net/client.js';
 import ContextMenu from '../hud/ContextMenu.jsx';
@@ -10,6 +10,7 @@ import SelectionHUD from '../hud/SelectionHUD.jsx';
 import UnitInspector from './UnitInspector.jsx';
 import EndpointRail from '../hud/EndpointRail.jsx';
 import PermissionRequests from '../hud/PermissionRequests.jsx';
+import PowerSources from '../setup/PowerSources.jsx';
 
 const HIT_RADIUS = 13;
 
@@ -36,17 +37,30 @@ export default function FieldMode() {
   const reservedUsd = (st.snap.budgetReservations ?? [])
     .reduce((sum, row) => sum + (row.reservedUsd ?? 0), 0);
 
-  // Fold the synthetic rehearsal partition in before layout so simulated units render,
-  // anchor to the files their tool_use events touch, and walk there like live ones. When
-  // no simulation is running foldRehearsal returns the snapshot unchanged.
-  const foldedSnap = useMemo(() => foldRehearsal(st.snap), [st.snap]);
   const layout = useMemo(
-    () => computeLayout(foldedSnap, st.snap.positions ?? {}, Date.now(), st.config),
-    [foldedSnap, st.config, st.snap.positions],
+    () => computeLayout(st.snap, st.snap.positions ?? {}, Date.now(), st.config),
+    [st.snap, st.config],
   );
   const inspectSession = inspectId
-    ? foldedSnap.sessions.find((s) => s.id === inspectId) ?? null
+    ? st.snap.sessions.find((s) => s.id === inspectId) ?? null
     : null;
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const workspaces = st.snap.workspaces.filter((w) => w.mounted);
+  const liveSessions = st.snap.sessions.filter((s) => !TERMINAL.has(s.state));
+  const hasModel = (st.snap.endpoints?.length || st.config?.endpoints?.length) > 0;
+
+  // Open the start-an-agent dialog for a project, anchored to the control that asked.
+  const startAgent = (workspace, e) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    const x = e?.clientX != null ? e.clientX - (rect?.left ?? 0) : view.w / 2 - 140;
+    const y = e?.clientY != null ? e.clientY - (rect?.top ?? 0) + 8 : view.h / 2 - 160;
+    setMenu({
+      screen: { x, y },
+      pane: 'spawn',
+      target: { type: 'workspace', id: workspace.id, workspaceId: workspace.id, label: workspace.name },
+      world: null,
+    });
+  };
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   dirtyRef.current = true;
@@ -435,29 +449,44 @@ export default function FieldMode() {
         }}
       />
 
-      <div className="field-hint label">
-        drag select · shift add · double-click a unit for its city · ctrl+digit group · right-click to assign · alt-drag pan · scroll zoom
+      <div className="field-strip" onPointerDown={(e) => e.stopPropagation()}>
+        {workspaces.map((w) => (
+          <ProjectCard
+            key={w.id}
+            workspace={w}
+            sessions={liveSessions.filter((x) => x.workspaceId === w.id)}
+            stamps={st.lastEventBySession}
+            now={st.snap.now}
+            onStart={(e) => startAgent(w, e)}
+            onOpen={() => openInWorkspace({ type: 'workspace', workspaceId: w.id, path: '' })}
+            onSelect={(ids) => selectOnly(ids)}
+          />
+        ))}
+        <div className="field-cost mono" aria-live="polite">
+          <span className="field-cost-amount">${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
+          <span className="field-cost-label">spent</span>
+          {reservedUsd > 0 && <><span className="field-cost-amount dim">${reservedUsd.toFixed(2)}</span><span className="field-cost-label">reserved</span></>}
+        </div>
       </div>
 
-      <div
-        className="field-resources mono"
-        aria-live="polite"
-        style={{
-          position: 'absolute', top: 12, left: 12, display: 'flex', gap: 12,
-          alignItems: 'center', padding: '6px 11px', borderRadius: 6,
-          background: 'rgba(12,11,9,0.82)', border: '1px solid #302D28',
-          color: '#D8D2C8', fontSize: 12, pointerEvents: 'none', letterSpacing: '0.02em',
-        }}
-      >
-        <span style={{ color: '#FFD08A' }}>◈ ${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
-        <span style={{ color: '#7C776D' }}>spent</span>
-        {reservedUsd > 0 && (
-          <>
-            <span style={{ color: '#302D28' }}>·</span>
-            <span style={{ color: '#7E8B94' }}>${reservedUsd.toFixed(2)}</span>
-            <span style={{ color: '#7C776D' }}>reserved</span>
-          </>
-        )}
+      {!liveSessions.length && !menu && (
+        <div className="field-empty" onPointerDown={(e) => e.stopPropagation()}>
+          <span className="atlas-empty-mark" aria-hidden="true" />
+          <b>{workspaces.length ? 'No agents on the field yet' : 'No project open'}</b>
+          {workspaces.length ? (
+            <p>Start an agent on a project and it appears here, walking to the files it touches. Right-click any project or folder for more.</p>
+          ) : (
+            <p>Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field.</p>
+          )}
+          <div className="atlas-empty-actions">
+            {workspaces.length > 0 && <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>}
+            {!hasModel && <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Set up a model</button>}
+          </div>
+        </div>
+      )}
+
+      <div className="field-hint label">
+        drag select · shift add · double-click a unit to talk to it · ctrl+digit group · right-click to assign · alt-drag pan · scroll zoom
       </div>
 
       <PermissionRequests />
@@ -472,9 +501,59 @@ export default function FieldMode() {
         <ContextMenu
           screen={menu.screen}
           target={menu.target}
+          initialPane={menu.pane ?? null}
           onClose={() => setMenu(null)}
         />
       )}
+      {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}
     </div>
+  );
+}
+
+const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
+const STATE_WORD = {
+  waiting_permission: 'needs approval', blocked: 'blocked', error: 'failed', thinking: 'thinking',
+  working: 'working', paused: 'paused', spawning: 'starting', ready: 'ready', idle: 'idle',
+};
+
+function ago(ts, now) {
+  if (!ts) return 'no activity yet';
+  const s = Math.max(0, Math.round(((now ?? Date.now()) - ts) / 1000));
+  if (s < 5) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+// A project card over the map: what the canvas cannot say in nine-pixel type.
+function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSelect }) {
+  const last = Math.max(
+    workspace.lastTs ?? 0,
+    ...sessions.map((s) => stamps[s.id] ?? s.startedAt ?? 0),
+  );
+  const attention = sessions.filter((s) => ['waiting_permission', 'blocked', 'error'].includes(s.state)).length;
+  const changed = workspace.changeCount ?? workspace.git?.files?.length ?? 0;
+  return (
+    <section className={`field-card${sessions.length ? '' : ' idle'}${attention ? ' attention' : ''}`} aria-label={`${workspace.name} project`}>
+      <header>
+        <button type="button" className="field-card-name" onClick={onOpen} title={`${workspace.path} — open files`}>{workspace.name}</button>
+        <span className="field-card-git mono" title={workspace.git?.branch ?? ''}>{workspace.git?.branch ?? 'no git'}{changed ? ` · ${changed} changed` : ' · clean'}</span>
+      </header>
+      <div className="field-card-agents">
+        {sessions.length ? sessions.slice(0, 4).map((s) => (
+          <button type="button" key={s.id} className="field-card-agent" onClick={() => onSelect([s.id])} title={s.lastTool?.summary ?? s.stateDetail ?? ''}>
+            <span className={`dot ${s.state}`} aria-hidden="true" />
+            <b>{s.name ?? s.id.slice(0, 6)}</b>
+            <small>{STATE_WORD[s.state] ?? s.state}{s.lastTool?.name ? ` · ${s.lastTool.name}` : ''}</small>
+          </button>
+        )) : <span className="field-card-none">No agent on this project</span>}
+        {sessions.length > 4 && <button type="button" className="field-card-more" onClick={() => onSelect(sessions.map((s) => s.id))}>+{sessions.length - 4} more</button>}
+      </div>
+      <footer>
+        <span className="field-card-when">{sessions.length ? `${sessions.length} working` : 'idle'} · {ago(last, now)}</span>
+        <button type="button" className={`btn sm ${sessions.length ? 'ghost' : 'primary'}`} onClick={onStart}>Start an agent</button>
+      </footer>
+    </section>
   );
 }

@@ -126,31 +126,6 @@ export function identityHue(value = '') {
   return Math.abs(hash) % 360;
 }
 
-/**
- * Build the temporary world shown during a rehearsal. Production collections are
- * never merged into synthetic collections, so demo activity cannot inflate real
- * scores and synthetic history disappears when the active run ends.
- */
-export function rehearsalSnapshot(snapshot, activeRun) {
-  const rehearsal = snapshot?.rehearsal;
-  if (!activeRun || !rehearsal) return snapshot;
-  return {
-    ...snapshot,
-    sessions: rehearsal.sessions ?? [],
-    workspaces: rehearsal.workspaces ?? snapshot.workspaces,
-    folders: rehearsal.folders ?? [],
-    files: rehearsal.files ?? [],
-    websites: rehearsal.websites ?? [],
-    assignments: rehearsal.assignments ?? [],
-    permissions: [],
-    campaigns: [],
-    checkpoints: [],
-    graph: rehearsal.graph ?? { nodes: [], edges: [], visibleNodeKeys: [] },
-    totals: rehearsal.totals ?? { costUsd: 0 },
-    rehearsalMode: true,
-  };
-}
-
 export function verifiedContribution(cluster, agents = []) {
   if (cluster?.metrics) return cluster.metrics;
   return {

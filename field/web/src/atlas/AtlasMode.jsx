@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, on } from '../net/client.js';
-import { selectAgent, useField } from '../state/store.js';
+import { openInWorkspace, selectAgent, useField } from '../state/store.js';
 import {
   identityFor,
   initials,
@@ -9,6 +9,8 @@ import {
 } from '../theater/fieldPreferences.js';
 import PermissionRequests, { isPrivilegedTool } from '../hud/PermissionRequests.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
+import ContextMenu from '../hud/ContextMenu.jsx';
+import AgentControls from '../hud/AgentControls.jsx';
 
 const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
 const ATTENTION = new Set(['blocked', 'error', 'waiting_permission']);
@@ -38,7 +40,12 @@ export default function AtlasMode({ settings, setSettings }) {
   const st = useField();
   const selectedId = st.activeSessionId;
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [starter, setStarter] = useState(null); // { workspace, screen }
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
+  const startAgent = (workspace, e) => setStarter({
+    workspace,
+    screen: { x: e?.clientX ?? window.innerWidth / 2 - 140, y: e?.clientY ?? 120 },
+  });
   const sessions = useMemo(
     () => [...st.snap.sessions].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
     [st.snap.sessions],
@@ -68,6 +75,9 @@ export default function AtlasMode({ settings, setSettings }) {
           <span className="atlas-chip"><i aria-hidden="true" /><b>{workspaces.length}</b> {workspaces.length === 1 ? 'project' : 'projects'}</span>
         </div>
         <div className="atlas-actions">
+          {workspaces.length > 0 && (
+            <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>
+          )}
           <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Models</button>
           <button type="button" className="btn ghost" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
             Rome map
@@ -93,15 +103,6 @@ export default function AtlasMode({ settings, setSettings }) {
             </div>
           </section>
         )}
-        {columns.length > 0 && endpoints.length === 0 && (
-          <section className="atlas-approvals atlas-nudge" aria-label="No model yet">
-            <h2 className="atlas-section-title"><i aria-hidden="true" />No model yet</h2>
-            <p>Agents cannot start until a model is set up: a Cameo box, Ollama on this machine, or a provider key.</p>
-            <div className="atlas-empty-actions">
-              <button type="button" className="btn" onClick={() => setModelsOpen(true)}>Set up a model</button>
-            </div>
-          </section>
-        )}
         {columns.length ? (
           <div className="atlas-grid" role="list">
             {columns.map((column) => (
@@ -112,6 +113,8 @@ export default function AtlasMode({ settings, setSettings }) {
                 selected={column.session?.id === selectedId}
                 permissions={st.snap.permissions ?? []}
                 campaigns={st.snap.campaigns ?? []}
+                now={st.snap.now}
+                onStart={startAgent}
               />
             ))}
           </div>
@@ -127,6 +130,15 @@ export default function AtlasMode({ settings, setSettings }) {
         )}
       </div>
       {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}
+      {starter && (
+        <ContextMenu
+          fixed
+          initialPane="spawn"
+          screen={starter.screen}
+          target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }}
+          onClose={() => setStarter(null)}
+        />
+      )}
     </div>
   );
 }
@@ -159,16 +171,18 @@ function buildColumns(workspaces, live, allSessions) {
   return columns;
 }
 
-function AgentColumn({ column, identity, selected, permissions, campaigns }) {
+function AgentColumn({ column, identity, selected, permissions, campaigns, now, onStart }) {
   const { workspace, session } = column;
   const pending = permissions.filter((item) => item.sessionId === session?.id);
   const state = plainState(session);
   const needsYou = Boolean(session && (ATTENTION.has(session.state) || pending.length));
   const lastTool = typeof session?.lastTool === 'string' ? session.lastTool : session?.lastTool?.name;
   const cost = session?.costUsd ? `$${Number(session.costUsd).toFixed(3)}` : '';
+  const elapsed = session?.startedAt ? Math.max(0, Math.round(((now ?? Date.now()) - session.startedAt) / 60000)) : null;
+  const pct = session?.progress?.total ? Math.round(((session.progress.done ?? 0) / session.progress.total) * 100) : null;
   return (
     <article
-      className={`atlas-card tone-${state.tone}${selected ? ' selected' : ''}${needsYou ? ' needs-you' : ''}${session ? '' : ' empty'}`}
+      className={`atlas-card tone-${state.tone}${selected ? ' selected' : ''}${needsYou ? ' needs-you' : ''}${session ? '' : ' no-agent'}`}
       role="listitem"
       aria-label={session ? `${identity?.displayName ?? session.name ?? session.id}, ${state.label}` : `${workspace?.name ?? 'Project'}, no agent yet`}
     >
@@ -220,14 +234,25 @@ function AgentColumn({ column, identity, selected, permissions, campaigns }) {
           : (
             <div className="atlas-idle">
               <b>No agent working on this project yet.</b>
-              <p>Start a run from Routines, or wait for a plan to assign one. It will show up here as soon as it begins.</p>
+              <p>Start one with orders, a model and a thinking level. It shows up here the moment it begins; routines and plans can also assign agents.</p>
+              <div className="atlas-idle-actions">
+                <button type="button" className="btn primary" onClick={(e) => onStart(workspace, e)}>Start an agent</button>
+                <button type="button" className="btn ghost" onClick={() => openInWorkspace({ type: 'workspace', workspaceId: workspace?.id, path: '' })}>Open files</button>
+              </div>
             </div>
           )}
       </div>
-      {session && (lastTool || cost) && (
+      {session && (
         <footer className="atlas-foot">
-          {lastTool && <span className="atlas-foot-tool"><span className="atlas-foot-label">last tool</span><code>{lastTool}</code></span>}
-          {cost && <span className="atlas-foot-cost"><span className="atlas-foot-label">cost</span><code>{cost}</code></span>}
+          <div className="atlas-foot-row">
+            {lastTool && <span className="atlas-foot-tool"><span className="atlas-foot-label">tool</span><code>{lastTool}</code></span>}
+            {pct != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">progress</span><code>{pct}%</code></span>}
+            {elapsed != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">elapsed</span><code>{elapsed < 1 ? '<1m' : `${elapsed}m`}</code></span>}
+            {session.contextPct != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">context</span><code>{session.contextPct}%</code></span>}
+            <span className="atlas-foot-cost"><span className="atlas-foot-label">cost</span><code>{cost || '$0.000'}{session.budgetUsd ? ` / $${Number(session.budgetUsd).toFixed(2)}` : ''}</code></span>
+          </div>
+          {session.error && <p className="atlas-foot-error" role="alert">{session.error}</p>}
+          <AgentControls session={session} compact onOpen={() => openInWorkspace({ type: 'session', id: session.id })} />
         </footer>
       )}
     </article>

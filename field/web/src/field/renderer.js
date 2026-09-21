@@ -169,22 +169,25 @@ export function draw(ctx, opts) {
     }
 
     if (cam.z > 0.28) {
+      // The label is screen-sized while the folder grid scales with zoom, so at low zoom
+      // the two would collide inside the box. Sit the label on the top edge instead.
+      const labelY = cam.z < 0.75 ? sy - 6 : sy + 21;
       ctx.font = '600 10px "Space Grotesk", sans-serif';
       ctx.fillStyle = r.mounted ? C.muted : C.rust;
       ctx.textBaseline = 'alphabetic';
       ctx.letterSpacing = '0.11em';
-      ctx.fillText(r.name.toUpperCase(), sx + 14, sy + 21);
+      ctx.fillText(r.name.toUpperCase(), sx + 14, labelY);
       ctx.letterSpacing = '0px';
 
       ctx.font = '400 9px "IBM Plex Mono", monospace';
       ctx.fillStyle = C.ghost;
       const bits = [];
       if (!r.mounted) bits.push('NOT MOUNTED');
-      else if (r.git) bits.push(`${r.git.branch ?? '—'} · ${r.git.files.length} changed`);
+      else if (r.git) bits.push(`${r.git.branch ?? '—'} · ${r.changeCount ?? r.git.files?.length ?? 0} changed`);
       if (r.hiddenFolders > 0) bits.push(`+${r.hiddenFolders} quieter`);
       const meta = bits.join('  ') || '—';
       const mw = ctx.measureText(meta).width;
-      ctx.fillText(meta, sx + w - 14 - mw, sy + 21);
+      ctx.fillText(meta, sx + w - 14 - mw, labelY);
     }
   }
 
@@ -466,18 +469,6 @@ function drawAgent(ctx, a, o) {
   ctx.strokeStyle = s.state === 'interrupted' ? C.ghost : mix(color, '#000000', 0.42);
   ctx.stroke();
 
-  if (s.simulated) {
-    ctx.beginPath();
-    ctx.arc(x, y, size + 3.5, 0, Math.PI * 2);
-    ctx.setLineDash([2, 2]);
-    ctx.strokeStyle = C.steel;
-    ctx.globalAlpha = 0.72;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-  }
-
   // Subagents the agent created itself. Field knows they exist and what they were asked
   // for, but not their internals, so they are satellites rather than units.
   const delegations = s.delegations ?? [];
@@ -534,7 +525,7 @@ function drawAgent(ctx, a, o) {
     ctx.fillRect(bx, by, bw * (s.progress.done / s.progress.total), 2);
   }
 
-  if (showLabels || selected || hovered || s.simulated) {
+  if (showLabels || selected || hovered) {
     ctx.font = '500 9px "IBM Plex Mono", monospace';
     ctx.textBaseline = 'top';
     ctx.fillStyle = selected ? C.ink : C.muted;

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { Projection } from '../src/store/projection.js';
-import { rehearsalSnapshot } from '../../web/src/theater/fieldPreferences.js';
 
 const projection = new Projection({
   workspaces: [{ id: 'alpha', name: 'Alpha', mounted: true }],
@@ -68,12 +67,6 @@ assert.equal(partitioned.workspaces[0].changeCount, 1);
 assert.deepEqual(partitioned.rehearsal.sessions.map((session) => session.id), ['sim-session']);
 assert.deepEqual(partitioned.rehearsal.files.map((file) => file.path), ['demo/fake.js']);
 assert.equal(partitioned.rehearsal.workspaces[0].changeCount, 1);
-const rehearsalView = rehearsalSnapshot(partitioned, { runId: 'demo-1' });
-assert.deepEqual(rehearsalView.sessions.map((session) => session.id), ['sim-session']);
-assert.deepEqual(rehearsalView.files.map((file) => file.path), ['demo/fake.js']);
-assert.equal(rehearsalView.rehearsalMode, true);
-assert.equal(rehearsalSnapshot(partitioned, null), partitioned, 'normal UI receives production state unchanged');
-
 projection.apply({
   seq: 9, ts: 1008, kind: 'simulation.started', source: 'synthetic', subject: 'demo-2',
   data: { simulationRunId: 'demo-2', simulated: true },

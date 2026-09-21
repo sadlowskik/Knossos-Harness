@@ -59,6 +59,9 @@ export default function PermissionRequests() {
             <div className="perm-tool"><span className="perm-tool-label">wants to run</span><code className="mono">{p.toolName}</code></div>
             {workspace && <div className="perm-ws mono">{workspace.name} · {workspace.path}</div>}
             <pre className="perm-input mono">{detail}</pre>
+            {(session?.lastSay || session?.stateDetail) && (
+              <p className="perm-why"><span className="perm-tool-label">agent said</span>{String(session.lastSay ?? session.stateDetail).slice(0, 240)}</p>
+            )}
             {privileged && !armed[p.id] && (
               <p className="perm-warn">This can write files, run a shell, or change the project. Review it before allowing.</p>
             )}

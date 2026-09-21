@@ -1,19 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../net/client.js';
 import { getState, openInWorkspace, selectOnly, useField } from '../state/store.js';
 
 const THINKING = ['low', 'medium', 'high', 'adaptive'];
 
-export default function ContextMenu({ screen, target, onClose }) {
+export default function ContextMenu({ screen, target, onClose, initialPane = null, fixed = false }) {
   const st = useField();
   const ref = useRef(null);
-  const [pane, setPane] = useState(null);      // null | 'assign' | 'spawn'
+  const [pane, setPane] = useState(initialPane);      // null | 'assign' | 'spawn'
   const [endpoint, setEndpoint] = useState('auto');
   const [thinking, setThinking] = useState('adaptive');
   const [orders, setOrders] = useState('');
   const [agentId, setAgentId] = useState('');
+  const [wsId, setWsId] = useState(target.workspaceId ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [shift, setShift] = useState({ x: 0, y: 0 });
 
   const selection = st.selection;
   const sessions = st.snap.sessions;
@@ -34,6 +36,9 @@ export default function ContextMenu({ screen, target, onClose }) {
   useEffect(() => {
     if (config?.agents?.length && !agentId) setAgentId(config.agents[0].id);
   }, [config, agentId]);
+  useEffect(() => {
+    if (config?.workspaces?.length && !wsId) setWsId(config.workspaces[0].id);
+  }, [config, wsId]);
 
   const isAssignable = ['folder', 'workspace', 'website', 'file', 'mission'].includes(target.type);
   const targetLabel = target.label ?? target.id ?? '—';
@@ -71,31 +76,44 @@ export default function ContextMenu({ screen, target, onClose }) {
   });
 
   const doSpawn = () => run(async () => {
-    const wsId = target.workspaceId ?? config?.workspaces?.[0]?.id;
     const r = await api.spawn({
       agentId,
       workspaceId: wsId,
       endpointId: endpoint === 'auto' ? undefined : endpoint,
       thinking,
       orders: orders || undefined,
-      target: isAssignable
-        ? { type: target.type, id: target.id, label: targetLabel, workspaceId: wsId }
-        : undefined,
+      target: target.type === 'workspace' || target.type === 'empty'
+        ? { type: 'workspace', id: wsId, label: config?.workspaces?.find((w) => w.id === wsId)?.name ?? targetLabel, workspaceId: wsId }
+        : isAssignable
+          ? { type: target.type, id: target.id, label: targetLabel, workspaceId: wsId }
+          : undefined,
     });
     selectOnly([r.sessionId]);
   });
 
   const cmd = (kind, extra) => run(() => api.command(kind, { sessionIds: selection, ...extra }));
 
+  // Keep the whole menu on screen whatever pane is open: measure after layout and pull
+  // it back inside the viewport by however much it overflows.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const dx = Math.min(0, (window.innerWidth || 1200) - 8 - (r.right - shift.x));
+    const dy = Math.min(0, (window.innerHeight || 800) - 8 - (r.bottom - shift.y));
+    if (dx !== shift.x || dy !== shift.y) setShift({ x: dx, y: dy });
+  }, [pane, err, screen.x, screen.y]);
+
   const style = {
-    left: Math.min(screen.x, (window.innerWidth || 1200) - 300),
-    top: Math.min(screen.y, (window.innerHeight || 800) - 260),
+    left: Math.max(8, screen.x + shift.x),
+    top: Math.max(8, screen.y + shift.y),
   };
+  const noEndpoints = !(config?.endpoints?.length || st.snap.endpoints?.length);
 
   return (
-    <div className="ctx" style={style} ref={ref}>
+    <div className={`ctx${fixed ? ' ctx-fixed' : ''}`} style={style} ref={ref} role="dialog" aria-label={pane === 'spawn' ? 'Start an agent' : 'Actions'}>
       <div className="ctx-head">
-        <span className="ctx-kind label">{target.type}</span>
+        <span className="ctx-kind label">{pane === 'spawn' ? 'start an agent on' : target.type}</span>
         <span className="ctx-title">{targetLabel}</span>
       </div>
 
@@ -124,9 +142,9 @@ export default function ContextMenu({ screen, target, onClose }) {
                   Assign {selection.length} agent{selection.length > 1 ? 's' : ''} here
                 </Item>
               ) : (
-                <div className="ctx-note">Select agents first, or spawn one here.</div>
+                <div className="ctx-note">Select agents first, or start one here.</div>
               )}
-              <Item onClick={() => setPane('spawn')}>Spawn a new agent here…</Item>
+              <Item onClick={() => setPane('spawn')}>Start a new agent here…</Item>
               <Sep />
               {target.workspaceId && (
                 <Item onClick={() => {
@@ -148,7 +166,7 @@ export default function ContextMenu({ screen, target, onClose }) {
 
           {target.type === 'empty' && (
             <>
-              <Item onClick={() => setPane('spawn')}>Spawn a new agent…</Item>
+              <Item onClick={() => setPane('spawn')}>Start a new agent…</Item>
               {selection.length > 0 && <Item onClick={() => cmd('pause')}>Pause selection</Item>}
             </>
           )}
@@ -157,6 +175,14 @@ export default function ContextMenu({ screen, target, onClose }) {
 
       {(pane === 'assign' || pane === 'spawn') && (
         <div className="ctx-form">
+          {pane === 'spawn' && ['workspace', 'empty'].includes(target.type) && (config?.workspaces?.length ?? 0) > 1 && (
+            <label className="fld">
+              <span className="label">project</span>
+              <select value={wsId} onChange={(e) => setWsId(e.target.value)}>
+                {config.workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </label>
+          )}
           {pane === 'spawn' && (
             <label className="fld">
               <span className="label">agent</span>
@@ -211,17 +237,20 @@ export default function ContextMenu({ screen, target, onClose }) {
             />
           </label>
 
-          {err && <div className="ctx-err">{err}</div>}
+          {pane === 'spawn' && noEndpoints && (
+            <div className="ctx-note warn">No model is set up yet. Add one under Models first, or the agent will fail to start.</div>
+          )}
+          {err && <div className="ctx-err" role="alert">{err}</div>}
 
           <div className="ctx-actions">
-            <button className="btn ghost" onClick={() => setPane(null)} type="button">Back</button>
+            <button className="btn ghost" onClick={() => (initialPane ? onClose() : setPane(null))} type="button">{initialPane ? 'Cancel' : 'Back'}</button>
             <button
               className="btn primary"
               disabled={busy}
               onClick={pane === 'assign' ? doAssign : doSpawn}
               type="button"
             >
-              {busy ? 'Working…' : pane === 'assign' ? `Assign ${selection.length}` : 'Spawn'}
+              {busy ? 'Starting…' : pane === 'assign' ? `Assign ${selection.length}` : 'Start agent'}
             </button>
           </div>
         </div>

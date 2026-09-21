@@ -47,8 +47,7 @@ export default function App() {
     (s) => !['done', 'cancelled', 'interrupted', 'error'].includes(s.state),
   );
   const waiting = st.snap.permissions?.length ?? 0;
-  const simulated = live.filter((s) => s.simulated).length;
-  const realSessionCount = st.snap.sessions.filter((s) => !s.simulated).length;
+  const realSessionCount = st.snap.sessions.length;
   const budgetReservations = st.snap.budgetReservations ?? [];
   const reservedUsd = budgetReservations.reduce((sum, row) => sum + row.reservedUsd, 0);
   const unknownCosts = budgetReservations.filter(row => row.costStatus === 'missing' || (row.terminal && !row.finalCostKnown)).length;
@@ -91,7 +90,6 @@ export default function App() {
         )}
 
         <div className="topstats" aria-live="polite" aria-atomic="true">
-          {simulated > 0 && <span className="stat warn"><i aria-hidden="true" />Simulation · {simulated} {simulated === 1 ? 'unit' : 'units'}</span>}
           {waiting > 0 && <span className="stat warn"><i aria-hidden="true" />{waiting} awaiting approval</span>}
           <span className="stat"><i aria-hidden="true" />{live.length} active</span>
           <span className="stat quiet">{realSessionCount} {realSessionCount === 1 ? 'session' : 'sessions'}</span>

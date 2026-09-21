@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen, Box, Check, Container, Database, GitBranch, Globe2,
-  Landmark, Network, Play, RadioTower, Settings, ShieldCheck, Sparkles, Square,
+  Landmark, Network, Plus, RadioTower, Settings, ShieldCheck,
   TerminalSquare, Upload, UserRound, Wrench, X,
 } from 'lucide-react';
 import { api } from '../net/client.js';
@@ -10,6 +10,8 @@ import { useModalFocus } from '../ui/useModalFocus.js';
 import AtlasMode from '../atlas/AtlasMode.jsx';
 import CityPanel from '../city/CityPanel.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
+import ContextMenu from '../hud/ContextMenu.jsx';
+import AgentControls from '../hud/AgentControls.jsx';
 import {
   DEFAULT_FIELD_SETTINGS,
   agentPreferenceKey,
@@ -18,7 +20,6 @@ import {
   initials,
   loadFieldSettings,
   normalizeFieldSettings,
-  rehearsalSnapshot,
   saveFieldSettings,
   verifiedContribution,
 } from './fieldPreferences.js';
@@ -108,7 +109,6 @@ function clipLabel(value = '', length = 42) { const text = String(value).trim().
 function frontKeyFor(session) {
   if (session.objectiveId) return `objective:${session.objectiveId}`;
   if (session.campaignId) return `campaign:${session.campaignId}`;
-  if (session.simulationRunId) return `rehearsal:${session.simulationRunId}`;
   if (session.assignmentId) return `assignment:${session.assignmentId}`;
   return null;
 }
@@ -124,10 +124,6 @@ function objectiveLabel(assignment, sessions, campaigns, workspaceById) {
   if (first?.campaignId) {
     const campaign = campaigns.find((item) => item.id === first.campaignId);
     if (campaign?.name) return clipLabel(campaign.name);
-  }
-  if (first?.simulationRunId) {
-    const workspace = workspaceById.get(first.workspaceId);
-    return `${workspace?.name ?? 'Field'} rehearsal`;
   }
   if (assignment?.targetType === 'mission' && assignment.targetLabel) return clipLabel(assignment.targetLabel);
   const paragraphs = String(assignment?.orders ?? '').split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
@@ -199,18 +195,16 @@ function infrastructureClusters(snap, capitalWorkspaceId) {
       const id = `${front.workspaceId}:${path}`;
       resources.set(id, { id, label: basename(path), kind: LANDMARK_KIND[classify(path)], state: 'running' });
     }
-    const teams = new Set(front.sessions.map((item) => item.team || (item.role === 'challenger' ? 'red' : ['verifier', 'referee'].includes(item.role) ? 'blue' : 'operator')));
     const damaged = front.sessions.some((item) => ATTENTION_STATES.has(item.state));
-    const contested = damaged || (teams.has('red') && teams.has('blue'));
-    const defended = teams.has('blue') || front.sessions.some((item) => item.role === 'verifier');
+    const verifying = front.sessions.some((item) => item.role === 'verifier');
     const label = objectiveLabel(assignment, front.sessions, snap.campaigns ?? [], workspaceById);
     const resourceList = [...resources.values()].slice(0, 2);
     return {
-      clusterKey: front.key, label, displayLabel: label, kind: `workfront${contested ? ' contested' : ''}${defended ? ' defended' : ''}${damaged ? ' damaged' : ''}`, baseKind: 'workfront', workspaceId: front.workspaceId,
+      clusterKey: front.key, label, displayLabel: label, kind: `workfront${damaged ? ' damaged' : ''}`, baseKind: 'workfront', workspaceId: front.workspaceId,
       parentKey: `workspace:${front.workspaceId || capitalWorkspaceId}`,
       activity: front.sessions.length * 18, resources: resourceList,
-      metrics: activityMetrics(Math.min(100, front.sessions.length * 20)), teams: [...teams], contested, defended, damaged,
-      stateLabel: damaged ? 'requires intervention' : contested ? 'red / blue contest' : defended ? 'verification front' : 'active operation',
+      metrics: activityMetrics(Math.min(100, front.sessions.length * 20)), damaged,
+      stateLabel: damaged ? 'needs you' : verifying ? 'being verified' : `${front.sessions.length} agent${front.sessions.length === 1 ? '' : 's'} working`,
     };
   }).sort((a, b) => b.activity - a.activity);
 
@@ -316,8 +310,7 @@ function CitySymbol({ resource, slot, tier, isCapital, theme }) {
 
 function AgentMarker({ session, identity, slot, index = 0, settings, selected, related, onSelect }) {
   const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  const allegiance = session.team || (session.role === 'challenger' ? 'red' : ['verifier', 'referee'].includes(session.role) ? 'blue' : 'operator');
-  return <button type="button" className={`field-agent-marker team-${allegiance} state-${session.state}${selected ? ' selected' : ''}${related ? ' related' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }} onClick={(event) => { event.stopPropagation(); onSelect(session.id); }} aria-label={`${identity.displayName}, ${stateLabel(session.state)}`}><span className="unit-standard">{allegiance.slice(0, 1).toUpperCase()}</span><IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" forMap />{session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}<span className="marker-label"><b>{identity.displayName}</b><small>{session.stateDetail || stateLabel(session.state)}</small></span></button>;
+  return <button type="button" className={`field-agent-marker state-${session.state}${selected ? ' selected' : ''}${related ? ' related' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }} onClick={(event) => { event.stopPropagation(); onSelect(session.id); }} aria-label={`${identity.displayName}, ${stateLabel(session.state)}`}><IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" forMap />{session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}<span className="marker-label"><b>{identity.displayName}</b><small>{session.stateDetail || stateLabel(session.state)}</small></span></button>;
 }
 
 function ProceduralSettlement({ name, isCapital, tier }) {
@@ -347,14 +340,6 @@ function ProceduralSettlement({ name, isCapital, tier }) {
   </div>;
 }
 
-function LegacyRegion({ position, cluster, agents, isCapital, selectedId, relatedIds, identities, settings, onAgent, onRegion, focused }) {
-  const maturity = verifiedContribution(cluster, agents);
-  const baseKind = cluster?.baseKind ?? cluster?.kind;
-  const active = agents.some((agent) => !TERMINAL_STATES.has(agent.state)) || cluster?.resources?.some((item) => item.state === 'running');
-  const useProceduralSettlement = baseKind === 'project' && settings.theme === 'rome';
-  return <section className={`field-region${cluster ? ` settled kind-${cluster.kind}` : ' empty'}${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}`} style={{ left: `${position.x}%`, top: `${position.y}%`, width: `${position.w}%`, height: `${position.h}%` }} onClick={(event) => { event.stopPropagation(); if (cluster) onRegion(position.id); }}><div className="region-influence" aria-hidden="true" />{useProceduralSettlement && <ProceduralSettlement name={cluster?.displayLabel || cluster?.label || 'Project'} isCapital={isCapital} tier={maturity.tier} />}{cluster && <header className="region-label"><b>{cluster.displayLabel}</b><small>{cluster.stateLabel || baseKind}</small></header>}{isCapital && <div className="capital-label"><i />CAPITAL · {cluster?.displayLabel}</div>}{baseKind === 'workfront' && <div className="front-standard" aria-label={cluster.stateLabel}><span className={cluster.teams?.includes('red') ? 'red on' : 'red'}>R</span><GitBranch /><span className={cluster.teams?.includes('blue') ? 'blue on' : 'blue'}>B</span>{cluster.defended && <ShieldCheck />}</div>}{cluster?.damaged && <div className="damage-signal" title={`${cluster.failureCount || 1} unresolved failure`}><i /><i /><i /></div>}{cluster && <div className="maturity-pips" aria-label={`Verified contribution ${maturity.score}%`}>{[1, 2, 3, 4].map((tier) => <i key={tier} className={tier <= maturity.tier ? 'on' : ''} />)}</div>}{(!useProceduralSettlement ? cluster?.resources ?? [] : []).slice(0, CITY_SLOTS.length).map((resource, index) => <CitySymbol key={resource.id} resource={resource} slot={CITY_SLOTS[index]} tier={maturity.tier} isCapital={isCapital && index === 0} theme={settings.theme} />)}{agents.slice(0, AGENT_SLOTS.length).map((session, index) => <AgentMarker key={session.id} session={session} identity={identities.get(session.id)} slot={AGENT_SLOTS[index]} settings={settings} selected={session.id === selectedId} related={relatedIds.has(session.id)} onSelect={onAgent} />)}</section>;
-}
-
 function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, identities, settings, onAgent, onRegion, focused }) {
   const maturity = verifiedContribution(cluster, agents);
   const baseKind = cluster?.baseKind ?? cluster?.kind;
@@ -364,7 +349,7 @@ function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, 
     ? `Open ${cluster?.displayLabel ?? 'project'} City`
     : `Inspect ${cluster?.displayLabel ?? baseKind ?? 'region'}`;
   return <section
-    className={`field-region${cluster ? ` settled kind-${cluster.kind}` : ' empty'}${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}${agents.length > 6 ? ' agent-heavy' : ''}`}
+    className={`field-region${cluster ? ` settled kind-${cluster.kind}` : ' unsettled'}${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}${agents.length > 6 ? ' agent-heavy' : ''}`}
     style={{ left: `${position.x}%`, top: `${position.y}%`, width: `${position.w}%`, height: `${position.h}%` }}
   >
     <div className="region-influence" aria-hidden="true" />
@@ -372,7 +357,6 @@ function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, 
     {useProceduralSettlement && <ProceduralSettlement name={cluster?.displayLabel || cluster?.label || 'Project'} isCapital={isCapital} tier={maturity.tier} />}
     {cluster && <header className="region-label"><b>{cluster.displayLabel}</b><small>{cluster.stateLabel || baseKind}</small></header>}
     {isCapital && <div className="capital-label"><i />CAPITAL · {cluster?.displayLabel}</div>}
-    {baseKind === 'workfront' && <div className="front-standard" aria-label={cluster.stateLabel}><span className={cluster.teams?.includes('red') ? 'red on' : 'red'}>R</span><GitBranch /><span className={cluster.teams?.includes('blue') ? 'blue on' : 'blue'}>B</span>{cluster.defended && <ShieldCheck />}</div>}
     {cluster?.damaged && <div className="damage-signal" title={`${cluster.failureCount || 1} unresolved failure`}><i /><i /><i /></div>}
     {cluster && <div className="maturity-pips" role="img" aria-label={`Verified contribution ${maturity.score}%`}>{[1, 2, 3, 4].map((tier) => <i key={tier} className={tier <= maturity.tier ? 'on' : ''} />)}</div>}
     {(!useProceduralSettlement ? cluster?.resources ?? [] : []).slice(0, CITY_SLOTS.length).map((resource, index) => <CitySymbol key={resource.id} resource={resource} slot={CITY_SLOTS[index]} tier={maturity.tier} isCapital={isCapital && index === 0} theme={settings.theme} />)}
@@ -396,7 +380,7 @@ function MaturityCard({ cluster, agents, onClose }) {
       <div><dt>Persisted</dt><dd>{maturity.persisted}%</dd></div>
       <div><dt>Reliable</dt><dd>{maturity.reliability ?? 0}%</dd></div>
     </dl>
-    <p>Only criterion evidence, an independent verified verdict, and a revision-bound checkpoint grow the city. Activity is shown separately.</p>
+    <p>Only criterion evidence, an independent verification, and a revision-bound checkpoint grow the city. Activity is shown separately.</p>
     {evidence.length > 0 && <ul className="maturity-evidence" aria-label="Maturity evidence">{evidence.slice(-4).reverse().map((item, index) => <li key={`${item.type}:${item.seq ?? item.verdictId ?? item.checkpointId ?? index}`}><b>{item.type}</b><span>{item.criterion ?? item.verdictId ?? item.checkpointId ?? `event #${item.seq}`}</span></li>)}</ul>}
   </aside>;
 }
@@ -407,21 +391,14 @@ function ToolIcon({ name }) {
   return <Icon aria-hidden="true" />;
 }
 
-function LegacyAgentInspector({ session, identity, settings, role, agent, trace, collaborators, onClose, onSettings }) {
-  if (!session) return null;
-  const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  const recent = trace.filter((event) => ['session.message', 'session.tool_use', 'session.tool_result'].includes(event.kind)).slice(-4).reverse();
-  const tools = agent?.tools_allow ?? role?.tools_allow ?? [];
-  return <aside className="field-side-panel agent-panel" onClick={(event) => event.stopPropagation()}><header><div className="inspector-identity"><IdentityMark session={session} identity={identity} settings={settings} selected size="lg" /><div><span>{settings.theme === 'rome' ? 'SENATOR' : 'AGENT'}</span><h2>{identity.displayName}</h2></div></div><div><button type="button" onClick={onSettings} aria-label="Open settings"><Settings /></button><button type="button" onClick={onClose} aria-label="Close agent"><X /></button></div></header><section><label>Objective</label><p>{session.target?.label ?? session.stateDetail ?? 'Awaiting a specific objective.'}</p></section><section><label>Progress <b>{pct}%</b></label><div className="inspector-progress"><i style={{ width: `${pct}%` }} /></div></section><section className="model-line"><label>Model / endpoint</label><div><AgentEmblem identity={identity} size="sm" /><p><b>{identity.endpointAlias}</b><span>{identity.servedModel}</span><small>{identity.hfRepo || identity.source}</small></p></div></section>{identity.distillationRole && <section className="teacher-line"><label>Distillation source</label><p><b>{identity.endpointAlias} is {identity.servedModel}</b><span>Teacher traces → {identity.studentTarget}</span></p></section>}<section><label>{settings.theme === 'rome' ? 'Authority' : 'Tools'}</label><div className="tool-loadout">{tools.length ? tools.map((tool) => <span key={tool}><ToolIcon name={tool} />{tool}</span>) : <em>No role tool allowlist</em>}</div></section><section><label>Working with</label><div className="collaboration-row">{collaborators.length ? collaborators.map((item) => <span key={item.id}><i className={`state-${item.state}`} />{item.name}</span>) : <em>No active links</em>}</div></section><section className="activity-ledger"><label>Current activity</label>{recent.length ? recent.map((event) => <div key={event.id ?? event.seq}><time>{new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><p>{event.data?.summary ?? event.data?.text ?? event.kind.replaceAll('.', ' / ')}</p></div>) : <em>No activity reported.</em>}</section></aside>;
-}
-
 function conversationText(event) {
   return event.data?.text ?? event.data?.content ?? event.data?.summary ?? '';
 }
 
-function AgentInspector({ session, identity, settings, role, agent, trace, collaborators, onClose, onSettings }) {
+function AgentInspector({ session, identity, settings, role, agent, trace, collaborators, onClose, onSettings, onOpen }) {
   if (!session) return null;
   const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
+  const cost = `$${(session.costUsd ?? 0).toFixed(4)}${session.budgetUsd ? ` / $${Number(session.budgetUsd).toFixed(2)}` : ''}`;
   const spawned = trace.find((event) => event.kind === 'session.spawned')?.data ?? {};
   const prompt = spawned.initialOrders ?? spawned.systemPrompt ?? session.target?.label ?? session.stateDetail;
   const messages = trace.filter((event) => event.kind === 'session.message' && conversationText(event)).slice(-8);
@@ -431,12 +408,14 @@ function AgentInspector({ session, identity, settings, role, agent, trace, colla
     <header><div className="inspector-identity"><IdentityMark session={session} identity={identity} settings={settings} selected size="lg" /><div><span>{settings.theme === 'rome' ? 'SENATOR' : 'AGENT'}</span><h2>{identity.displayName}</h2></div></div><div><button type="button" onClick={onSettings} aria-label="Open settings"><Settings /></button><button type="button" onClick={onClose} aria-label="Close agent"><X /></button></div></header>
     <section><label>Objective</label><p>{session.target?.label ?? session.stateDetail ?? 'Awaiting a specific objective.'}</p></section>
     <section><label>Progress <b>{pct}%</b></label><div className="inspector-progress" role="progressbar" aria-label={`${identity.displayName} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct}><i style={{ width: `${pct}%` }} /></div></section>
+    <section className="inspector-facts"><label>State</label><p><b>{stateLabel(session.state)}</b>{session.stateDetail ? ` · ${session.stateDetail}` : ''}{session.lastTool?.name ? ` · using ${session.lastTool.name}` : ''}</p><p className="mono">{cost} · context {session.contextPct ?? 0}%{session.error ? ` · ${session.error}` : ''}</p></section>
     <section className="model-line"><label>Model / endpoint</label><div><AgentEmblem identity={identity} size="sm" /><p><b>{identity.endpointAlias}</b><span>{identity.servedModel}</span><small>{identity.hfRepo || identity.source}</small></p></div></section>
     <section><label>{settings.theme === 'rome' ? 'Authority' : 'Tools'}</label><div className="tool-loadout">{tools.length ? tools.map((tool) => <span key={tool}><ToolIcon name={tool} />{tool}</span>) : <em>No role tool allowlist</em>}</div></section>
     <section><label>Working with</label><div className="collaboration-row">{collaborators.length ? collaborators.map((item) => <span key={item.id}><i className={`state-${item.state}`} />{item.name}</span>) : <em>No active links</em>}</div></section>
     <section className="agent-prompt"><label>Prompt</label><p>{prompt || 'No prompt recorded for this session.'}</p>{spawned.systemPrompt && spawned.systemPrompt !== prompt && <details><summary>System instructions</summary><p>{spawned.systemPrompt}</p></details>}</section>
     <section className="conversation-ledger"><label>Conversation</label>{messages.length ? messages.map((event) => <div key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{conversationText(event)}</p></div>) : <em>No conversation reported yet.</em>}</section>
     <section className="activity-ledger"><label>Current activity</label>{recent.length ? recent.map((event) => <div key={event.id ?? event.seq}><time>{new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><p>{event.data?.summary ?? event.data?.text ?? event.kind.replaceAll('.', ' / ')}</p></div>) : <em>No tool activity reported.</em>}</section>
+    <section className="inspector-controls"><label>Talk / control</label><AgentControls session={session} onOpen={onOpen} /></section>
   </aside>;
 }
 
@@ -473,26 +452,13 @@ function FieldSettings({ settings, setSettings, selected, config, onClose }) {
   }
   return <aside className="field-side-panel settings-panel" onClick={(event) => event.stopPropagation()}><header><div><span>FIELD</span><h2>Settings</h2></div><button type="button" onClick={onClose} aria-label="Close settings"><X /></button></header><nav>{['world', 'identity', 'models'].map((item) => <button type="button" key={item} className={tab === item ? 'on' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="settings-scroll">
     {tab === 'world' && <><section><label>Theme</label><p className="settings-help">Atlas is the parallel agent board. Rome is the operations map.</p><ChoiceGroup value={settings.theme} options={[{ value: 'atlas', label: 'Atlas' }, { value: 'rome', label: 'Rome' }]} onChange={(theme) => patchSettings({ theme })} /></section><section><label>World density</label><ChoiceGroup value={settings.density} options={[{ value: 'quiet', label: 'Quiet' }, { value: 'balanced', label: 'Balanced' }, { value: 'dense', label: 'Dense' }]} onChange={(density) => patchSettings({ density })} /></section><section className="settings-toggle"><div><label>World motion</label><p>Animate active routes and status pulses.</p></div><button type="button" className={settings.motion ? 'on' : ''} onClick={() => patchSettings({ motion: !settings.motion })}><i /></button></section></>}
-    {tab === 'identity' && <><section><label>Agent identity</label><ChoiceGroup value={settings.identityMode} options={[{ value: 'portrait', label: 'Portrait' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(identityMode) => patchSettings({ identityMode })} /></section><section><label>Map markers</label><ChoiceGroup value={settings.markerMode} options={[{ value: 'person', label: 'Person' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(markerMode) => patchSettings({ markerMode })} /></section><section><label>Emblem source</label><select value={settings.emblemSource} onChange={(event) => patchSettings({ emblemSource: event.target.value })}><option value="auto">Auto</option><option value="huggingface">Hugging Face</option><option value="endpoint">Endpoint</option><option value="upload">Upload</option><option value="initials">Initials</option></select><small>HF avatar › endpoint › upload › initials</small></section>{selected ? <section className="agent-settings"><label>Selected agent</label><h3>{override.displayName || selected.name}</h3><div className="settings-field"><span>Display name</span><input value={override.displayName ?? selected.name ?? ''} onChange={(event) => patchAgent({ displayName: event.target.value })} /></div><div className="settings-field"><span>Endpoint alias</span><input value={override.endpointAlias ?? ''} placeholder="Use endpoint name" onChange={(event) => patchAgent({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={override.hfRepo ?? ''} placeholder="owner/model" onChange={(event) => patchAgent({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Icon URL</span><input value={override.iconUrl ?? ''} placeholder="https://…" onChange={(event) => patchAgent({ iconUrl: event.target.value, iconDataUrl: '' })} /></div><label className="upload-control"><Upload />Upload icon<input type="file" accept="image/*" onChange={upload} /></label></section> : <section><p>Select an agent to edit its persistent name and emblem.</p></section>}{selected && <section><label>Tool authority</label><p className="settings-help">A configured agent may receive a subset of its role&apos;s real allowlist. Changes apply on its next deployment.</p><div className="authority-grid">{roleTools.map((tool) => <button type="button" key={tool} className={selectedTools.includes(tool) ? 'on' : ''} onClick={() => toggleTool(tool)}><ToolIcon name={tool} />{tool}<Check /></button>)}</div>{!configuredAgent && <small>Simulation and ad-hoc sessions cannot persist tool changes.</small>}</section>}</>}
+    {tab === 'identity' && <><section><label>Agent identity</label><ChoiceGroup value={settings.identityMode} options={[{ value: 'portrait', label: 'Portrait' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(identityMode) => patchSettings({ identityMode })} /></section><section><label>Map markers</label><ChoiceGroup value={settings.markerMode} options={[{ value: 'person', label: 'Person' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(markerMode) => patchSettings({ markerMode })} /></section><section><label>Emblem source</label><select value={settings.emblemSource} onChange={(event) => patchSettings({ emblemSource: event.target.value })}><option value="auto">Auto</option><option value="huggingface">Hugging Face</option><option value="endpoint">Endpoint</option><option value="upload">Upload</option><option value="initials">Initials</option></select><small>HF avatar › endpoint › upload › initials</small></section>{selected ? <section className="agent-settings"><label>Selected agent</label><h3>{override.displayName || selected.name}</h3><div className="settings-field"><span>Display name</span><input value={override.displayName ?? selected.name ?? ''} onChange={(event) => patchAgent({ displayName: event.target.value })} /></div><div className="settings-field"><span>Endpoint alias</span><input value={override.endpointAlias ?? ''} placeholder="Use endpoint name" onChange={(event) => patchAgent({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={override.hfRepo ?? ''} placeholder="owner/model" onChange={(event) => patchAgent({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Icon URL</span><input value={override.iconUrl ?? ''} placeholder="https://…" onChange={(event) => patchAgent({ iconUrl: event.target.value, iconDataUrl: '' })} /></div><label className="upload-control"><Upload />Upload icon<input type="file" accept="image/*" onChange={upload} /></label></section> : <section><p>Select an agent to edit its persistent name and emblem.</p></section>}{selected && <section><label>Tool authority</label><p className="settings-help">A configured agent may receive a subset of its role&apos;s real allowlist. Changes apply on its next deployment.</p><div className="authority-grid">{roleTools.map((tool) => <button type="button" key={tool} className={selectedTools.includes(tool) ? 'on' : ''} onClick={() => toggleTool(tool)}><ToolIcon name={tool} />{tool}<Check /></button>)}</div>{!configuredAgent && <small>Ad-hoc sessions cannot persist tool changes.</small>}</section>}</>}
     {tab === 'models' && <section className="model-registry-card"><label>Distillation teacher</label><h3>OX Alpha is GLM 5.3 Flash</h3><p>OX Alpha is the endpoint alias. It serves GLM 5.3 Flash and supplies teacher traces for the Ornith student.</p><div className="settings-field"><span>Teacher endpoint</span><input value={oxAlpha.endpointAlias} onChange={(event) => patchOx({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>Model served</span><input value={oxAlpha.servedModel} onChange={(event) => patchOx({ servedModel: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={oxAlpha.hfRepo} onChange={(event) => patchOx({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Student target</span><input value={oxAlpha.studentTarget} onChange={(event) => patchOx({ studentTarget: event.target.value })} /></div><div className="settings-toggle"><div><label>Collect teacher traces</label><p>Mark OX Alpha traces as distillation source data.</p></div><button type="button" className={oxAlpha.collectTeacherTraces ? 'on' : ''} onClick={() => patchOx({ collectTeacherTraces: !oxAlpha.collectTeacherTraces })}><i /></button></div></section>}
   </div><footer><button type="button" className="restore" onClick={() => setSettings(normalizeFieldSettings(DEFAULT_FIELD_SETTINGS))}>Restore defaults</button><span>{message}</span><button type="button" className="save" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save settings'}</button></footer></aside>;
 }
 
-function RehearsalPanel({ simulation, workspaces, capitalId, theme, busy, error, onRun, onStop, onClose }) {
-  useModalFocus(onClose, 'rehearsal-title');
-  const [workspaceId, setWorkspaceId] = useState(capitalId || workspaces[0]?.id || '');
-  const [speed, setSpeed] = useState(2);
-  const active = simulation.active;
-  const scenario = simulation.scenarios?.[0];
-  return <div className="rehearsal-veil" onClick={(event) => event.stopPropagation()}><section className="rehearsal-panel" role="dialog" aria-modal="true" aria-labelledby="rehearsal-title"><header><div><span>{theme === 'rome' ? 'FIELD EXERCISE' : 'WORLD REHEARSAL'}</span><h2 id="rehearsal-title">Watch a codebase come alive</h2></div><button type="button" onClick={onClose} aria-label="Close rehearsal"><X /></button></header>{active ? <div className="rehearsal-live-state"><span className="live-orbit"><i /><Sparkles /></span><h3>{theme === 'rome' ? 'The cohort is deployed' : 'Agents are operating'}</h3><p>Twelve synthetic agents are surveying, building, challenging, and verifying the selected codebase. Every movement uses the production event schema inside an isolated rehearsal projection.</p><dl><div><dt>Codebase</dt><dd>{workspaces.find((item) => item.id === active.workspaceId)?.name ?? active.workspaceId}</dd></div><div><dt>Pace</dt><dd>{active.speed}×</dd></div><div><dt>Units</dt><dd>{active.sessionIds?.length ?? 0}</dd></div></dl><button type="button" className="stop-rehearsal" disabled={busy} onClick={onStop}><Square />End rehearsal</button></div> : <><div className="rehearsal-intro"><span className="rehearsal-sigil"><Sparkles /></span><div><h3>{scenario?.name ?? 'Long-horizon operations cycle'}</h3><p>{scenario?.description ?? 'Agents fan out across a codebase, coordinate through an incident, verify the work, and leave durable growth behind.'}</p></div></div><label className="rehearsal-field"><span>Codebase / capital</span><select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label><div className="rehearsal-field"><span>Pace</span><div className="pace-choice">{[1, 2, 4].map((value) => <button type="button" key={value} className={speed === value ? 'on' : ''} onClick={() => setSpeed(value)}>{value}×<small>{value === 1 ? 'observe' : value === 2 ? 'lively' : 'rapid'}</small></button>)}</div></div><div className="rehearsal-safety"><ShieldCheck /><p><b>Projection only.</b> No provider calls, commands, file writes, or model cost. Synthetic events use the production event schema but remain outside production state, metrics, and traces.</p></div>{error && <p className="rehearsal-error">{error}</p>}<button type="button" className="begin-rehearsal" disabled={busy || !workspaceId || !simulation.enabled} onClick={() => onRun(workspaceId, speed)}><Play />{busy ? 'Mustering…' : theme === 'rome' ? 'Muster the cohort' : 'Begin rehearsal'}</button>{!simulation.enabled && <small className="rehearsal-disabled">Rehearsals are disabled on this Field server.</small>}</>}</section></div>;
-}
-
-function LegacyAgentRoster({ sessions, identities, settings, selectedId, onSelect }) {
-  return <section className={`agent-roster${sessions.length ? '' : ' empty'}`} onClick={(event) => event.stopPropagation()}><header><i /><span>{settings.theme === 'rome' ? 'SENATE' : 'AGENTS'}</span><i /></header><div>{sessions.length ? sessions.slice(0, 8).map((session) => { const identity = identities.get(session.id); return <button type="button" key={session.id} className={`${session.id === selectedId ? 'selected' : ''} state-${session.state}`} onClick={() => onSelect(session.id)}><IdentityMark session={session} identity={identity} settings={settings} selected={session.id === selectedId} size="lg" /><b>{identity.displayName}</b><small>{identity.endpointAlias}</small><span>{[0, 1, 2, 3].map((n) => <i key={n} className={n < Math.max(1, Math.round(((session.progress?.done ?? 1) / Math.max(1, session.progress?.total ?? 4)) * 4)) ? 'on' : ''} />)}</span></button>; }) : <p>Quiet · muster when work begins</p>}</div></section>;
-}
-
-function AgentRoster({ sessions, identities, settings, selectedId, onSelect }) {
-  return <section className={`agent-roster${sessions.length ? '' : ' empty'}`} onClick={(event) => event.stopPropagation()} aria-label={settings.theme === 'rome' ? 'Senate roster' : 'Agent roster'}>
+function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onStart }) {
+  return <section className={`agent-roster${sessions.length ? '' : ' quiet'}`} onClick={(event) => event.stopPropagation()} aria-label={settings.theme === 'rome' ? 'Senate roster' : 'Agent roster'}>
     <header><i /><span>{settings.theme === 'rome' ? 'SENATE' : 'AGENTS'}{sessions.length ? ` · ${sessions.length}` : ''}</span><i /></header>
     <div>{sessions.length ? sessions.map((session) => {
       const identity = identities.get(session.id);
@@ -509,7 +475,7 @@ function AgentRoster({ sessions, identities, settings, selectedId, onSelect }) {
         <b>{identity.displayName}</b><small>{identity.endpointAlias}</small>
         <span role="img" aria-label={`${pct}% complete`}>{[0, 1, 2, 3].map((n) => <i key={n} className={n < Math.max(1, Math.round((pct / 100) * 4)) ? 'on' : ''} />)}</span>
       </button>;
-    }) : <p>Quiet · muster when work begins</p>}</div>
+    }) : <p className="roster-empty">No agents yet.<button type="button" className="btn sm primary" onClick={(e) => onStart?.(e)}><Plus aria-hidden="true" />Start an agent</button></p>}</div>
   </section>;
 }
 
@@ -522,20 +488,22 @@ export default function TheaterMode() {
   const st = useField();
   const selectedId = st.activeSessionId;
   const [settings, setSettings] = useState(loadFieldSettings), [selectedRegion, setSelectedRegion] = useState(null), [settingsOpen, setSettingsOpen] = useState(false), [choosingCapital, setChoosingCapital] = useState(false), [pendingCapital, setPendingCapital] = useState(false), [capitalError, setCapitalError] = useState(''), [trace, setTrace] = useState([]);
-  const [rehearsalOpen, setRehearsalOpen] = useState(false), [rehearsalBusy, setRehearsalBusy] = useState(false), [rehearsalError, setRehearsalError] = useState('');
-  const [simulation, setSimulation] = useState({ enabled: false, scenarios: [], active: null });
+  const [starter, setStarter] = useState(null);
   const [citiesOpen, setCitiesOpen] = useState(false);
   const [powerOpen, setPowerOpen] = useState(false);
   const reconcileRef = useRef('');
-  const view = useMemo(() => rehearsalSnapshot(st.snap, simulation.active), [st.snap, simulation.active]);
+  const defaultCapitalRef = useRef('');
+  const view = st.snap;
   const world = st.snap.world ?? { capitalWorkspaceId: null, assignments: {}, revision: 0 };
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
-  useEffect(() => { api.simulations().then(setSimulation).catch(() => setSimulation({ enabled: false, scenarios: [], active: null })); }, []);
-  const latestEvent = st.events.at(-1);
+  // Anchor the world on the first project by default; the Capital button re-opens the chooser.
   useEffect(() => {
-    if (!latestEvent?.kind?.startsWith('simulation.')) return;
-    api.simulations().then(setSimulation).catch(() => {});
-  }, [latestEvent?.seq]);
+    if (world.capitalWorkspaceId || !workspaces.length || !st.connected) return;
+    const first = workspaces[0].id;
+    if (defaultCapitalRef.current === first) return;
+    defaultCapitalRef.current = first;
+    api.selectCapital(first).catch((error) => { defaultCapitalRef.current = ''; setCapitalError(error.message); });
+  }, [world.capitalWorkspaceId, workspaces, st.connected]);
   const clusters = useMemo(() => infrastructureClusters(view, world.capitalWorkspaceId), [view, world.capitalWorkspaceId]);
   const clusterByKey = useMemo(() => new Map(clusters.map((item) => [item.clusterKey, item])), [clusters]);
   const positions = useMemo(() => livingWorldPositions(clusters, world.capitalWorkspaceId), [clusters, world.capitalWorkspaceId]);
@@ -572,18 +540,20 @@ export default function TheaterMode() {
   const selectedRole = selected ? st.config?.roles?.find((item) => item.id === selected.role) : null;
   const selectedAgent = selected ? st.config?.agents?.find((item) => item.id === selected.agentId) : null;
   async function chooseCapital(workspaceId) { setPendingCapital(true); setCapitalError(''); try { await api.selectCapital(workspaceId); await api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId: ws }) => ({ clusterKey, label, kind, workspaceId: ws }))); reconcileRef.current = ''; setChoosingCapital(false); } catch (error) { setCapitalError(error.message); } finally { setPendingCapital(false); } }
-  async function runRehearsal(workspaceId, speed) { setRehearsalBusy(true); setRehearsalError(''); try { if (workspaceId !== world.capitalWorkspaceId) { await api.selectCapital(workspaceId); await api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId: ws }) => ({ clusterKey, label, kind, workspaceId: ws }))); reconcileRef.current = ''; } const activeRun = await api.runSimulation('operations-cycle', speed, workspaceId); setSimulation((current) => ({ ...current, active: activeRun })); setRehearsalOpen(false); } catch (error) { setRehearsalError(error.message); } finally { setRehearsalBusy(false); } }
-  async function stopRehearsal() { setRehearsalBusy(true); setRehearsalError(''); try { await api.stopSimulation(); const info = await api.simulations(); setSimulation(info); } catch (error) { setRehearsalError(error.message); } finally { setRehearsalBusy(false); } }
   const themeLabel = settings.theme === 'rome' ? 'ROME' : 'ATLAS';
   if (settings.theme === 'atlas') {
     return <AtlasMode settings={settings} setSettings={setSettings} />;
   }
-  return <div className={`field-world-shell theme-${settings.theme} density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${selected || settingsOpen ? ' panel-open' : ''}${selected ? ' agent-selected' : ''}${sessions.length ? '' : ' senate-empty'}${simulation.active ? ' rehearsal-active' : ''}`} onClick={() => { clearActiveAgent(); setSelectedRegion(null); }}>
-    {simulation.active && <div className="rehearsal-watermark" role="status"><Sparkles /><span><b>Rehearsal · synthetic events</b>Production state and metrics are isolated</span></div>}
+  const startAgent = (event, workspaceId = world.capitalWorkspaceId || workspaces[0]?.id) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
+    if (!workspace) return;
+    setStarter({ workspace, screen: { x: event?.clientX ?? window.innerWidth / 2 - 140, y: event?.clientY ?? 120 } });
+  };
+  return <div className={`field-world-shell theme-${settings.theme} density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${selected || settingsOpen ? ' panel-open' : ''}${selected ? ' agent-selected' : ''}${sessions.length ? '' : ' senate-empty'}`} onClick={() => { clearActiveAgent(); setSelectedRegion(null); }}>
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
-      <div><span>{simulation.active ? 'SYNTHETIC REHEARSAL' : settings.theme === 'rome' ? 'IMPERIUM OPERIS' : 'LIVING OPERATIONS'}</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : 'Choose a capital project'}</h1></div>
-      <div className="field-status" aria-live="polite" aria-atomic="true"><span><b>{active.length}</b> active</span><span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> attention</span><span><b>{clusters.filter((item) => (item.baseKind ?? item.kind) === 'workfront').length}</b> fronts</span></div>
-      <div className="field-quick-settings"><button type="button" onClick={() => setSettings((current) => ({ ...current, theme: current.theme === 'rome' ? 'atlas' : 'rome' }))}>Theme <b>{themeLabel}</b></button><button type="button" onClick={() => setSettings((current) => ({ ...current, identityMode: current.identityMode === 'both' ? 'model' : current.identityMode === 'model' ? 'portrait' : 'both' }))}>Identity <b>{settings.identityMode}</b></button><button type="button" className={simulation.active ? 'rehearsal-live' : ''} onClick={() => { setRehearsalOpen(true); setRehearsalError(''); }}><Sparkles />{settings.theme === 'rome' ? 'Muster' : 'Rehearse'}{simulation.active && <b>LIVE</b>}</button><button type="button" onClick={() => setPowerOpen(true)}><RadioTower />Models</button><button type="button" onClick={() => setCitiesOpen(true)}><Landmark />Cities</button><button type="button" onClick={() => setChoosingCapital(true)}>Capital</button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
+      <div><span>{settings.theme === 'rome' ? 'IMPERIUM OPERIS' : 'LIVING OPERATIONS'}</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : workspaces.length ? 'Anchoring the world…' : 'No project open'}</h1></div>
+      <div className="field-status" aria-live="polite" aria-atomic="true"><span><b>{active.length}</b> active</span><span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> {attention.length === 1 ? 'needs you' : 'need you'}</span><span><b>{clusters.filter((item) => (item.baseKind ?? item.kind) === 'workfront').length}</b> fronts</span><span className="mono"><b>${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</b> spent</span></div>
+      <div className="field-quick-settings"><button type="button" className="primary" disabled={!workspaces.length} onClick={(event) => startAgent(event)} aria-label="Start an agent"><Plus /><span>Start an agent</span></button><button type="button" onClick={() => setSettings((current) => ({ ...current, theme: current.theme === 'rome' ? 'atlas' : 'rome' }))}>Theme <b>{themeLabel}</b></button><button type="button" onClick={() => setPowerOpen(true)}><RadioTower />Models</button><button type="button" onClick={() => setCitiesOpen(true)}><Landmark />Cities</button><button type="button" onClick={() => setChoosingCapital(true)}>Capital</button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
     </header>
     <main className="field-world-canvas living-world">
       <div className="world-map-base" aria-hidden="true" /><div className="world-contours" aria-hidden="true" />
@@ -592,13 +562,15 @@ export default function TheaterMode() {
       {positions.map((position) => <Region key={position.id} position={position} cluster={clusterByRegion.get(position.id)} agents={agentsByRegion.get(position.id) ?? []} isCapital={position.clusterKey === `workspace:${world.capitalWorkspaceId}`} selectedId={selectedId} relatedIds={collaboratorIds} identities={identities} settings={settings} onAgent={(id) => { selectAgent(id); setSettingsOpen(false); }} onRegion={(regionId) => { const cluster = clusterByRegion.get(regionId); if ((cluster?.baseKind ?? cluster?.kind) === 'project') openCity(cluster.workspaceId); else setSelectedRegion(regionId); }} focused={selectedRegion === position.id} />)}
       <MaturityCard cluster={selectedCluster} agents={selectedRegionAgents} position={positionByKey.get(selectedRegion)} onClose={() => setSelectedRegion(null)} />
     </main>
-    <AgentRoster sessions={sessions} identities={identities} settings={settings} selectedId={selectedId} onSelect={(id) => { openSenate(id); setSettingsOpen(false); }} />
-    {!settingsOpen && <AgentInspector session={selected} identity={selected ? identities.get(selected.id) : null} settings={settings} role={selectedRole} agent={selectedAgent} trace={trace} collaborators={collaborators} onClose={clearActiveAgent} onSettings={() => setSettingsOpen(true)} />}
-    {trace.length >= 2000 && <div className="rehearsal-watermark" role="status">Showing the first 2,000 events. Open Traces to load the rest.</div>}
+    <AgentRoster sessions={sessions} identities={identities} settings={settings} selectedId={selectedId} onSelect={(id) => { selectAgent(id); setSettingsOpen(false); }} onStart={(event) => startAgent(event)} />
+    {!settingsOpen && <AgentInspector session={selected} identity={selected ? identities.get(selected.id) : null} settings={settings} role={selectedRole} agent={selectedAgent} trace={trace} collaborators={collaborators} onClose={clearActiveAgent} onSettings={() => setSettingsOpen(true)} onOpen={() => openSenate(selected.id)} />}
+    {trace.length >= 2000 && <div className="world-notice" role="status">Showing the first 2,000 events. Open History to load the rest.</div>}
+    {!workspaces.length && <div className="world-notice" role="status">No project is mounted. Add one under <code>workspaces</code> in <code>field/field.yaml</code> and restart Field.</div>}
+    {capitalError && !choosingCapital && <div className="world-notice bad" role="alert">{capitalError}</div>}
     {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} />}
-    {rehearsalOpen && <RehearsalPanel simulation={simulation} workspaces={workspaces} capitalId={world.capitalWorkspaceId} theme={settings.theme} busy={rehearsalBusy} error={rehearsalError} onRun={runRehearsal} onStop={stopRehearsal} onClose={() => setRehearsalOpen(false)} />}
     {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
     {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} />}
-    {(!world.capitalWorkspaceId || choosingCapital) && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} theme={settings.theme} />}
+    {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} />}
+    {choosingCapital && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} theme={settings.theme} />}
   </div>;
 }

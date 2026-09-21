@@ -57,7 +57,7 @@ export default function RoutinesMode() {
       {err && <div className="ctx-err" style={{ margin: '0 0 12px', maxWidth: 900 }}>{err}</div>}
 
       {routines.length === 0 && (
-        <div className="empty"><b>No routines defined.</b>Add a YAML file under field/routines/.</div>
+        <div className="empty"><b>No routines defined.</b>Add a YAML file under <code>field/routines/</code> with a trigger (cron or file change), a role, orders and a budget, then restart Field. It appears here with an enable switch and a Run now button.</div>
       )}
 
       {routines.map((r) => {

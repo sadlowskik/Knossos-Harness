@@ -56,7 +56,7 @@ export default function TracesMode() {
   return (
     <div className="trace-layout">
       <div className="trace-list">
-        {subjects.length === 0 && <div className="empty">Nothing has run yet.</div>}
+        {subjects.length === 0 && <div className="empty"><b>Nothing has run yet.</b>Start an agent from the Board or Map; its full event history lands here.</div>}
         {subjects.map((s) => (
           <button
             key={s.id}
@@ -77,8 +77,8 @@ export default function TracesMode() {
       <div className="trace-main">
         {!subject ? (
           <div className="empty">
-            <b>Pick a session or assignment.</b>
-            Every event it produced is replayable, in order.
+            <b>Pick a session or assignment on the left.</b>
+            Every event it produced is replayable in order: drag the slider to scrub.
           </div>
         ) : (
           <>
@@ -104,7 +104,7 @@ export default function TracesMode() {
               <Stat k="files" v={folded.files.size} />
               <Stat k="cost" v={`$${folded.cost.toFixed(4)}`} />
               <Stat k="approvals" v={`${folded.approved}/${folded.requested}`} />
-              <Stat k="verdict" v={folded.verdict ?? '—'} />
+              <Stat k="verified" v={folded.verified ?? '—'} />
             </div>
 
             <div style={{ flex: '1 1 auto', overflow: 'auto', minHeight: 0 }}>
@@ -137,7 +137,7 @@ function Stat({ k, v }) {
 function fold(events) {
   const out = {
     state: '—', tools: 0, edits: 0, files: new Set(),
-    cost: 0, requested: 0, approved: 0, verdict: null,
+    cost: 0, requested: 0, approved: 0, verified: null,
   };
   for (const e of events) {
     const d = e.data ?? {};
@@ -152,7 +152,7 @@ function fold(events) {
       case 'session.usage': if (typeof d.costUsd === 'number') out.cost = d.costUsd; break;
       case 'permission.requested': out.requested += 1; break;
       case 'permission.decided': if (d.decision === 'allow') out.approved += 1; break;
-      case 'work.verified': out.verdict = d.result; break;
+      case 'work.verified': out.verified = d.result; break;
       case 'session.ended': out.state = d.reason === 'error' ? 'error' : 'ended'; break;
       default: break;
     }

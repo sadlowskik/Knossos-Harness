@@ -77,10 +77,6 @@ export const api = {
   events:        (from = 0, limit = 2000) => request('GET', `/api/events?from=${from}&limit=${limit}`),
   trace:         (subject, from = 0, limit = 2000) => request('GET', `/api/trace?subject=${encodeURIComponent(subject)}&from=${from}&limit=${limit}`),
   campaigns:     () => request('GET', '/api/campaigns'),
-  simulations:   () => request('GET', '/api/simulations'),
-  runSimulation: (scenario = 'operations-cycle', speed = 1, workspaceId = null) =>
-                   request('POST', '/api/simulations/run', { scenario, speed, workspaceId }),
-  stopSimulation:() => request('POST', '/api/simulations/stop'),
   campaignTrace: (campaignId, from = 0, limit = 2000) => request('GET', `/api/campaigns/trace?campaignId=${encodeURIComponent(campaignId)}&from=${from}&limit=${limit}`),
   campaignReplay:(campaignId, seq) => request('GET', `/api/campaigns/replay?campaignId=${encodeURIComponent(campaignId)}&seq=${encodeURIComponent(seq)}`),
   createCampaign:(body) => request('POST', '/api/campaigns/create', body),
