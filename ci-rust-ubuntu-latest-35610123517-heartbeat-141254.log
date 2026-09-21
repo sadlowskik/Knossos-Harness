@@ -1,0 +1,18 @@
+heartbeat 14:12:53 203s
+=== phase test-codegen 14:12:12
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1519        9212          47        5655       14473
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  13061       00:00  150 296720 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld -flavor gnu -plugin /usr/libexec/gcc/x86_64-linux-gnu/
+  12921       00:01 86.6 201748 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name field_server --edition=2021 tests/field_server.rs --error-format=json --json=diag
+   2121       04:30  1.5 135184 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2034       06:46  0.8 135444 /tmp/provjobd265032768
+      1       07:12  0.6 14392 /sbin/init
+/proc/pressure/io: some avg10=0.05 avg60=0.07 avg300=0.49 total=5493931 full avg10=0.05 avg60=0.06 avg300=0.41 total=4767849
+/proc/pressure/cpu: some avg10=0.03 avg60=1.04 avg300=1.81 total=12442526 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 9361536 106428 5738372    0    0     8     4 3031 3372 25  4 72  0  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
