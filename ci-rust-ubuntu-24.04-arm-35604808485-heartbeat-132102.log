@@ -1,0 +1,14 @@
+heartbeat 13:21:02 56s
+=== phase build 13:20:06
+               total        used        free      shared  buff/cache   available
+Mem:           15947        1450       11746          49        3061       14496
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8719       00:01  100 236128 /usr/libexec/gcc/aarch64-linux-gnu/13/cc1 -quiet -imultiarch aarch64-linux-gnu -D SQLITE_CORE -D SQLITE_DEFAULT_FOREIGN_KEYS=1 -D SQLITE_ENABLE_API_ARMOR -D SQLITE_ENAB
+   2050       02:05  3.5 190648 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+      1       03:12  1.7 13580 /sbin/init
+   1849       03:00  1.2 228756 /opt/hca/hosted-compute-agent
+   5518       00:55  0.9 80912 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+[   11.355615] Initializing XFRM netlink socket
+[   11.469674] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.697383] hv_balloon: Max. dynamic memory size: 16384 MB
