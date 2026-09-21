@@ -105,7 +105,10 @@ jobs:
           # Linux keeps incremental codegen and default debuginfo, as the one
           # Linux job that survives this crate's build (conformance) does.
           CARGO_INCREMENTAL: ${{ runner.os == 'Linux' && '1' || '0' }}
-          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '2' || 'line-tables-only' }}
+          # x86: no debuginfo anywhere, to cut the bytes written during test
+          # codegen, which is where the incremental run died.
+          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
+          CARGO_PROFILE_TEST_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
           # Linux: one job, low priority. Every Linux VM (x86 and arm, 22.04 and
           # 24.04) has died while two rustc processes were in codegen on the
           # knossos crate with memory to spare; if a starved runner agent is
@@ -157,6 +160,10 @@ jobs:
                 grep '=== phase' "$LOG" 2>/dev/null | tail -1
                 free -m 2>/dev/null
                 ps -eo pid,etime,pcpu,rss,args --sort=-pcpu 2>/dev/null | head -6 | cut -c1-200
+                for f in /proc/pressure/io /proc/pressure/cpu /proc/pressure/memory; do echo "$f: $(tr '
+' ' ' < $f 2>/dev/null)"; done
+                vmstat 1 2 2>/dev/null | tail -1
+                ps -eo stat,pid,args 2>/dev/null | awk '$1 ~ /^D/' | head -5 | cut -c1-120
                 sudo -n dmesg 2>/dev/null | tail -3
               } > ci-rust-heartbeat.log 2>&1 || true
               GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat-$(date -u +%H%M%S).log" >/dev/null 2>&1 || true
