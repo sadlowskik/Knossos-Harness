@@ -1,0 +1,19 @@
+heartbeat 14:36:23 0s
+mem used MB, last 15 s: 1054 peak: 1054
+=== phase build 14:36:23
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1054       10970          48        4359       14935
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   5876       00:00 33.3 21776 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   2087       01:24  6.2 137624 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       01:28  6.1 131412 /tmp/provjobd354528372
+      1       01:54  2.7 14408 /sbin/init
+   2066       01:27  1.7 97692 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.03 avg60=1.46 avg300=1.02 total=4401808 full avg10=0.03 avg60=1.30 avg300=0.90 total=3901600
+/proc/pressure/cpu: some avg10=6.97 avg60=6.87 avg300=2.68 total=10092300 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 11172180 103512 4367368    0    0     0 32016 3748 3617 22  7 71  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
