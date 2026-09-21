@@ -97,6 +97,9 @@ jobs:
         run: |
           sudo -n mkdir -p /mnt/knossos-target && sudo -n chown "$(id -u)" /mnt/knossos-target && export CARGO_TARGET_DIR=/mnt/knossos-target
           df -h /mnt || true
+          # The treatment for a codegen memory spike: one LLVM module per
+          # rustc, one rustc at a time.
+          export RUSTFLAGS="-C codegen-units=1" CARGO_BUILD_JOBS=1
           cargo test --all-targets --locked
       - name: Test
         if: matrix.os != 'ubuntu-24.04-arm'
@@ -176,10 +179,16 @@ jobs:
           # An independent heartbeat, so a stall in the main loop (a hung git
           # push in the partial publish, say) can be told apart from a runner
           # that died: heartbeats that stop mean the machine stopped.
+          # One-second memory samples, so a spike between heartbeats still
+          # shows up as the peak of the last beat.
+          : > mem.samples
+          ( while true; do free -m | awk 'NR==2{print $3}' >> mem.samples; sleep 1; done ) &
+          sampler=$!
           (
             while true; do
               {
                 echo "heartbeat $(date -u +%H:%M:%S) ${SECONDS}s"
+                echo "mem used MB, last 15 s: $(tail -15 mem.samples | paste -sd' ') peak: $(sort -n mem.samples | tail -1)"
                 grep '=== phase' "$LOG" 2>/dev/null | tail -1
                 free -m 2>/dev/null
                 ps -eo pid,etime,pcpu,rss,args --sort=-pcpu 2>/dev/null | head -6 | cut -c1-200
@@ -231,7 +240,7 @@ jobs:
             sleep 5
           done
           wait "$pid"; status=$?
-          kill "$heartbeat" 2>/dev/null || true
+          kill "$heartbeat" "$sampler" 2>/dev/null || true
           cat "$LOG"
           exit "$status"
       - name: Release build
