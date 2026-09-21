@@ -1,0 +1,19 @@
+heartbeat 14:39:47 204s
+mem used MB, last 15 s: 1899 1909 1894 1886 1889 1886 1881 1874 1175 1214 1266 1376 1437 1484 1502 peak: 1925
+=== phase test-codegen 14:39:12
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1468        9096          49        5820       14521
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  13072       00:00 50.0 188668 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name field_acp --edition=2021 tests/field_acp.rs --error-format=json --json=diagnostic
+  12449       00:05  4.5 27056 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -collect-logs
+   2087       04:48  2.0 141640 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       04:52  2.0 138004 /tmp/provjobd354528372
+      1       05:18  1.0 14408 /sbin/init
+/proc/pressure/io: some avg10=0.29 avg60=0.10 avg300=0.50 total=4529150 full avg10=0.00 avg60=0.03 avg300=0.43 total=3972518
+/proc/pressure/cpu: some avg10=14.23 avg60=3.16 avg300=1.96 total=12750007 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 9309028 106516 5869604    0    0     0     0 3244 3866 23  6 71  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
