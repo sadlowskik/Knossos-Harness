@@ -1,0 +1,290 @@
+=== phase build 13:20:06
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m find-msvc-tools v0.1.9
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m pkg-config v0.3.33
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m syn v3.0.3
+[1m[92m   Compiling[0m zerofrom-derive v0.1.7
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m yoke-derive v0.8.2
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m zerovec-derive v0.11.3
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m tokio-macros v2.7.1
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m displaydoc v0.2.6
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m dunce v1.0.5
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m fs_extra v1.3.0
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m aws-lc-rs v1.17.3
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m futures-macro v0.3.33
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m indexmap v2.14.0
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m regex-automata v0.4.16
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m tokio-util v0.7.19
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m tree-sitter-language v0.1.7
+[1m[92m   Compiling[0m thiserror v2.0.19
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m rustls v0.23.42
+[1m[92m   Compiling[0m try-lock v0.2.5
+[1m[92m   Compiling[0m want v0.3.1
+[1m[92m   Compiling[0m h2 v0.4.15
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m icu_properties v2.2.0
+[1m[92m   Compiling[0m icu_normalizer v2.2.0
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m thiserror-impl v2.0.19
+[1m[92m   Compiling[0m futures-channel v0.3.33
+[1m[92m   Compiling[0m sync_wrapper v1.0.2
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m crossbeam-utils v0.8.22
+[1m[92m   Compiling[0m subtle v2.6.1
+[1m[92m   Compiling[0m httpdate v1.0.3
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m tower-layer v0.3.3
+[1m[92m   Compiling[0m hyper v1.11.0
+[1m[92m   Compiling[0m idna_adapter v1.2.2
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m crossbeam-epoch v0.9.20
+[1m[92m   Compiling[0m inotify-sys v0.1.8
+[1m[92m   Compiling[0m vcpkg v0.2.15
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m ipnet v2.12.0
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m hyper-util v0.1.20
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m libsqlite3-sys v0.38.2
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m tower v0.5.3
+[1m[92m   Compiling[0m sha1 v0.10.7
+[1m[92m   Compiling[0m http-body-util v0.1.4
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m same-file v1.0.6
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m openssl-probe v0.2.1
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m crossbeam-deque v0.8.7
+[1m[92m   Compiling[0m mime v0.3.17
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m ryu v1.0.23
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m tungstenite v0.29.0
+[1m[92m   Compiling[0m rustls-native-certs v0.8.4
+[1m[92m   Compiling[0m walkdir v2.5.0
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m rustls-webpki v0.103.13
+[1m[92m   Compiling[0m tree-sitter v0.26.11
+[1m[92m   Compiling[0m bstr v1.13.0
+[1m[92m   Compiling[0m enumflags2_derive v0.7.12
+[1m[92m   Compiling[0m tree-sitter-rust v0.24.2
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m tokio-rustls v0.26.4
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m clap_builder v4.6.2
+[1m[92m   Compiling[0m hyper-rustls v0.27.9
+[1m[92m   Compiling[0m rustls-platform-verifier v0.7.0
+[1m[92m   Compiling[0m clap_derive v4.6.4
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m enumflags2 v0.7.12
+[1m[92m   Compiling[0m globset v0.4.19
+[1m[92m   Compiling[0m inotify v0.11.5
+[1m[92m   Compiling[0m tower-http v0.6.11
+[1m[92m   Compiling[0m tokio-tungstenite v0.29.0
+[1m[92m   Compiling[0m serde_urlencoded v0.7.1
+[1m[92m   Compiling[0m axum-core v0.5.6
+[1m[92m   Compiling[0m notify-types v2.1.0
+[1m[92m   Compiling[0m regex v1.13.1
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m serde_path_to_error v0.1.20
+[1m[92m   Compiling[0m hashlink v0.12.2
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m encoding_rs v0.8.35
+[1m[92m   Compiling[0m iana-time-zone v0.1.65
+[1m[92m   Compiling[0m unsafe-libyaml v0.2.11
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m matchit v0.8.4
+[1m[92m   Compiling[0m streaming-iterator v0.1.9
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m rusqlite v0.40.2
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m axum v0.8.9
+[1m[92m   Compiling[0m reqwest v0.13.4
+[1m[92m   Compiling[0m serde_yaml_ng v0.10.0
+[1m[92m   Compiling[0m chrono v0.4.45
+[1m[92m   Compiling[0m notify v8.2.0
+[1m[92m   Compiling[0m ignore v0.4.31
+[1m[92m   Compiling[0m landlock v0.4.7
+[1m[92m   Compiling[0m clap v4.6.4
+[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[92m   Compiling[0m async-trait v0.1.91
+[1m[92m   Compiling[0m fs2 v0.4.3
+[1m[92m   Compiling[0m similar v3.1.1
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs)
+[1m[92m    Finished[0m `dev` profile [unoptimized] target(s) in 1m 34s
+=== phase test-codegen 13:21:41
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m rustix v1.1.4
+[1m[92m   Compiling[0m tower-http v0.6.11
+[1m[92m   Compiling[0m notify-types v2.1.0
+[1m[92m   Compiling[0m inotify v0.11.5
+[1m[92m   Compiling[0m rusqlite v0.40.2
+[1m[92m   Compiling[0m notify v8.2.0
+[1m[92m   Compiling[0m reqwest v0.13.4
+[1m[92m   Compiling[0m linux-raw-sys v0.12.1
+[1m[92m   Compiling[0m fastrand v2.5.0
+[1m[92m   Compiling[0m tempfile v3.27.0
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs)
+=== progress at 13:22:04, 118s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+   9963    9797    1849       00:19 Sl   1186892 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no --test --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values()) -C metadata=eae50be897d1b8b9 -C extra-filename=-0b5b2bce89669f5a --out-dir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps -C strip=debuginfo -L dependency=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps --extern anyhow=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libanyhow-5dbd7777e751b160.rlib --extern async_trait=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libasync_trait-9d5f2902f1b4aaf9.so --extern axum=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libaxum-f1677bc56880633b.rlib --extern base64=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libbase64-c6c3f836afe1acf0.rlib --extern chrono=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libchrono-80aec4f40483b959.rlib --extern clap=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libclap-ba8e2f50b341a23a.rlib --extern fs2=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libfs2-38d4746c01099ff8.rlib --extern futures_util=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libfutures_util-0ceaff98f7b9c63e.rlib --extern getrandom=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libgetrandom-c78f481ad5beba80.rlib --extern ignore=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libignore-c8b216064968731a.rlib --extern landlock=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liblandlock-b8cc42483de0d19d.rlib --extern libc=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liblibc-15d3638c22f785f6.rlib --extern notify=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libnotify-03828cec50649c8b.rlib --extern regex=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libregex-14794ee0d28b5f85.rlib --extern reqwest=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libreqwest-8c476aa32cd22577.rlib --extern rusqlite=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/librusqlite-c21cf7f09dba95d8.rlib --extern serde=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde-78ec398497d9d7e9.rlib --extern serde_json=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_json-dd5e9414cc9a9840.rlib --extern serde_yaml_ng=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_yaml_ng-0c0270dc54a016a6.rlib --extern sha1=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsha1-9ee86055af43a519.rlib --extern sha2=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsha2-e9773c19446e38fc.rlib --extern similar=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsimilar-1418776e08bbbc0e.rlib --extern tempfile=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtempfile-61eacae951ff5399.rlib --extern thiserror=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libthiserror-acd5c86d567c2f12.rlib --extern tokio=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtokio-a020f47445ea2d5f.rlib --extern tokio_tungstenite=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtokio_tungstenite-f19db4a613382441.rlib --extern tracing=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtracing-9eea5da4a5e0bdff.rlib --extern tracing_subscriber=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtracing_subscriber-3e9d4772ac8a8538.rlib --extern tree_sitter=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtree_sitter-339cbdd7fd3ebdfc.rlib --extern tree_sitter_rust=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtree_sitter_rust-df687205297cc8e2.rlib --extern url=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liburl-5feae16e9bd68cf9.rlib -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-5d0987c2f320d9de/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/libsqlite3-sys-9b846f0dde751c11/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/tree-sitter-75e0786dba79a7f6/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/tree-sitter-rust-e99a56c47142e8e2/out
+   9952    9797    1849       00:19 Sl   974164 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values()) -C metadata=061637b62390b908 -C extra-filename=-658346af39fbd3bd --out-dir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps -C strip=debuginfo -L dependency=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps --extern anyhow=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libanyhow-5dbd7777e751b160.rmeta --extern async_trait=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libasync_trait-9d5f2902f1b4aaf9.so --extern axum=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libaxum-f1677bc56880633b.rmeta --extern base64=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libbase64-c6c3f836afe1acf0.rmeta --extern chrono=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libchrono-80aec4f40483b959.rmeta --extern clap=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libclap-ba8e2f50b341a23a.rmeta --extern fs2=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libfs2-38d4746c01099ff8.rmeta --extern futures_util=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libfutures_util-0ceaff98f7b9c63e.rmeta --extern getrandom=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libgetrandom-c78f481ad5beba80.rmeta --extern ignore=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libignore-c8b216064968731a.rmeta --extern landlock=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liblandlock-b8cc42483de0d19d.rmeta --extern libc=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liblibc-15d3638c22f785f6.rmeta --extern notify=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libnotify-03828cec50649c8b.rmeta --extern regex=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libregex-14794ee0d28b5f85.rmeta --extern reqwest=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libreqwest-8c476aa32cd22577.rmeta --extern rusqlite=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/librusqlite-c21cf7f09dba95d8.rmeta --extern serde=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde-78ec398497d9d7e9.rmeta --extern serde_json=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_json-dd5e9414cc9a9840.rmeta --extern serde_yaml_ng=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_yaml_ng-0c0270dc54a016a6.rmeta --extern sha1=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsha1-9ee86055af43a519.rmeta --extern sha2=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsha2-e9773c19446e38fc.rmeta --extern similar=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsimilar-1418776e08bbbc0e.rmeta --extern thiserror=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libthiserror-acd5c86d567c2f12.rmeta --extern tokio=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtokio-a020f47445ea2d5f.rmeta --extern tracing=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtracing-9eea5da4a5e0bdff.rmeta --extern tracing_subscriber=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtracing_subscriber-3e9d4772ac8a8538.rmeta --extern tree_sitter=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtree_sitter-339cbdd7fd3ebdfc.rmeta --extern tree_sitter_rust=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtree_sitter_rust-df687205297cc8e2.rmeta --extern url=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/liburl-5feae16e9bd68cf9.rmeta -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-5d0987c2f320d9de/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/libsqlite3-sys-9b846f0dde751c11/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/tree-sitter-75e0786dba79a7f6/out -L native=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/tree-sitter-rust-e99a56c47142e8e2/out
+   1849       1    1849       04:02 Ssl  228756 /opt/hca/hosted-compute-agent
+   2050    2035    1849       03:07 Sl   190732 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+   1870    1866    1849       04:02 Sl   124600 /tmp/provjobd4178967257
+   2035    1849    1849       03:08 Sl   102756 /home/runner/extracted/bin/Runner.Listener run
+   9797    5513    1849       00:23 Sl   82156 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   1213       1    1213       04:04 Ssl  70184 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    937       1     937       04:05 Ss   49100 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+    219       1     219       04:13 SLsl 42756 /sbin/multipathd -d -s
+   1042       1    1042       04:05 Ssl  41928 /usr/bin/containerd
+   1363     990     990       04:04 Sl   36104 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -run-exthandlers
+    990       1     990       04:05 Ss   29420 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1169     937     937       04:04 S    23876 php-fpm: pool www
+   1170     937     937       04:04 S    23876 php-fpm: pool www
+    934       1     934       04:05 Ss   20032 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+    155       1     155       04:13 S<s  16800 /usr/lib/systemd/systemd-journald
+      1       0       1       04:14 Ss   13580 /sbin/init
+    989       1     989       04:05 Ssl  12808 /usr/libexec/udisks2/udisksd
+    566       1     566       04:12 Ss   12620 /usr/lib/systemd/systemd-resolved
+   1172       1    1172       04:04 Ssl  12096 /usr/sbin/ModemManager
+   1281       1    1281       04:04 Ss   10936 /usr/lib/systemd/systemd --user
+    974       1     974       04:05 Ss    9020 /usr/lib/systemd/systemd-logind
+    722       1     722       04:09 Ss    8952 /usr/lib/systemd/systemd-networkd
+    226       1     226       04:13 Ss    8088 /usr/lib/systemd/systemd-udevd
+    941       1     941       04:05 Ssl   7528 /usr/lib/polkit-1/polkitd --no-debug
+   1866    1849    1849       04:02 S     5896 sudo -n PROVJOBD_E2E=1 /tmp/provjobd4178967257
+   1001       1    1001       04:05 Ssl   5324 /usr/sbin/rsyslogd -n -iNONE
+    573       1     573       04:12 Ss    4756 /usr/sbin/haveged --Foreground --verbose=1
+    929       1     929       04:05 Ss    4756 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+  10052    5512    1849       00:00 R     3832 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   1311    1281    1281       04:04 S     3436 (sd-pam)
+   5512    2050    1849       01:57 S     3208 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/f729d5c5-af36-43c9-a63b-b104e9ac7bb6.sh
+   1092       1    1089       04:05 S     3188 /usr/sbin/chronyd -F 1
+    398       1     398       04:13 Ss    2552 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+   1027       1    1027       04:05 Ss    2540 /usr/sbin/cron -f -P
+   5514    5512    1849       01:57 S     2336 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/f729d5c5-af36-43c9-a63b-b104e9ac7bb6.sh
+   5513    5512    1849       01:57 S     2240 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/f729d5c5-af36-43c9-a63b-b104e9ac7bb6.sh
+   1174       1    1174       04:04 Ss+   1816 /sbin/agetty -o -p -- \u --keep-baud 115200,57600,38400,9600 - vt220
+               total        used        free      shared  buff/cache   available
+Mem:           15947        2982        9730          49        3546       12965
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   38G  107G  27% /
+/dev/root       145G   38G  107G  27% /
+[    2.342006] mlx5_core f4cb:00:02.0: firmware version: 16.30.5034
+[    2.452344] mlx5_core f4cb:00:02.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+[    2.523700] hv_netvsc 000d3aa6-442a-000d-3aa6-442a000d3aa6 eth0: VF registering: eth1
+[    2.523731] mlx5_core f4cb:00:02.0 eth1: joined to eth0
+[    2.530019] mlx5_core f4cb:00:02.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(256) RxCqeCmprss(0 basic)
+[    2.544700] mlx5_core f4cb:00:02.0 enP62667s1: renamed from eth1
+[    2.559205] MACsec IEEE 802.1AE
+[    2.878777] /dev/sr0: Can't lookup blockdev
+[    2.949008] mlx5_core f4cb:00:02.0 enP62667s1: Link up
+[    2.977767] hv_netvsc 000d3aa6-442a-000d-3aa6-442a000d3aa6 eth0: Data path switched to VF: enP62667s1
+[    2.977986] mlx5_core f4cb:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[    2.989610] 8021q: 802.1Q VLAN Support v1.8
+[    4.985102] hv_netvsc 000d3aa6-442a-000d-3aa6-442a000d3aa6 eth0: Data path switched from VF: enP62667s1
+[    5.005937] mlx5_core f4cb:00:02.0 mlx5_0: Port: 1 Link DOWN
+[    5.538810] mlx5_core f4cb:00:02.0 enP62667s1: Link up
+[    5.554652] hv_netvsc 000d3aa6-442a-000d-3aa6-442a000d3aa6 eth0: Data path switched to VF: enP62667s1
+[    5.555286] mlx5_core f4cb:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[    8.128581] EXT4-fs (sda1): resizing filesystem from 19398395 to 39059195 blocks
+[    9.049567] EXT4-fs (sda1): resized filesystem to 39059195
+[   10.108648] kauditd_printk_skb: 112 callbacks suppressed
+[   10.108662] audit: type=1400 audit(1789996678.984:123): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=972 comm="apparmor_parser"
+[   10.253912] evm: overlay not supported
+[   10.410821] loop0: detected capacity change from 0 to 8
+[   10.541632] audit: type=1400 audit(1789996679.422:124): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1166 comm="apparmor_parser"
+[   10.843460] systemd-journald[155]: /var/log/journal/eea7dc47ddfa4ee4b3d22011c5f7cb92/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   10.911753] audit: type=1400 audit(1789996679.793:125): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1409 comm="apparmor_parser"
+[   10.993917] Adding 3145724k swap on /swapfile.  Priority:-2 extents:81 across:22413308k 
+[   11.355615] Initializing XFRM netlink socket
+[   11.469674] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.697383] hv_balloon: Max. dynamic memory size: 16384 MB
