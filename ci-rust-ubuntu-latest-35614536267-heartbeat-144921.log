@@ -1,0 +1,18 @@
+heartbeat 14:49:20 20s
+mem used MB, last 15 s: 1299 1299 1299 1301 1279 1234 1287 1266 1241 1214 1197 1178 1171 1298 1291 peak: 1301
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1283        9371          49        5727       14705
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   1280       03:01  6.5 90232 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+   2167       01:42  4.2 209608 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2110       02:48  1.9 138892 /tmp/provjobd3322121197
+      1       03:11  1.3 14316 /sbin/init
+   2147       01:44  1.1 97840 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=11.01 avg60=12.94 avg300=6.08 total=25821309 full avg10=10.88 avg60=12.09 avg300=5.64 total=24014790
+/proc/pressure/cpu: some avg10=4.27 avg60=4.14 avg300=1.86 total=7861262 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 5  0      0 9602148 131332 5737216    0    0   260 177644 3465 4916  1  1 91  8  0  0
+[   11.349962] Initializing XFRM netlink socket
+[   11.527561] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.668834] hv_balloon: Max. dynamic memory size: 16384 MB
