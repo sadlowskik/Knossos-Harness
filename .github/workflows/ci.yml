@@ -75,6 +75,15 @@ jobs:
         # passing it vacuously. Windows has no such jail and runs `prefer`.
         env:
           KNOSSOS_CONFINE: ${{ runner.os == 'Windows' && 'prefer' || 'require' }}
+          # The ubuntu runner has 7 GB; linking every test binary of
+          # --all-targets in parallel with full debuginfo has driven it into
+          # swap until the job cap fired with no log, on about every other
+          # run since run 19, while the in-step deadline loop never even got
+          # to tick. Fewer parallel jobs there, no incremental artefacts,
+          # line tables only.
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
@@ -101,6 +110,7 @@ jobs:
               {
                 echo "=== cargo test still running after 25 minutes; processes alive:"
                 ps -eo pid,ppid,pgid,etime,stat,args 2>/dev/null || ps -ef || true
+                free -m 2>/dev/null || true
                 echo "=== tests that never reported (compare against a green run)"
               } >> "$LOG"
               kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
