@@ -1,0 +1,158 @@
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m find-msvc-tools v0.1.9
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m pkg-config v0.3.33
+[1m[92m   Compiling[0m syn v3.0.3
+[1m[92m   Compiling[0m zerofrom-derive v0.1.7
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m yoke-derive v0.8.2
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m zerovec-derive v0.11.3
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m tokio-macros v2.7.1
+[1m[92m   Compiling[0m displaydoc v0.2.6
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m dunce v1.0.5
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m fs_extra v1.3.0
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m aws-lc-rs v1.17.3
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m futures-macro v0.3.33
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m indexmap v2.14.0
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m regex-automata v0.4.16
+=== progress at 07:28:21, 25s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+   7247    5723    5723       00:02 Sl   372712 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name regex_automata --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.16/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no --allow=unexpected_cfgs --check-cfg cfg(docsrs_regex) --cfg feature="alloc" --cfg feature="dfa-build" --cfg feature="dfa-onepass" --cfg feature="dfa-search" --cfg feature="hybrid" --cfg feature="meta" --cfg feature="nfa" --cfg feature="nfa-backtrack" --cfg feature="nfa-pikevm" --cfg feature="nfa-thompson" --cfg feature="perf" --cfg feature="perf-inline" --cfg feature="perf-literal" --cfg feature="perf-literal-multisubstring" --cfg feature="perf-literal-substring" --cfg feature="std" --cfg feature="syntax" --cfg feature="unicode" --cfg feature="unicode-age" --cfg feature="unicode-bool" --cfg feature="unicode-case" --cfg feature="unicode-gencat" --cfg feature="unicode-perl" --cfg feature="unicode-script" --cfg feature="unicode-segment" --cfg feature="unicode-word-boundary" --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values("alloc", "default", "dfa", "dfa-build", "dfa-onepass", "dfa-search", "hybrid", "internal-instrument", "internal-instrument-pikevm", "logging", "meta", "nfa", "nfa-backtrack", "nfa-pikevm", "nfa-thompson", "perf", "perf-inline", "perf-literal", "perf-literal-multisubstring", "perf-literal-substring", "std", "syntax", "unicode", "unicode-age", "unicode-bool", "unicode-case", "unicode-gencat", "unicode-perl", "unicode-script", "unicode-segment", "unicode-word-boundary")) -C metadata=85dc6c17a9fb8b79 -C extra-filename=-e395964135d88009 --out-dir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps -C strip=debuginfo -L dependency=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps --extern aho_corasick=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libaho_corasick-14a51e478d192376.rmeta --extern memchr=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libmemchr-43aded205edce545.rmeta --extern regex_syntax=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libregex_syntax-808f6e5efba22395.rmeta --cap-lints allow
+   2104    2102    2082       04:40 Sl   136544 /tmp/provjobd1624604967
+   2192    2171    2082       01:35 Sl   130940 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2171    2082    2082       01:36 Sl   96468 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   5723    5722    5723       00:25 Ssl  84940 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --all-targets --locked
+   1240       1    1240       04:52 Ssl  71376 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    960       1     960       04:53 Ss   51716 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+   1080       1    1080       04:53 Ssl  45540 /usr/bin/containerd
+    221       1     221       05:02 SLsl 43844 /sbin/multipathd -d -s
+   1821     996     996       04:50 Sl   38260 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.3-py3.12.egg -run-exthandlers
+    996       1     996       04:53 Ss   31032 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1256     960     960       04:52 S    21452 php-fpm: pool www
+   1267     960     960       04:52 S    21452 php-fpm: pool www
+    958       1     958       04:53 Ss   21096 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+   2082       1    2082       04:40 Ssl  20004 /opt/hca/hosted-compute-agent
+    156       1     156       05:02 S<s  17720 /usr/lib/systemd/systemd-journald
+      1       0       1       05:04 Ss   14540 /sbin/init
+   7328    7327    5723       00:00 R    14456 /usr/libexec/gcc/x86_64-linux-gnu/13/cc1 -quiet -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/generated-include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library/src -imultiarch x86_64-linux-gnu -D_REENTRANT -D _XOPEN_SOURCE=700 -D BORINGSSL_IMPLEMENTATION=1 -D BORINGSSL_PREFIX=aws_lc_0_43_0 -D AWS_LC_STDALIGN_AVAILABLE=1 -D AWS_LC_BUILTIN_SWAP_SUPPORTED=1 -D HAVE_LINUX_RANDOM_H=1 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/crypto/decrepit/x509/x509_decrepit.c -quiet -dumpdir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-26b2865d50ad3e38/out/ -dumpbase 6f8e1f92835a38cb-x509_decrepit.c -dumpbase-ext .c -m64 -mtune=generic -march=x86-64 -O0 -Wall -Wextra -Wno-unused-parameter -std=c11 -ffunction-sections -fdata-sections -fPIC -fasynchronous-unwind-tables -fstack-protector-strong -Wformat-security -fstack-clash-protection -fcf-protection -o /tmp/ccbzMQ5J.s
+    995       1     995       04:53 Ssl  13728 /usr/libexec/udisks2/udisksd
+    557       1     557       05:00 Ss   13236 /usr/lib/systemd/systemd-resolved
+   1166       1    1166       04:53 Ssl  13052 /usr/sbin/ModemManager
+   1124       1    1124       04:53 Ss   11624 /usr/lib/systemd/systemd --user
+    992       1     992       04:53 Ss    9796 /usr/lib/systemd/systemd-logind
+    717       1     717       04:58 Ss    9776 /usr/lib/systemd/systemd-networkd
+    965       1     965       04:53 Ssl   8136 /usr/lib/polkit-1/polkitd --no-debug
+    227       1     227       05:02 Ss    7980 /usr/lib/systemd/systemd-udevd
+   2102    2082    2082       04:40 S     7044 sudo -n PROVJOBD_E2E=1 /tmp/provjobd1624604967
+    579       1     579       05:00 Ss    6564 /usr/sbin/haveged --Foreground --verbose=1
+   1145       1    1145       04:53 Ssl   6172 /usr/sbin/rsyslogd -n -iNONE
+    953       1     953       04:53 Ss    5608 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+   7325    5722    2082       00:00 R     4244 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   6387    5723    5723       00:14 S     4208 /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-f2d7c36df383d263/build-script-main
+   1105       1    1104       04:53 S     3680 /usr/sbin/chronyd -F 1
+   5722    2192    2082       00:25 S     3608 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/31187733-a2d3-45e7-a392-3cb6aab3f515.sh
+   1165    1124    1124       04:53 S     3572 (sd-pam)
+    391       1     391       05:01 Ss    2908 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+   1024       1    1024       04:53 Ss    2756 /usr/sbin/cron -f -P
+   7327    6387    5723       00:00 S     2676 cc -O0 -ffunction-sections -fdata-sections -fPIC -m64 -std=c11 -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/generated-include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library/src -Wall -Wextra -Wno-unused-parameter -pthread -D_XOPEN_SOURCE=700 -DBORINGSSL_IMPLEMENTATION=1 -DBORINGSSL_PREFIX=aws_lc_0_43_0 -DAWS_LC_STDALIGN_AVAILABLE=1 -DAWS_LC_BUILTIN_SWAP_SUPPORTED=1 -DHAVE_LINUX_RANDOM_H=1 -o /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-26b2865d50ad3e38/out/6f8e1f92835a38cb-x509_decrepit.o -c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/crypto/decrepit/x509/x509_decrepit.c
+   1097       1    1097       04:53 Ss+   2160 /sbin/agetty -o -p -- \u --keep-baud 115200,57600,38400,9600 - vt220
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1350       10886          46        4145       14638
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   60G   85G  42% /
+/dev/root       145G   60G   85G  42% /
+[   12.183310] loop0: detected capacity change from 0 to 8
+[   12.319344] systemd-journald[156]: /var/log/journal/58b34b8c91a94400a52c175421986a53/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   12.451804] audit: type=1400 audit(1789975408.939:125): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1324 comm="apparmor_parser"
+[   12.507594] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   12.574140] audit: type=1400 audit(1789975409.061:126): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1442 comm="apparmor_parser"
+[   13.118447] Initializing XFRM netlink socket
+[   13.319894] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   42.755072] hv_netvsc 7ced8d7f-35bb-7ced-8d7f-35bb7ced8d7f eth0: VF slot 1 added
+[   42.757176] hv_pci e7651779-f197-4a1e-b23a-4f238f110d6e: PCI VMBus probing: Using version 0x10004
+[   42.758831] hv_pci e7651779-f197-4a1e-b23a-4f238f110d6e: PCI host bridge to bus f197:00
+[   42.758835] pci_bus f197:00: root bus resource [mem 0xfc0000000-0xfc00fffff window]
+[   42.758839] pci_bus f197:00: No busn resource found for root bus, will use [bus 00-ff]
+[   42.761622] pci f197:00:02.0: [15b3:1016] type 00 class 0x020000 PCIe Endpoint
+[   42.766203] pci f197:00:02.0: BAR 0 [mem 0xfc0000000-0xfc00fffff 64bit pref]
+[   42.766949] pci f197:00:02.0: enabling Extended Tags
+[   42.775942] pci f197:00:02.0: 0.000 Gb/s available PCIe bandwidth, limited by Unknown x0 link at f197:00:02.0 (capable of 63.008 Gb/s with 8.0 GT/s PCIe x8 link)
+[   42.782917] pci_bus f197:00: busn_res: [bus 00-ff] end is updated to 00
+[   42.782931] pci f197:00:02.0: BAR 0 [mem 0xfc0000000-0xfc00fffff 64bit pref]: assigned
+[   43.018637] mlx5_core f197:00:02.0: enabling device (0000 -> 0002)
+[   43.022065] mlx5_core f197:00:02.0: firmware version: 14.30.5034
+[   43.157727] mlx5_core f197:00:02.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+[   43.235264] hv_netvsc 7ced8d7f-35bb-7ced-8d7f-35bb7ced8d7f eth0: VF registering: eth1
+[   43.235307] mlx5_core f197:00:02.0 eth1: joined to eth0
+[   43.235807] mlx5_core f197:00:02.0: MLX5E: StrdRq(0) RqSz(1024) StrdSz(256) RxCqeCmprss(0 basic)
+[   43.248536] mlx5_core f197:00:02.0 enP61847s1: renamed from eth1
+[   43.279422] MACsec IEEE 802.1AE
+[   43.399726] mlx5_core f197:00:02.0 enP61847s1: Link up
+[   43.432459] hv_netvsc 7ced8d7f-35bb-7ced-8d7f-35bb7ced8d7f eth0: Data path switched to VF: enP61847s1
+[   43.432703] mlx5_core f197:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.184489] hv_balloon: Max. dynamic memory size: 16384 MB
