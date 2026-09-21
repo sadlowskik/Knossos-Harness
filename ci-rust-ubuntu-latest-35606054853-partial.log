@@ -1,0 +1,108 @@
+=== phase build 13:31:43
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+=== progress at 13:32:08, 25s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+   1891    1872    1820       01:36 Sl   200376 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1840    1836    1820       01:39 Sl   130020 /tmp/provjobd3396317487
+   1872    1820    1820       01:37 Sl   97704 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   5518    5513    1820       00:25 SNl  81272 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   1131       1    1131       02:00 Ssl  73872 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    765       1     765       02:02 Ss   51688 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+    873       1     873       02:01 Ssl  46068 /usr/bin/containerd
+    218       1     218       02:11 SLsl 43680 /sbin/multipathd -d -s
+   1232     799     799       02:00 Sl   38072 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -run-exthandlers
+    799       1     799       02:01 Ss   31844 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1132     765     765       02:00 S    21540 php-fpm: pool www
+   1133     765     765       02:00 S    21540 php-fpm: pool www
+    762       1     762       02:02 Ss   20984 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+   1820       1    1820       01:39 Ssl  19248 /opt/hca/hosted-compute-agent
+    155       1     155       02:12 S<s  18000 /usr/lib/systemd/systemd-journald
+      1       0       1       02:14 Ss   14320 /sbin/init
+    790       1     790       02:01 Ssl  13904 /usr/libexec/udisks2/udisksd
+    377       1     377       02:11 Ss   13332 /usr/lib/systemd/systemd-resolved
+    877       1     877       02:01 Ssl  13128 /usr/sbin/ModemManager
+    907       1     907       02:01 Ss   11464 /usr/lib/systemd/systemd --user
+    776       1     776       02:01 Ss    9880 /usr/lib/systemd/systemd-logind
+    637       1     637       02:07 Ss    9872 /usr/lib/systemd/systemd-networkd
+    769       1     769       02:02 Ssl   8212 /usr/lib/polkit-1/polkitd --no-debug
+    222       1     222       02:11 Ss    8028 /usr/lib/systemd/systemd-udevd
+   1836    1820    1820       01:39 S     7132 sudo -n PROVJOBD_E2E=1 /tmp/provjobd3396317487
+    488       1     488       02:10 Ss    6656 /usr/sbin/haveged --Foreground --verbose=1
+    917       1     917       02:01 Ssl   6264 /usr/sbin/rsyslogd -n -iNONE
+    757       1     757       02:02 Ss    5696 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+   5904    5518    1820       00:14 SN    4336 /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-d55c24baf725dd86/build-script-main
+   6420    5512    1820       00:00 R     4336 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+    876       1     875       02:01 S     3772 /usr/sbin/chronyd -F 1
+   5512    1891    1820       00:25 S     3688 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/918e6174-0c85-42ee-8460-5dc27f32dabc.sh
+   6285    6284    6284       00:04 S     3672 bash /home/runner/work/Knossos-Harness/Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-ubuntu-latest-35606054853-heartbeat-133204.log
+    965     907     907       02:01 S     3636 (sd-pam)
+    283       1     283       02:11 Ss    2968 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+    810       1     810       02:01 Ss    2888 /usr/sbin/cron -f -P
+   6415    5904    1820       00:00 DN    2744 cc -O0 -ffunction-sections -fdata-sections -fPIC -g -gdwarf-4 -fno-omit-frame-pointer -m64 -std=c11 -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/generated-include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/include -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/third_party/jitterentropy/jitterentropy-library/src -Wall -Wextra -Wno-unused-parameter -pthread -D_XOPEN_SOURCE=700 -DBORINGSSL_IMPLEMENTATION=1 -DBORINGSSL_PREFIX=aws_lc_0_43_0 -DAWS_LC_STDALIGN_AVAILABLE=1 -DAWS_LC_BUILTIN_SWAP_SUPPORTED=1 -DHAVE_LINUX_RANDOM_H=1 -o /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/build/aws-lc-sys-1e01dafbaf21d8dc/out/3f2f442030472042-base64_bio.o -c /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/aws-lc/crypto/decrepit/bio/base64_bio.c
+   5514    5512    1820       00:25 S     2484 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/918e6174-0c85-42ee-8460-5dc27f32dabc.sh
+   5513    5512    1820       00:25 S     2260 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/918e6174-0c85-42ee-8460-5dc27f32dabc.sh
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1152       11123          48        4107       14836
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   60G   86G  42% /
+/dev/root       145G   60G   86G  42% /
+[    4.636324] hv_netvsc f8615163-0000-1000-2000-7ced8de483c7 eth0: VF registering: eth1
+[    4.636355] mana 7870:00:00.0 eth1: joined to eth0
+[    4.638781] mana 7870:00:00.0 ens1: renamed from eth1
+[    4.782715] /dev/sr0: Can't lookup blockdev
+[    4.965522] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    4.970267] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    4.970801] hv_netvsc f8615163-0000-1000-2000-7ced8de483c7 eth0: Data path switched to VF: ens1
+[    4.971162] mana 7870:00:00.0 mana_0: Port: 1 Link ACTIVE
+[    5.039797] 8021q: 802.1Q VLAN Support v1.8
+[    6.650070] hv_netvsc f8615163-0000-1000-2000-7ced8de483c7 eth0: Data path switched from VF: ens1
+[    6.650227] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    6.652384] mana 7870:00:00.0 mana_0: Port: 1 Link DOWN
+[    7.121602] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    7.127345] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    7.127890] hv_netvsc f8615163-0000-1000-2000-7ced8de483c7 eth0: Data path switched to VF: ens1
+[    7.128257] mana 7870:00:00.0 mana_0: Port: 1 Link ACTIVE
+[    9.734932] EXT4-fs (nvme0n1p1): resizing filesystem from 19398395 to 39059195 blocks
+[   12.141165] EXT4-fs (nvme0n1p1): resized filesystem to 39059195
+[   12.972280] block nvme0n1: No UUID available providing old NGUID
+[   13.310872] kauditd_printk_skb: 113 callbacks suppressed
+[   13.310877] audit: type=1400 audit(1789997406.523:124): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=843 comm="apparmor_parser"
+[   13.792507] systemd-journald[155]: /var/log/journal/58b34b8c91a94400a52c175421986a53/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   13.935834] evm: overlay not supported
+[   13.947055] loop0: detected capacity change from 0 to 8
+[   14.105935] audit: type=1400 audit(1789997407.319:125): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1115 comm="apparmor_parser"
+[   14.524435] Adding 3145724k swap on /swapfile.  Priority:-2 extents:66 across:56459260k SS
+[   14.770992] audit: type=1400 audit(1789997407.984:126): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1284 comm="apparmor_parser"
+[   15.939412] Initializing XFRM netlink socket
+[   16.217540] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.681017] hv_balloon: Max. dynamic memory size: 16384 MB
