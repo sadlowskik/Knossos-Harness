@@ -1,0 +1,273 @@
+=== phase build 13:20:44
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m find-msvc-tools v0.1.9
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m zerofrom-derive v0.1.7
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m pkg-config v0.3.33
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m yoke-derive v0.8.2
+[1m[92m   Compiling[0m syn v3.0.3
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m zerovec-derive v0.11.3
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m displaydoc v0.2.6
+[1m[92m   Compiling[0m tokio-macros v2.7.1
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m fs_extra v1.3.0
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m dunce v1.0.5
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m aws-lc-rs v1.17.3
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m futures-macro v0.3.33
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m indexmap v2.14.0
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m regex-automata v0.4.16
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m tokio-util v0.7.19
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m tree-sitter-language v0.1.7
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m try-lock v0.2.5
+[1m[92m   Compiling[0m thiserror v2.0.19
+[1m[92m   Compiling[0m rustls v0.23.42
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m h2 v0.4.15
+[1m[92m   Compiling[0m want v0.3.1
+[1m[92m   Compiling[0m rustls-webpki v0.103.13
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m icu_properties v2.2.0
+[1m[92m   Compiling[0m icu_normalizer v2.2.0
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m futures-channel v0.3.33
+[1m[92m   Compiling[0m sync_wrapper v1.0.2
+[1m[92m   Compiling[0m thiserror-impl v2.0.19
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m subtle v2.6.1
+[1m[92m   Compiling[0m crossbeam-utils v0.8.22
+[1m[92m   Compiling[0m tower-layer v0.3.3
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m httpdate v1.0.3
+[1m[92m   Compiling[0m hyper v1.11.0
+[1m[92m   Compiling[0m idna_adapter v1.2.2
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m ipnet v2.12.0
+[1m[92m   Compiling[0m inotify-sys v0.1.8
+[1m[92m   Compiling[0m vcpkg v0.2.15
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m crossbeam-epoch v0.9.20
+[1m[92m   Compiling[0m hyper-util v0.1.20
+[1m[92m   Compiling[0m libsqlite3-sys v0.38.2
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m sha1 v0.10.7
+[1m[92m   Compiling[0m tower v0.5.3
+[1m[92m   Compiling[0m http-body-util v0.1.4
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m crossbeam-deque v0.8.7
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m ryu v1.0.23
+[1m[92m   Compiling[0m mime v0.3.17
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m same-file v1.0.6
+[1m[92m   Compiling[0m openssl-probe v0.2.1
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m tungstenite v0.29.0
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m rustls-native-certs v0.8.4
+[1m[92m   Compiling[0m walkdir v2.5.0
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m tree-sitter v0.26.11
+[1m[92m   Compiling[0m tokio-rustls v0.26.4
+[1m[92m   Compiling[0m bstr v1.13.0
+[1m[92m   Compiling[0m tree-sitter-rust v0.24.2
+[1m[92m   Compiling[0m enumflags2_derive v0.7.12
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m clap_builder v4.6.2
+[1m[92m   Compiling[0m clap_derive v4.6.4
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m enumflags2 v0.7.12
+[1m[92m   Compiling[0m globset v0.4.19
+[1m[92m   Compiling[0m hyper-rustls v0.27.9
+[1m[92m   Compiling[0m inotify v0.11.5
+[1m[92m   Compiling[0m tower-http v0.6.11
+[1m[92m   Compiling[0m rustls-platform-verifier v0.7.0
+[1m[92m   Compiling[0m tokio-tungstenite v0.29.0
+[1m[92m   Compiling[0m axum-core v0.5.6
+[1m[92m   Compiling[0m serde_urlencoded v0.7.1
+[1m[92m   Compiling[0m notify-types v2.1.0
+[1m[92m   Compiling[0m regex v1.13.1
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m serde_path_to_error v0.1.20
+[1m[92m   Compiling[0m hashlink v0.12.2
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m encoding_rs v0.8.35
+[1m[92m   Compiling[0m matchit v0.8.4
+[1m[92m   Compiling[0m streaming-iterator v0.1.9
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m iana-time-zone v0.1.65
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m unsafe-libyaml v0.2.11
+[1m[92m   Compiling[0m serde_yaml_ng v0.10.0
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m chrono v0.4.45
+[1m[92m   Compiling[0m rusqlite v0.40.2
+[1m[92m   Compiling[0m axum v0.8.9
+[1m[92m   Compiling[0m reqwest v0.13.4
+[1m[92m   Compiling[0m notify v8.2.0
+[1m[92m   Compiling[0m ignore v0.4.31
+[1m[92m   Compiling[0m landlock v0.4.7
+[1m[92m   Compiling[0m clap v4.6.4
+[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[92m   Compiling[0m async-trait v0.1.91
+=== progress at 13:23:00, 136s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+  10252    5694    1973       00:00 SNl  181752 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name async_trait --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-trait-0.1.91/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type proc-macro --emit=dep-info,link -C prefer-dynamic -C embed-bitcode=no --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values()) -C metadata=cbd4fc4bc870f12f -C extra-filename=-657e951eb9479ca1 --out-dir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps -C strip=debuginfo -L dependency=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps --extern proc_macro2=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libproc_macro2-82888eec6465a4a2.rlib --extern quote=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libquote-bd21582042094722.rlib --extern syn=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsyn-ba7aec76547f9b86.rlib --extern proc_macro --cap-lints allow
+   1989    1986    1973       04:48 Sl   139412 /tmp/provjobd1054997655
+   2069    2048    1973       03:33 Sl   139176 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2048    1973    1973       03:35 Sl   97372 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   5694    5689    1973       02:16 SNl  82928 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   1124       1    1124       05:03 Ssl  73180 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    894       1     894       05:03 Ss   51812 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+    221       1     221       05:13 SLsl 43712 /sbin/multipathd -d -s
+    997       1     997       05:03 Ssl  43680 /usr/bin/containerd
+   1238     928     928       05:02 Sl   38072 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -run-exthandlers
+    928       1     928       05:03 Ss   31184 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1154     894     894       05:02 S    21448 php-fpm: pool www
+   1160     894     894       05:02 S    21448 php-fpm: pool www
+    891       1     891       05:03 Ss   21332 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+    155       1     155       05:13 S<s  17700 /usr/lib/systemd/systemd-journald
+   1973       1    1973       04:48 Ssl  17404 /opt/hca/hosted-compute-agent
+  10177    1238     928       00:01 R    16576 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -collect-logs
+      1       0       1       05:15 Ss   14376 /sbin/init
+    927       1     927       05:03 Ssl  13700 /usr/libexec/udisks2/udisksd
+    505       1     505       05:11 Ss   13220 /usr/lib/systemd/systemd-resolved
+   1108       1    1108       05:03 Ssl  13064 /usr/sbin/ModemManager
+   1158       1    1158       05:02 Ss   11636 /usr/lib/systemd/systemd --user
+    924       1     924       05:03 Ss    9832 /usr/lib/systemd/systemd-logind
+    720       1     720       05:07 Ss    9720 /usr/lib/systemd/systemd-networkd
+    898       1     898       05:03 Ssl   8152 /usr/lib/polkit-1/polkitd --no-debug
+    224       1     224       05:13 Ss    8012 /usr/lib/systemd/systemd-udevd
+   1986    1973    1973       04:48 S     7040 sudo -n PROVJOBD_E2E=1 /tmp/provjobd1054997655
+    580       1     580       05:11 Ss    6568 /usr/sbin/haveged --Foreground --verbose=1
+   1050       1    1050       05:03 Ssl   6056 /usr/sbin/rsyslogd -n -iNONE
+    886       1     886       05:03 Ss    5632 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+  10259    5688    1973       00:00 R     4252 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   1029       1    1028       05:03 S     3684 /usr/sbin/chronyd -F 1
+   5688    2069    1973       02:16 S     3612 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/66272950-ba5b-4f47-a526-87a5bca5527c.sh
+   1181    1158    1158       05:02 S     3596 (sd-pam)
+    384       1     384       05:11 Ss    2908 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+    961       1     961       05:03 Ss    2764 /usr/sbin/cron -f -P
+   5690    5688    1973       02:16 S     2456 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/66272950-ba5b-4f47-a526-87a5bca5527c.sh
+   5689    5688    1973       02:16 S     2288 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/66272950-ba5b-4f47-a526-87a5bca5527c.sh
+   1017       1    1017       05:03 Ss+   2164 /sbin/agetty -o -p -- \u --keep-baud 115200,57600,38400,9600 - vt220
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1202       10664          48        4522       14791
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   60G   85G  42% /
+/dev/root       145G   60G   85G  42% /
+[   12.564756] loop0: detected capacity change from 0 to 8
+[   12.844266] systemd-journald[155]: /var/log/journal/58b34b8c91a94400a52c175421986a53/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   12.910186] audit: type=1400 audit(1789996678.232:125): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1252 comm="apparmor_parser"
+[   12.985433] audit: type=1400 audit(1789996678.308:126): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1346 comm="apparmor_parser"
+[   13.159045] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   13.413378] Initializing XFRM netlink socket
+[   13.571421] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   25.094518] hv_netvsc 000d3af9-454a-000d-3af9-454a000d3af9 eth0: VF slot 1 added
+[   25.095464] hv_pci bd2d01f6-0174-452a-a773-ed061b6e27c5: PCI VMBus probing: Using version 0x10004
+[   25.097052] hv_pci bd2d01f6-0174-452a-a773-ed061b6e27c5: PCI host bridge to bus 0174:00
+[   25.097058] pci_bus 0174:00: root bus resource [mem 0xfc0000000-0xfc00fffff window]
+[   25.097063] pci_bus 0174:00: No busn resource found for root bus, will use [bus 00-ff]
+[   25.099972] pci 0174:00:02.0: [15b3:1016] type 00 class 0x020000 PCIe Endpoint
+[   25.104295] pci 0174:00:02.0: BAR 0 [mem 0xfc0000000-0xfc00fffff 64bit pref]
+[   25.104988] pci 0174:00:02.0: enabling Extended Tags
+[   25.112517] pci 0174:00:02.0: 0.000 Gb/s available PCIe bandwidth, limited by Unknown x0 link at 0174:00:02.0 (capable of 63.008 Gb/s with 8.0 GT/s PCIe x8 link)
+[   25.120303] pci_bus 0174:00: busn_res: [bus 00-ff] end is updated to 00
+[   25.120314] pci 0174:00:02.0: BAR 0 [mem 0xfc0000000-0xfc00fffff 64bit pref]: assigned
+[   25.386318] mlx5_core 0174:00:02.0: enabling device (0000 -> 0002)
+[   25.389224] mlx5_core 0174:00:02.0: firmware version: 14.30.5026
+[   25.524502] mlx5_core 0174:00:02.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+[   25.600499] hv_netvsc 000d3af9-454a-000d-3af9-454a000d3af9 eth0: VF registering: eth1
+[   25.600544] mlx5_core 0174:00:02.0 eth1: joined to eth0
+[   25.601250] mlx5_core 0174:00:02.0: MLX5E: StrdRq(0) RqSz(1024) StrdSz(256) RxCqeCmprss(0 basic)
+[   25.616128] mlx5_core 0174:00:02.0 enP372s1: renamed from eth1
+[   25.651372] MACsec IEEE 802.1AE
+[   25.770059] mlx5_core 0174:00:02.0 enP372s1: Link up
+[   25.800457] hv_netvsc 000d3af9-454a-000d-3af9-454a000d3af9 eth0: Data path switched to VF: enP372s1
+[   25.800774] mlx5_core 0174:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.156331] hv_balloon: Max. dynamic memory size: 16384 MB
