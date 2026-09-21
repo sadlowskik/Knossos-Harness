@@ -1,0 +1,14 @@
+heartbeat 12:09:14 116s
+=== phase test-codegen 12:08:46
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1615        9662          48        5110       14378
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10694       00:00  144     0 [rust-lld] <defunct>
+  10684       00:00 97.7 335420 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name field_workspace --edition=2021 tests/field_workspace.rs --error-format=json --jso
+  10659       00:01 77.3 216280 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name harness_loop --edition=2021 tests/harness_loop.rs --error-format=json --json=diag
+   2106       03:17  2.1 134140 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2074       03:20  1.3 136524 /tmp/provjobd220564938
+[   23.178996] Initializing XFRM netlink socket
+[   23.409626] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.139856] hv_balloon: Max. dynamic memory size: 16384 MB
