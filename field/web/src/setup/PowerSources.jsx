@@ -7,6 +7,8 @@ const KINDS = [
   { value: 'openai-compatible', label: 'OpenAI-compatible / Ollama / Cameo' },
 ];
 const EMPTY = { id: '', name: '', kind: 'anthropic', model: '', base_url: '', key: '' };
+const STATUS_LABEL = { up: 'reachable', down: 'unreachable', unknown: 'not tested' };
+const statusLabel = (status) => STATUS_LABEL[status] ?? status ?? 'not tested';
 
 // Power sources = the models behind your units. Keys are write-only: they are sent once,
 // stored locally, and never returned to the UI.
@@ -52,47 +54,79 @@ export default function PowerSources({ onClose }) {
   }
 
   return (
-    <div className="cityhub-veil" onClick={onClose}>
-      <div className="cityhub" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <header className="cityhub-head">
-          <span><Cpu /> Power sources</span>
-          <button type="button" onClick={onClose} aria-label="Close power sources"><X /></button>
+    <div className="cityhub-veil psrc-veil" onClick={onClose}>
+      <div className="cityhub psrc-modal" role="dialog" aria-modal="true" aria-labelledby="psrc-title" onClick={(e) => e.stopPropagation()}>
+        <header className="cityhub-head psrc-head">
+          <span className="psrc-title-wrap">
+            <Cpu aria-hidden="true" />
+            <span>
+              <b id="psrc-title">Models</b>
+              <small>The models your agents run on. Keys stay on this machine.</small>
+            </span>
+          </span>
+          <button type="button" className="psrc-close" onClick={onClose} aria-label="Close models"><X /></button>
         </header>
         <div className="psrc-body">
-          <section className="psrc-list">
+          <section className="psrc-list" aria-label="Configured models">
             {list.map((e) => (
               <div key={e.id} className={`psrc-row status-${e.status}`}>
-                <div>
+                <i className={`psrc-dot status-${e.status ?? 'unknown'}`} aria-hidden="true" />
+                <div className="psrc-row-text">
                   <b>{e.name}</b>
-                  <small>{e.kind}{e.model ? ' · ' + e.model : ''}{e.base_url ? ' · ' + e.base_url : ''}</small>
-                  <small>{e.source === 'user' ? 'added by you' : 'built-in'} · {e.hasKey ? 'key set' : 'no key'} · {e.status}</small>
+                  <small className="mono">{e.kind}{e.model ? ' · ' + e.model : ''}{e.base_url ? ' · ' + e.base_url : ''}</small>
+                  <small>{e.source === 'user' ? 'Added by you' : 'Built in'} · {e.hasKey ? 'key set' : 'no key'} · {statusLabel(e.status)}</small>
                 </div>
                 <div className="psrc-row-actions">
-                  <button type="button" onClick={() => test(e.id)} disabled={testing === e.id}><Wifi /> {testing === e.id ? '…' : 'Test'}</button>
-                  {e.source === 'user' && <button type="button" className="danger" onClick={() => remove(e.id)} aria-label={`Remove ${e.id}`}><Trash2 /></button>}
+                  <button type="button" className="btn ghost" onClick={() => test(e.id)} disabled={testing === e.id}><Wifi aria-hidden="true" /> {testing === e.id ? 'Testing…' : 'Test'}</button>
+                  {e.source === 'user' && <button type="button" className="btn ghost danger" onClick={() => remove(e.id)} aria-label={`Remove ${e.id}`}><Trash2 aria-hidden="true" /></button>}
                 </div>
               </div>
             ))}
-            {!list.length && <p className="cityhub-empty">No power sources yet.</p>}
+            {!list.length && (
+              <div className="psrc-empty">
+                <b>No models yet</b>
+                <p>Use the form to add one. Anthropic needs an API key; a local server such as Ollama or Cameo needs its base URL.</p>
+              </div>
+            )}
           </section>
 
-          <section className="psrc-form">
+          <section className="psrc-form" aria-label="Add a model">
             <h3>Add a model</h3>
-            <label>Kind
+            <label className="psrc-field">
+              <span className="psrc-field-label">Provider</span>
               <select value={form.kind} onChange={(e) => patch({ kind: e.target.value })}>
                 {KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
               </select>
             </label>
-            <label>Name<input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder="My model" /></label>
-            <label>Id<input value={form.id} onChange={(e) => patch({ id: e.target.value })} placeholder="auto from name" /></label>
-            <label>Model<input value={form.model} onChange={(e) => patch({ model: e.target.value })} placeholder={needsUrl ? 'llama3 / local' : 'claude-sonnet-5'} /></label>
-            {needsUrl && <label>Base URL<input value={form.base_url} onChange={(e) => patch({ base_url: e.target.value })} placeholder="http://127.0.0.1:11434/v1" /></label>}
-            <label>API key <small>(write-only; stored locally, never shown again)</small>
-              <input type="password" value={form.key} onChange={(e) => patch({ key: e.target.value })} placeholder={needsUrl ? 'optional for local' : 'sk-ant-…'} autoComplete="off" />
+            <label className="psrc-field">
+              <span className="psrc-field-label">Name</span>
+              <input value={form.name} onChange={(e) => patch({ name: e.target.value })} placeholder="My model" />
             </label>
-            {error && <p className="cityhub-error">{error}</p>}
-            {note && <p className="cityhub-note">{note}</p>}
-            <button type="button" className="primary" disabled={busy || (!form.name && !form.id)} onClick={add}><Plus /> Add power source</button>
+            <label className="psrc-field">
+              <span className="psrc-field-label">Id <small>optional</small></span>
+              <input className="mono" value={form.id} onChange={(e) => patch({ id: e.target.value })} placeholder="Made from the name if empty" />
+            </label>
+            <label className="psrc-field">
+              <span className="psrc-field-label">Model</span>
+              <input className="mono" value={form.model} onChange={(e) => patch({ model: e.target.value })} placeholder={needsUrl ? 'llama3 / local' : 'claude-sonnet-5'} />
+            </label>
+            {needsUrl && (
+              <label className="psrc-field">
+                <span className="psrc-field-label">Base URL</span>
+                <input className="mono" value={form.base_url} onChange={(e) => patch({ base_url: e.target.value })} placeholder="http://127.0.0.1:11434/v1" />
+              </label>
+            )}
+            <label className="psrc-field">
+              <span className="psrc-field-label">API key {needsUrl && <small>optional for local servers</small>}</span>
+              <input type="password" value={form.key} onChange={(e) => patch({ key: e.target.value })} placeholder={needsUrl ? 'Leave empty for local' : 'sk-ant-…'} autoComplete="off" />
+              <span className="psrc-help">Stored on this machine only. Sent once, never shown again.</span>
+            </label>
+            {error && <p className="cityhub-error psrc-msg" role="alert">{error}</p>}
+            {note && <p className="cityhub-note psrc-msg" role="status">{note}</p>}
+            <div className="psrc-form-actions">
+              <button type="button" className="btn ghost" onClick={onClose}>Close</button>
+              <button type="button" className="btn primary" disabled={busy || (!form.name && !form.id)} onClick={add}><Plus aria-hidden="true" /> Add model</button>
+            </div>
           </section>
         </div>
       </div>

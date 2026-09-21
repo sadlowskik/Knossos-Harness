@@ -41,25 +41,26 @@ export default function PermissionRequests() {
         const detail = summarize(p.toolName, p.input);
         const privileged = isPrivilegedTool(p.toolName, p.input);
         return (
-          <div className={`perm${privileged ? ' privileged' : ''}`} key={p.id}>
+          <div className={`perm${privileged ? ' privileged' : ''}`} key={p.id} role="group" aria-label={`Approval request: ${p.toolName}`}>
             <div className="perm-top">
               <span className="perm-flag label">
-                {privileged ? 'privileged · operator approval' : 'operator approval required'}
+                <i aria-hidden="true" />
+                {privileged ? 'Privileged · needs your approval' : 'Needs your approval'}
               </span>
               <button
                 className="perm-who"
                 type="button"
                 onClick={() => selectOnly([p.sessionId])}
-                title="select this agent"
+                title="Select this agent"
               >
                 {session?.name ?? p.sessionId.slice(0, 6)} · {session?.role ?? '—'}
               </button>
             </div>
+            <div className="perm-tool"><span className="perm-tool-label">wants to run</span><code className="mono">{p.toolName}</code></div>
             {workspace && <div className="perm-ws mono">{workspace.name} · {workspace.path}</div>}
-            <div className="perm-tool mono">{p.toolName}</div>
             <pre className="perm-input mono">{detail}</pre>
             {privileged && !armed[p.id] && (
-              <p className="perm-warn">This can write files, run a shell, or change the workspace. Confirm before approve.</p>
+              <p className="perm-warn">This can write files, run a shell, or change the project. Review it before allowing.</p>
             )}
             <div className="perm-actions">
               <button
@@ -74,14 +75,14 @@ export default function PermissionRequests() {
                   disabled={busy[p.id]}
                   onClick={() => setArmed((a) => ({ ...a, [p.id]: true }))}
                   type="button"
-                >Review privileged</button>
+                >Review, then allow</button>
               ) : (
                 <button
                   className="btn primary"
                   disabled={busy[p.id]}
                   onClick={() => decide(p.id, 'allow')}
                   type="button"
-                >{privileged ? 'Approve privileged' : 'Approve'}</button>
+                >{privileged ? 'Allow privileged' : 'Allow'}</button>
               )}
             </div>
           </div>

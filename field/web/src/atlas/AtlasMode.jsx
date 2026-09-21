@@ -8,6 +8,7 @@ import {
   saveFieldSettings,
 } from '../theater/fieldPreferences.js';
 import PermissionRequests, { isPrivilegedTool } from '../hud/PermissionRequests.jsx';
+import PowerSources from '../setup/PowerSources.jsx';
 
 const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
 const ATTENTION = new Set(['blocked', 'error', 'waiting_permission']);
@@ -17,9 +18,26 @@ const TRACE_KINDS = new Set([
   'work.verified',
 ]);
 
+// Raw session states → plain language + a semantic tone the stylesheet knows about.
+// tone: working | attention | done | failed | idle
+export function plainState(session) {
+  const state = session?.state ?? 'idle';
+  if (!session) return { label: 'idle', tone: 'idle' };
+  if (state === 'waiting_permission' || session.pendingPermission) return { label: 'needs approval', tone: 'attention' };
+  if (state === 'blocked') return { label: 'blocked', tone: 'attention' };
+  if (state === 'error') return { label: 'failed', tone: 'failed' };
+  if (state === 'done') return { label: 'done', tone: 'done' };
+  if (state === 'cancelled' || state === 'interrupted') return { label: 'stopped', tone: 'idle' };
+  if (state === 'thinking') return { label: 'thinking', tone: 'working' };
+  if (['running', 'working', 'active', 'spawning', 'starting'].includes(state)) return { label: 'working', tone: 'working' };
+  if (state === 'paused') return { label: 'paused', tone: 'idle' };
+  return { label: 'idle', tone: 'idle' };
+}
+
 export default function AtlasMode({ settings, setSettings }) {
   const st = useField();
   const selectedId = st.activeSessionId;
+  const [modelsOpen, setModelsOpen] = useState(false);
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
   const sessions = useMemo(
     () => [...st.snap.sessions].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
@@ -33,45 +51,64 @@ export default function AtlasMode({ settings, setSettings }) {
     [sessions, endpoints, settings],
   );
   const columns = useMemo(() => buildColumns(workspaces, live, sessions), [workspaces, live, sessions]);
+  const pendingCount = st.snap.permissions?.length ?? 0;
 
   useEffect(() => { saveFieldSettings(settings); }, [settings]);
 
   return (
     <div className="atlas-board">
       <header className="atlas-head">
-        <div>
-          <span>ATLAS</span>
-          <h1>Agents and workspaces</h1>
+        <div className="atlas-title">
+          <span className="atlas-kicker">Board</span>
+          <h1>Agents and projects</h1>
         </div>
         <div className="atlas-stats" aria-live="polite">
-          <span><b>{live.length}</b> live</span>
-          <span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> need you</span>
-          <span><b>{workspaces.length}</b> workspaces</span>
+          <span className="atlas-chip tone-working"><i aria-hidden="true" /><b>{live.length}</b> working</span>
+          <span className={`atlas-chip${attention.length ? ' tone-attention' : ''}`}><i aria-hidden="true" /><b>{attention.length}</b> need you</span>
+          <span className="atlas-chip"><i aria-hidden="true" /><b>{workspaces.length}</b> {workspaces.length === 1 ? 'project' : 'projects'}</span>
         </div>
         <div className="atlas-actions">
-          <button type="button" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
+          <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Models</button>
+          <button type="button" className="btn ghost" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
             Rome map
           </button>
         </div>
       </header>
-      <PermissionRequests />
-      <div className="atlas-cols" role="list">
-        {columns.length ? columns.map((column) => (
-          <AgentColumn
-            key={column.key}
-            column={column}
-            identity={column.session ? identities.get(column.session.id) : null}
-            selected={column.session?.id === selectedId}
-            permissions={st.snap.permissions ?? []}
-            campaigns={st.snap.campaigns ?? []}
-          />
-        )) : (
+      <div className="atlas-scroll">
+        {pendingCount > 0 && (
+          <section className="atlas-approvals" aria-label="Approvals waiting">
+            <h2 className="atlas-section-title">
+              <i aria-hidden="true" />
+              {pendingCount === 1 ? 'One request needs your decision' : `${pendingCount} requests need your decision`}
+            </h2>
+            <PermissionRequests />
+          </section>
+        )}
+        {columns.length ? (
+          <div className="atlas-grid" role="list">
+            {columns.map((column) => (
+              <AgentColumn
+                key={column.key}
+                column={column}
+                identity={column.session ? identities.get(column.session.id) : null}
+                selected={column.session?.id === selectedId}
+                permissions={st.snap.permissions ?? []}
+                campaigns={st.snap.campaigns ?? []}
+              />
+            ))}
+          </div>
+        ) : (
           <div className="atlas-empty">
-            <b>No mounted workspace.</b>
-            <p>Add paths in field/field.yaml. Atlas shows one column per live agent, grouped by workspace.</p>
+            <span className="atlas-empty-mark" aria-hidden="true" />
+            <b>No project open</b>
+            <p>Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field. Each project gets a card here, and each agent working on it gets its own.</p>
+            <div className="atlas-empty-actions">
+              <button type="button" className="btn" onClick={() => setModelsOpen(true)}>Set up a model</button>
+            </div>
           </div>
         )}
       </div>
+      {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}
     </div>
   );
 }
@@ -107,43 +144,74 @@ function buildColumns(workspaces, live, allSessions) {
 function AgentColumn({ column, identity, selected, permissions, campaigns }) {
   const { workspace, session } = column;
   const pending = permissions.filter((item) => item.sessionId === session?.id);
+  const state = plainState(session);
+  const needsYou = Boolean(session && (ATTENTION.has(session.state) || pending.length));
+  const lastTool = typeof session?.lastTool === 'string' ? session.lastTool : session?.lastTool?.name;
+  const cost = session?.costUsd ? `$${Number(session.costUsd).toFixed(3)}` : '';
   return (
-    <article className={`atlas-col${selected ? ' selected' : ''}${session && ATTENTION.has(session.state) ? ' needs-you' : ''}`} role="listitem">
-      <header className="atlas-col-head">
+    <article
+      className={`atlas-card tone-${state.tone}${selected ? ' selected' : ''}${needsYou ? ' needs-you' : ''}${session ? '' : ' empty'}`}
+      role="listitem"
+      aria-label={session ? `${identity?.displayName ?? session.name ?? session.id}, ${state.label}` : `${workspace?.name ?? 'Project'}, no agent yet`}
+    >
+      <header className="atlas-card-head">
         {session ? (
-          <button type="button" className="atlas-who" onClick={() => selectAgent(session.id)}>
+          <button type="button" className="atlas-who" onClick={() => selectAgent(session.id)} title="Select this agent">
             <Mark identity={identity} />
-            <span>
+            <span className="atlas-who-text">
               <b>{identity?.displayName ?? session.name ?? session.id}</b>
-              <small>{identity?.endpointAlias ?? session.model ?? 'unassigned'}</small>
+              <small className="atlas-model">{identity?.endpointAlias ?? session.model ?? 'no model'}</small>
             </span>
           </button>
         ) : (
           <div className="atlas-who idle">
-            <span>
-              <b>{workspace?.name ?? 'Workspace'}</b>
-              <small>idle</small>
+            <span className="atlas-mark atlas-mark-project" aria-hidden="true">{initials(workspace?.name ?? '?')}</span>
+            <span className="atlas-who-text">
+              <b>{workspace?.name ?? 'Project'}</b>
+              <small className="atlas-model">no agent yet</small>
             </span>
           </div>
         )}
-        <div className="atlas-col-meta">
-          <span className={`atlas-state state-${session?.state ?? 'idle'}`}>{session?.state ?? 'idle'}</span>
-          <span className="atlas-ws" title={workspace?.path}>{workspace?.name ?? session?.cwd ?? '—'}</span>
-        </div>
+        <span className={`atlas-pill tone-${state.tone}`}><i aria-hidden="true" />{state.label}</span>
       </header>
-      {workspace?.git?.branch && <p className="atlas-git">{workspace.git.branch}{workspace.changeCount ? ` · ${workspace.changeCount} changed` : ''}</p>}
+      {(workspace || session?.cwd) && (
+        <div className="atlas-context">
+          <span className="atlas-ws" title={workspace?.path}>{workspace?.name ?? session?.cwd}</span>
+          {workspace?.git?.branch && (
+            <span className="atlas-git">{workspace.git.branch}{workspace.changeCount ? ` · ${workspace.changeCount} changed` : ''}</span>
+          )}
+        </div>
+      )}
       {pending.map((permission) => (
-        <div className="atlas-perm" key={permission.id}>
-          <span>{isPrivilegedTool(permission.toolName, permission.input) ? 'Privileged approval' : 'Approval'} · {permission.toolName}</span>
-          <code>{summarize(permission.toolName, permission.input)}</code>
+        <div className="atlas-perm" key={permission.id} role="note">
+          <span className="atlas-perm-label">
+            <i aria-hidden="true" />
+            {isPrivilegedTool(permission.toolName, permission.input) ? 'Privileged approval' : 'Approval'} · <code>{permission.toolName}</code>
+          </span>
+          <code className="atlas-perm-input">{summarize(permission.toolName, permission.input)}</code>
+          <button
+            type="button"
+            className="atlas-perm-jump"
+            onClick={() => document.querySelector('.atlas-approvals')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+          >Decide at the top of the board</button>
         </div>
       ))}
       <div className="atlas-body">
         {session
           ? <ColumnTranscript session={session} campaigns={campaigns} />
-          : <p className="atlas-idle">No agent in this workspace yet.</p>}
+          : (
+            <div className="atlas-idle">
+              <b>No agent working on this project yet.</b>
+              <p>Start a run from Routines, or wait for a plan to assign one. It will show up here as soon as it begins.</p>
+            </div>
+          )}
       </div>
-      {session?.lastTool && <footer className="atlas-foot">{session.lastTool}{session.costUsd ? ` · $${Number(session.costUsd).toFixed(3)}` : ''}</footer>}
+      {session && (lastTool || cost) && (
+        <footer className="atlas-foot">
+          {lastTool && <span className="atlas-foot-tool"><span className="atlas-foot-label">last tool</span><code>{lastTool}</code></span>}
+          {cost && <span className="atlas-foot-cost"><span className="atlas-foot-label">cost</span><code>{cost}</code></span>}
+        </footer>
+      )}
     </article>
   );
 }
@@ -151,7 +219,7 @@ function AgentColumn({ column, identity, selected, permissions, campaigns }) {
 function Mark({ identity }) {
   const hue = identityHue(identity?.displayName ?? '?');
   if (identity?.iconUrl) return <img className="atlas-mark" src={identity.iconUrl} alt="" />;
-  return <span className="atlas-mark" style={{ background: `hsl(${hue} 28% 24%)` }}>{initials(identity?.displayName ?? '?')}</span>;
+  return <span className="atlas-mark" style={{ background: `hsl(${hue} 30% 26%)`, color: `hsl(${hue} 60% 86%)` }}>{initials(identity?.displayName ?? '?')}</span>;
 }
 
 export function ColumnTranscript({ session, campaigns }) {
@@ -177,9 +245,15 @@ export function ColumnTranscript({ session, campaigns }) {
 
   return (
     <div className="atlas-trace">
-      <p className="atlas-objective">{objective?.statement ?? session.target?.label ?? session.stateDetail ?? 'Awaiting assignment'}</p>
-      {rows.map((evt) => <TraceLine key={evt.seq} evt={evt} />)}
-      <div ref={bottomRef} />
+      <p className="atlas-objective">{objective?.statement ?? session.target?.label ?? session.stateDetail ?? 'Waiting for an assignment'}</p>
+      {rows.length ? (
+        <div className="atlas-feed">
+          {rows.map((evt) => <TraceLine key={evt.seq} evt={evt} />)}
+          <div ref={bottomRef} />
+        </div>
+      ) : (
+        <p className="atlas-feed-empty">Nothing reported yet. Messages and tool calls will appear here as the agent works.</p>
+      )}
     </div>
   );
 }
@@ -187,19 +261,46 @@ export function ColumnTranscript({ session, campaigns }) {
 function TraceLine({ evt }) {
   const data = evt.data ?? {};
   if (evt.kind === 'session.message') {
-    return <p className={`atlas-line ${data.role ?? ''}`}><span>{data.role}</span>{String(data.text ?? '').slice(0, 500)}</p>;
+    const role = data.role ?? 'note';
+    return (
+      <p className={`atlas-line ${role}`}>
+        <span className="atlas-role">{role === 'assistant' ? 'agent' : role}</span>
+        <span className="atlas-text">{String(data.text ?? '').slice(0, 500)}</span>
+      </p>
+    );
   }
   if (evt.kind === 'session.tool_use') {
-    return <p className="atlas-line tool"><span>{data.name}</span>{data.summary}</p>;
+    return (
+      <p className="atlas-line tool">
+        <span className="atlas-role">tool</span>
+        <span className="atlas-text"><code>{data.name}</code>{data.summary ? <> {data.summary}</> : null}</span>
+      </p>
+    );
   }
   if (evt.kind === 'session.tool_result') {
-    return <p className={`atlas-line ${data.ok === false ? 'error' : 'tool'}`}><span>{data.ok === false ? 'failed' : 'result'}</span>{String(data.preview ?? '').slice(0, 240)}</p>;
+    const failed = data.ok === false;
+    return (
+      <p className={`atlas-line ${failed ? 'error' : 'result'}`}>
+        <span className="atlas-role">{failed ? 'failed' : 'result'}</span>
+        <span className="atlas-text mono">{String(data.preview ?? '').slice(0, 240)}</span>
+      </p>
+    );
   }
   if (evt.kind === 'permission.requested') {
-    return <p className="atlas-line tool"><span>approval</span>{data.toolName}</p>;
+    return (
+      <p className="atlas-line approval">
+        <span className="atlas-role">approval</span>
+        <span className="atlas-text">Asked to run <code>{data.toolName}</code></span>
+      </p>
+    );
   }
   if (evt.kind === 'session.ended') {
-    return <p className={`atlas-line ${data.reason === 'error' ? 'error' : ''}`}><span>ended</span>{data.reason}{data.error ? ` · ${data.error}` : ''}</p>;
+    return (
+      <p className={`atlas-line ${data.reason === 'error' ? 'error' : 'ended'}`}>
+        <span className="atlas-role">ended</span>
+        <span className="atlas-text">{data.reason}{data.error ? ` · ${data.error}` : ''}</span>
+      </p>
+    );
   }
   return null;
 }
