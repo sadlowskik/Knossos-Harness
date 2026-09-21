@@ -1104,7 +1104,7 @@ mod tests {
         );
         assert!(
             !v.deterministic_tiers_passed(),
-            "still not a completed task"
+            "still not a completed task: {v:?}"
         );
     }
 
