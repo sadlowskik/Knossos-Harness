@@ -33,6 +33,9 @@ pub struct Hub {
     timer_armed: Arc<AtomicBool>,
     snapshot: SnapshotFn,
     interval: Duration,
+    /// The runtime that owns the coalescing timer, captured at construction
+    /// so a watcher or terminal thread can push without one of its own.
+    runtime: Option<tokio::runtime::Handle>,
     _keep: Mutex<()>,
 }
 
@@ -57,6 +60,7 @@ impl Hub {
             timer_armed: Arc::new(AtomicBool::new(false)),
             snapshot,
             interval,
+            runtime: tokio::runtime::Handle::try_current().ok(),
             _keep: Mutex::new(()),
         })
     }
@@ -85,10 +89,19 @@ impl Hub {
         self.dirty.store(true, Ordering::SeqCst);
         if !self.timer_armed.swap(true, Ordering::SeqCst) {
             let hub = Arc::clone(self);
-            tokio::spawn(async move {
-                tokio::time::sleep(hub.interval).await;
-                hub.flush();
-            });
+            let runtime = tokio::runtime::Handle::try_current()
+                .ok()
+                .or_else(|| self.runtime.clone());
+            match runtime {
+                Some(runtime) => {
+                    runtime.spawn(async move {
+                        tokio::time::sleep(hub.interval).await;
+                        hub.flush();
+                    });
+                }
+                // No runtime anywhere (a bare thread after shutdown): flush now.
+                None => hub.flush(),
+            }
         }
     }
 

@@ -9,6 +9,7 @@
 
 use super::config::FieldSettings;
 use super::eventlog::AppendOptions;
+use super::git::read_status;
 use super::js::{get, get_str, js_string};
 use super::policy::build_matcher;
 use super::registry::Emit;
@@ -16,7 +17,9 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// `.field-state` matters more than it looks: the event store writes its
@@ -124,7 +127,15 @@ fn changes(event: &Event) -> Vec<(PathBuf, Change)> {
 
 /// Starts one recursive watcher per mounted workspace. Errors on a single
 /// workspace are reported and skipped; the others still run.
-pub fn start_fs_watchers(settings: &FieldSettings, emit: Emit) -> FsWatchers {
+pub fn start_fs_watchers(settings: &FieldSettings, emit: Emit, state_dir: &Path) -> FsWatchers {
+    // The state directory is normally `.field-state` and already ignored by
+    // name; when it lives elsewhere inside a workspace (tests, custom
+    // FIELD_STATE) the event store's own writes must still never come back
+    // as filesystem events.
+    let mut skip_roots = vec![state_dir.to_path_buf()];
+    if let Ok(canonical) = state_dir.canonicalize() {
+        skip_roots.push(canonical);
+    }
     let mut watchers = Vec::new();
     for w in &settings.workspaces {
         if !get(w, "mounted").is_some_and(super::js::truthy) {
@@ -139,7 +150,13 @@ pub fn start_fs_watchers(settings: &FieldSettings, emit: Emit) -> FsWatchers {
         {
             patterns.extend(extra.iter().map(js_string));
         }
-        match watch_workspace(id.clone(), root.clone(), patterns, emit.clone()) {
+        match watch_workspace(
+            id.clone(),
+            root.clone(),
+            patterns,
+            skip_roots.clone(),
+            emit.clone(),
+        ) {
             Ok(watcher) => watchers.push(watcher),
             Err(error) => eprintln!("[fs:{id}] cannot watch {}: {error}", root.display()),
         }
@@ -153,6 +170,7 @@ fn watch_workspace(
     id: String,
     root: PathBuf,
     patterns: Vec<String>,
+    skip_roots: Vec<PathBuf>,
     emit: Emit,
 ) -> notify::Result<RecommendedWatcher> {
     let (tx, rx) = mpsc::channel::<(PathBuf, Change)>();
@@ -179,6 +197,9 @@ fn watch_workspace(
             loop {
                 match rx.recv_timeout(POLL) {
                     Ok((abs, change)) => {
+                        if skip_roots.iter().any(|r| abs.starts_with(r)) {
+                            continue;
+                        }
                         let rel = match relative(&root, &abs)
                             .or_else(|| relative(&canonical_root, &abs))
                         {
@@ -230,6 +251,86 @@ fn watch_workspace(
     Ok(watcher)
 }
 
+/// Polls `git status` for every mounted Git workspace and emits `git.status`
+/// when it changes. Port of `startGitWatchers` in `watch/git.js`: a workspace
+/// that is not a repository is reported once, as branchless, then left alone.
+pub struct GitWatchers {
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for GitWatchers {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+pub fn start_git_watchers(settings: &FieldSettings, emit: Emit, interval: Duration) -> GitWatchers {
+    let stop = Arc::new(AtomicBool::new(false));
+    let workspaces: Vec<(String, PathBuf)> = settings
+        .workspaces
+        .iter()
+        .filter(|w| {
+            get(w, "mounted").is_some_and(super::js::truthy)
+                && get(w, "git") != Some(&serde_json::Value::Bool(false))
+        })
+        .filter_map(|w| {
+            Some((
+                get_str(w, "id")?.to_string(),
+                PathBuf::from(get(w, "path").map(js_string)?),
+            ))
+        })
+        .collect();
+    let flag = Arc::clone(&stop);
+    let _ = std::thread::Builder::new()
+        .name("git-watch".into())
+        .spawn(move || {
+            let mut last: BTreeMap<String, String> = BTreeMap::new();
+            while !flag.load(Ordering::SeqCst) {
+                for (id, path) in &workspaces {
+                    match read_status(path) {
+                        Ok(status) => {
+                            let fingerprint = status.to_string();
+                            if last.get(id) == Some(&fingerprint) {
+                                continue;
+                            }
+                            last.insert(id.clone(), fingerprint);
+                            let mut data = status;
+                            if let Some(obj) = data.as_object_mut() {
+                                obj.insert("workspaceId".into(), json!(id));
+                            }
+                            emit("git.status", data, subject(id));
+                        }
+                        Err(_) => {
+                            if !last.contains_key(id) {
+                                last.insert(id.clone(), "nogit".into());
+                                emit(
+                                    "git.status",
+                                    json!({ "workspaceId": id, "branch": null, "ahead": 0, "behind": 0, "files": [] }),
+                                    subject(id),
+                                );
+                            }
+                        }
+                    }
+                }
+                // Sleep in short slices so a stop request is honoured promptly.
+                let until = Instant::now() + interval;
+                while Instant::now() < until && !flag.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+    GitWatchers { stop }
+}
+
+fn subject(id: &str) -> AppendOptions {
+    AppendOptions {
+        actor: None,
+        subject: Some(id.to_string()),
+        source: None,
+        simulated: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,7 +357,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let _watchers = start_fs_watchers(&settings, emit);
+        let _watchers = start_fs_watchers(&settings, emit, &root.join("state"));
         // Give the OS watcher a moment to arm before writing.
         std::thread::sleep(Duration::from_millis(300));
         std::fs::write(root.join("src").join("a.txt"), "one").unwrap();

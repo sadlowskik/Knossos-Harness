@@ -115,6 +115,7 @@ async fn fixture() -> Fixture {
         bootstrap_token: Some(BOOT.into()),
         browser_token: Some(BROWSER.into()),
         probe_endpoints: false,
+        watch_git: false,
     })
     .await
     .unwrap();

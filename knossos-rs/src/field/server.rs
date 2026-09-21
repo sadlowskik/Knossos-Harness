@@ -29,7 +29,7 @@ use super::stores::{EndpointsStore, KeyStore};
 use super::terminal::{
     redact_command, validate_terminal_command, RunRequest, Terminals, TERMINAL_LIMITS,
 };
-use super::watch::{start_fs_watchers, FsWatchers};
+use super::watch::{start_fs_watchers, start_git_watchers, FsWatchers, GitWatchers};
 use super::workspace::{fs_file, fs_put_file, fs_tree, resolve_workspace_path, ResolveOptions};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -81,6 +81,9 @@ pub struct ServerOptions {
     /// Probe every endpoint every 20 s and log `endpoint.health`. Off in
     /// tests, whose event sequence must not race the prober.
     pub probe_endpoints: bool,
+    /// Poll `git status` of every mounted workspace every 5 s and log
+    /// `git.status` on change. Off in tests for the same reason.
+    pub watch_git: bool,
 }
 
 pub struct AppState {
@@ -103,6 +106,7 @@ pub struct AppState {
     routine_feed: tokio::sync::mpsc::UnboundedSender<super::Event>,
     /// Kept for its lifetime: dropping it stops the workspace watchers.
     _watchers: Mutex<FsWatchers>,
+    _git_watchers: Mutex<Option<GitWatchers>>,
     pub dist_dir: PathBuf,
     headers: Vec<(HeaderName, HeaderValue)>,
 }
@@ -1945,6 +1949,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         });
     let routine_emit = emit.clone();
     let watcher_emit = emit.clone();
+    let git_emit = emit.clone();
     let director_emit = emit.clone();
     let policy_projection = Arc::clone(&projection);
     let campaign_policy: super::registry::CampaignPolicy = Arc::new(move |id: &str| {
@@ -2021,7 +2026,19 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         let settings = settings
             .read()
             .map_err(|_| anyhow::anyhow!("settings lock poisoned"))?;
-        start_fs_watchers(&settings, watcher_emit)
+        start_fs_watchers(&settings, watcher_emit, &options.state_dir)
+    };
+    let git_watchers = if options.watch_git {
+        let settings = settings
+            .read()
+            .map_err(|_| anyhow::anyhow!("settings lock poisoned"))?;
+        Some(start_git_watchers(
+            &settings,
+            git_emit,
+            Duration::from_secs(5),
+        ))
+    } else {
+        None
     };
 
     let state = Arc::new(AppState {
@@ -2038,6 +2055,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         routines: Arc::clone(&routines),
         routine_feed,
         _watchers: Mutex::new(watchers),
+        _git_watchers: Mutex::new(git_watchers),
         dist_dir: options.dist_dir.clone(),
         headers,
     });
@@ -2118,9 +2136,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
             settings.roles.len()
         );
         eprintln!("  endpoints     {} configured", settings.endpoints.len());
-        eprintln!(
-            "  runtime       rust (knossos field --native); routes not yet ported answer 501"
-        );
+        eprintln!("  runtime       rust (knossos field --native); rehearsals answer 501");
         for w in settings
             .workspaces
             .iter()
