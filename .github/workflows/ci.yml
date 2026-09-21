@@ -99,11 +99,11 @@ jobs:
         # with `timeout(1)` in front of cargo.
         run: |
           LOG="$GITHUB_WORKSPACE/ci-rust.log"
-          if command -v setsid >/dev/null 2>&1; then
-            setsid cargo test --all-targets --locked > "$LOG" 2>&1 &
-          else
-            cargo test --all-targets --locked > "$LOG" 2>&1 &
-          fi
+          # Plain background job on every OS. Ubuntu alone used setsid here
+          # and Ubuntu alone kept losing its runner about 90 s into this
+          # step, while macOS (no setsid) and Windows sailed through; the
+          # 25-minute kill below addresses the process tree by name instead.
+          cargo test --all-targets --locked > "$LOG" 2>&1 &
           pid=$!
           # An independent heartbeat, so a stall in the main loop (a hung git
           # push in the partial publish, say) can be told apart from a runner
@@ -145,8 +145,9 @@ jobs:
                 echo "=== tests that never reported (compare against a green run)"
               } >> "$LOG"
               kill "$heartbeat" 2>/dev/null || true
-              kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+              kill -KILL "$pid" 2>/dev/null || true
               pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
+              pkill -KILL -x knossos 2>/dev/null || true
               cat "$LOG"
               exit 124
             fi
