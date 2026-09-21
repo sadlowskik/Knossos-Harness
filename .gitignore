@@ -32,3 +32,8 @@ out/
 .DS_Store
 .vscode/
 .idea/
+
+# Tauri app: generated schemas and mobile icon sets
+app/gen/
+app/icons/android/
+app/icons/ios/
