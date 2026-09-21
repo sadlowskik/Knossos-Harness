@@ -1,0 +1,14 @@
+heartbeat 12:09:58 37s
+=== phase build 12:09:21
+               total        used        free      shared  buff/cache   available
+Mem:           15988         885       10173          48        4929       14708
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8280       00:01 73.0 210408 /usr/lib/gcc/x86_64-linux-gnu/11/cc1 -quiet -imultiarch x86_64-linux-gnu -D SQLITE_CORE -D SQLITE_DEFAULT_FOREIGN_KEYS=1 -D SQLITE_ENABLE_API_ARMOR -D SQLITE_ENABLE_COL
+   1656       01:29  2.8 135160 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1601       02:22  1.1 130748 /tmp/provjobd907791175
+   5295       00:37  1.0 83136 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+      1       02:43  0.8 13600 /sbin/init
+[   11.473987] overlayfs: fs on '/home/runner/.local/share/containers/storage/overlay/metacopy-check3488792216/l1' does not support file handles, falling back to xino=off.
+[   11.495600] overlayfs: fs on '/home/runner/.local/share/containers/storage/overlay/opaque-bug-check3134758962/l2' does not support file handles, falling back to xino=off.
+[   49.412150] hv_balloon: Max. dynamic memory size: 16384 MB
