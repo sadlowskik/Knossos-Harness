@@ -12,20 +12,26 @@
 //! then the director and routines. The web client and the `field-event-v1`
 //! vocabulary do not change.
 
+pub mod adapter;
 pub mod budget_ledger;
 pub mod campaign_projection;
+pub mod child_env;
 pub mod config;
 pub mod eventlog;
 pub mod graph_projection;
 pub mod hub;
 pub mod js;
+pub mod knossos_session;
 pub mod model;
 pub mod page;
+pub mod policy;
 pub mod projection;
+pub mod registry;
 pub mod replay;
 pub mod sanitize;
 pub mod security;
 pub mod server;
+pub mod stores;
 
 pub use eventlog::{Event, EventLog, Health, Source, EVENT_LOG_SCHEMA_VERSION};
 pub use page::{page_result, parse_event_page, EventPage, PageResult, PaginationError};

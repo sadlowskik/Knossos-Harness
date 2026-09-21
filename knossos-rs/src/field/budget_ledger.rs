@@ -91,6 +91,10 @@ impl BudgetLedger {
         }
     }
 
+    pub fn reservation(&self, session_id: &str) -> Option<&Reservation> {
+        self.reservations.get(session_id)
+    }
+
     pub fn reserved(entry: &Reservation) -> f64 {
         if entry.terminal && entry.settled && entry.spent_usd.is_some() {
             return 0.0;

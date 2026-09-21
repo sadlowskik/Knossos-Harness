@@ -282,6 +282,83 @@ impl FieldSettings {
     }
 }
 
+/// Update frontmatter fields while preserving the record body verbatim.
+pub fn update_frontmatter_file(file: &Path, updates: &Value) -> Result<Value, ConfigError> {
+    let text = std::fs::read_to_string(file)?;
+    let (data, body) = frontmatter(&text);
+    let mut next = data.as_object().cloned().unwrap_or_default();
+    if let Value::Object(u) = updates {
+        for (k, v) in u {
+            next.insert(k.clone(), v.clone());
+        }
+    }
+    let next = Value::Object(next);
+    let yaml = serde_yaml_ng::to_string(&next).map_err(ConfigError::Yaml)?;
+    let yaml = yaml.trim_end();
+    let separator = if body.starts_with('\n') || body.is_empty() {
+        ""
+    } else {
+        "\n"
+    };
+    std::fs::write(file, format!("---\n{yaml}\n---\n{separator}{body}"))?;
+    Ok(next)
+}
+
+/// Compose the system prompt an agent runs under: constitution, role, agent
+/// body, mission, orders, and the Field reporting protocol.
+pub fn compose_prompt(
+    cfg: &FieldSettings,
+    agent_id: &str,
+    role_id: Option<&str>,
+    mission_id: Option<&str>,
+    orders: Option<&str>,
+) -> String {
+    let find =
+        |list: &[Value], id: &str| list.iter().find(|x| get_str(x, "id") == Some(id)).cloned();
+    let agent = find(&cfg.agents, agent_id);
+    let role_id = role_id.map(str::to_string).or_else(|| {
+        agent
+            .as_ref()
+            .and_then(|a| get_str(a, "role").map(str::to_string))
+    });
+    let role = role_id.as_deref().and_then(|r| find(&cfg.roles, r));
+    let constitution_id = agent
+        .as_ref()
+        .and_then(|a| get_str(a, "constitution").map(str::to_string))
+        .unwrap_or_else(|| "core".into());
+    let constitution = find(&cfg.constitutions, &constitution_id);
+    let mission = mission_id.and_then(|m| find(&cfg.missions, m));
+    let body = |v: &Value| get_str(v, "body").unwrap_or("").trim().to_string();
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(c) = &constitution {
+        parts.push(body(c));
+    }
+    if let Some(r) = &role {
+        parts.push(body(r));
+    }
+    if let Some(a) = agent.as_ref().filter(|a| !body(a).is_empty()) {
+        parts.push(body(a));
+    }
+    if let Some(m) = &mission {
+        parts.push(format!(
+            "# Active mission: {}\n\n{}",
+            get_str(m, "name").unwrap_or(""),
+            body(m)
+        ));
+    }
+    if let Some(o) = orders.map(str::trim).filter(|o| !o.is_empty()) {
+        parts.push(format!("# Orders from the operator\n\n{o}"));
+    }
+    parts.push(
+        "# Field reporting protocol\n\n\
+         You are running as a unit inside Field, an operator-controlled multi-agent environment.\n\
+         The operator watches your tool calls live. Keep prose short; the work is the output.\n\
+         When you finish, state plainly what changed, what you verified, and what you did not."
+            .to_string(),
+    );
+    parts.join("\n\n---\n\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

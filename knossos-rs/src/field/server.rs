@@ -9,18 +9,20 @@
 //! or process spawning answer `501 not_ported` until their port lands, so a
 //! client can tell "not here yet" from "refused".
 
-use super::config::{load_config, FieldSettings};
+use super::config::{load_config, update_frontmatter_file, FieldSettings};
 use super::eventlog::{AppendOptions, Backend, EventLog};
 use super::hub::{Hub, Outbound};
 use super::js::{get, get_arr, get_str, js_string};
 use super::model::DomainError;
 use super::page::{page_result, parse_event_page};
 use super::projection::Projection;
+use super::registry::{Capabilities, PermissionOutcome, Registry, RegistryOptions};
 use super::replay::{read_event_range, replay_into, Range};
 use super::security::{
     Authority, Bootstrap, ControlSecurity, Denied, RequestFacts, SecurityOptions,
 };
-use axum::body::{to_bytes, Body};
+use super::stores::{EndpointsStore, KeyStore};
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, FromRequestParts, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, Request, StatusCode};
@@ -29,7 +31,7 @@ use axum::Router;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -70,11 +72,14 @@ pub struct ServerOptions {
 }
 
 pub struct AppState {
-    pub settings: FieldSettings,
-    pub log: Mutex<EventLog>,
+    pub settings: Arc<RwLock<FieldSettings>>,
+    pub log: Arc<Mutex<EventLog>>,
     pub projection: Arc<Mutex<Projection>>,
-    pub security: Mutex<ControlSecurity>,
+    pub security: Arc<Mutex<ControlSecurity>>,
     pub hub: Arc<Hub>,
+    pub registry: Arc<Mutex<Registry>>,
+    pub keys: Arc<Mutex<KeyStore>>,
+    pub endpoints_store: Arc<Mutex<EndpointsStore>>,
     pub dist_dir: PathBuf,
     headers: Vec<(HeaderName, HeaderValue)>,
 }
@@ -250,16 +255,47 @@ fn param<'a>(query: &'a [(String, String)], key: &str) -> Option<&'a str> {
 }
 
 /// One bounded JSON request body, by wire bytes.
+///
+/// An oversized body is drained rather than abandoned: closing the socket
+/// with unread bytes makes some stacks (macOS) reset the connection before
+/// the client has read the 413, which the reference avoids with
+/// `req.resume()`. A hard ceiling still bounds the drain.
 async fn read_json_body(body: Body) -> Result<Value, ApiError> {
-    let bytes = match tokio::time::timeout(BODY_TIMEOUT, to_bytes(body, MAX_BODY_BYTES)).await {
-        Ok(Ok(bytes)) => bytes,
-        Ok(Err(_)) => {
-            return Err(ApiError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "body_too_large",
-                "request body exceeds the allowed size",
-            ))
+    use futures_util::StreamExt;
+    const DRAIN_CEILING: usize = 64 * 1024 * 1024;
+    let mut stream = body.into_data_stream();
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    let mut too_large = false;
+    let read = tokio::time::timeout(BODY_TIMEOUT, async {
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(_) => {
+                    return Err(ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "body_aborted",
+                        "request body was aborted",
+                    ))
+                }
+            };
+            total += chunk.len();
+            if total > MAX_BODY_BYTES {
+                too_large = true;
+                bytes.clear();
+                if total > DRAIN_CEILING {
+                    break;
+                }
+                continue;
+            }
+            bytes.extend_from_slice(&chunk);
         }
+        Ok(())
+    })
+    .await;
+    match read {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e),
         Err(_) => {
             return Err(ApiError::new(
                 StatusCode::REQUEST_TIMEOUT,
@@ -267,7 +303,14 @@ async fn read_json_body(body: Body) -> Result<Value, ApiError> {
                 "request body timed out",
             ))
         }
-    };
+    }
+    if too_large {
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "body_too_large",
+            "request body exceeds the allowed size",
+        ));
+    }
     if bytes.is_empty() {
         return Ok(json!({}));
     }
@@ -329,12 +372,23 @@ async fn dispatch(state: &Arc<AppState>, addr: SocketAddr, req: Request<Body>) -
     }
 
     if req.method() == Method::POST && facts.path == "/api/logout" {
+        let abandoned = state
+            .registry
+            .lock()
+            .map(|mut r| r.abandon_operator())
+            .unwrap_or_else(|_| json!({}));
         let cookie: Option<String> = state.with_security(|s| {
             s.revoke_all_harness_tokens();
             s.revoke_browser_session()
         });
         state.hub.revoke_clients();
-        let mut response = json_response(StatusCode::OK, &json!({ "ok": true, "abandoned": 0 }));
+        let mut body = json!({ "ok": true });
+        if let (Value::Object(o), Value::Object(a)) = (&mut body, &abandoned) {
+            for (k, v) in a {
+                o.insert(k.clone(), v.clone());
+            }
+        }
+        let mut response = json_response(StatusCode::OK, &body);
         if let Some(cookie) = cookie.and_then(|c| HeaderValue::from_str(&c).ok()) {
             response.headers_mut().insert(header::SET_COOKIE, cookie);
         }
@@ -352,6 +406,12 @@ async fn dispatch(state: &Arc<AppState>, addr: SocketAddr, req: Request<Body>) -
         } else {
             Value::Null
         };
+        if method == Method::POST && facts.path == "/api/internal/permission" {
+            return match internal_permission(state, body, &authority).await {
+                Ok(value) => json_response(StatusCode::OK, &value),
+                Err(e) => e.into_response(),
+            };
+        }
         return match api(state, &method, &facts.path, &params, body, &authority) {
             Ok(value) => json_response(StatusCode::OK, &value),
             Err(e) => e.into_response(),
@@ -377,7 +437,11 @@ fn api(
             .lock()
             .map(|p| Value::Object(p.world().clone()))
             .unwrap_or_else(|_| json!({}))),
-        "GET /api/config" => Ok(state.settings.view()),
+        "GET /api/config" => Ok(state
+            .settings
+            .read()
+            .map(|s| s.view())
+            .unwrap_or_else(|_| json!({}))),
         "GET /api/events" => {
             let page = parse_event_page(param(params, "from"), param(params, "limit"))
                 .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, e.code, e.message))?;
@@ -508,7 +572,12 @@ fn api(
                     }
                 },
             };
-            let mut historical = Projection::new(state.settings.projection_config());
+            let seed = state
+                .settings
+                .read()
+                .map(|s| s.projection_config())
+                .unwrap_or_default();
+            let mut historical = Projection::new(seed);
             let replayed = replay_into(&*log, &mut historical, Range::default().to(requested));
             let now = replayed
                 .last_event
@@ -537,7 +606,9 @@ fn api(
                 .to_string();
             let mounted = state
                 .settings
-                .workspace(&workspace_id)
+                .read()
+                .ok()
+                .and_then(|s| s.workspace(&workspace_id).cloned())
                 .is_some_and(|w| w.get("mounted") == Some(&Value::Bool(true)));
             if !mounted {
                 let shown = if workspace_id.is_empty() {
@@ -575,6 +646,110 @@ fn api(
             )?;
             Ok(json!({ "ok": true }))
         }
+        "POST /api/sessions" => {
+            let id = state
+                .registry
+                .lock()
+                .map_err(|_| ApiError::internal("registry lock poisoned"))?
+                .spawn(&body)
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0))?;
+            Ok(json!({ "sessionId": id }))
+        }
+        "POST /api/assign" => state
+            .registry
+            .lock()
+            .map_err(|_| ApiError::internal("registry lock poisoned"))?
+            .assign(&body)
+            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0)),
+        "POST /api/command" => {
+            let kind = get_str(&body, "kind").unwrap_or("").to_string();
+            state
+                .registry
+                .lock()
+                .map_err(|_| ApiError::internal("registry lock poisoned"))?
+                .command(&kind, &body)
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0))
+        }
+        "POST /api/permission/decide" => {
+            let id = get_str(&body, "permissionId").unwrap_or("").to_string();
+            let decision = get_str(&body, "decision").unwrap_or("deny").to_string();
+            let message = get_str(&body, "message").map(str::to_string);
+            let ok = state
+                .registry
+                .lock()
+                .map_err(|_| ApiError::internal("registry lock poisoned"))?
+                .decide_permission(&id, &decision, message.as_deref());
+            Ok(json!({ "ok": ok }))
+        }
+        "POST /api/agents/settings" => agent_settings(state, &body),
+        "GET /api/endpoints" => {
+            let settings = state
+                .settings
+                .read()
+                .map_err(|_| ApiError::internal("settings lock poisoned"))?;
+            let store = state
+                .endpoints_store
+                .lock()
+                .map_err(|_| ApiError::internal("endpoints store lock poisoned"))?;
+            let snapshot = state.snapshot();
+            let status_of = |id: &str| -> Value {
+                snapshot["endpoints"]
+                    .as_array()
+                    .and_then(|list| list.iter().find(|e| e["id"] == id))
+                    .and_then(|e| e.get("status").cloned())
+                    .unwrap_or(json!("unknown"))
+            };
+            Ok(json!({
+                "endpoints": settings.endpoints.iter().map(|e| {
+                    let id = get_str(e, "id").unwrap_or("");
+                    json!({
+                        "id": id, "name": get(e, "name").cloned().unwrap_or(json!(id)), "kind": e.get("kind"),
+                        "model": or_null_value(e.get("model")),
+                        "base_url": get(e, "base_url").or(get(e, "baseUrl")).cloned().unwrap_or(Value::Null),
+                        "source": if store.get(id).is_some() { "user" } else { "config" },
+                        "hasKey": get(e, "secretRef").is_some() || get(e, "credential_env").is_some(),
+                        "status": status_of(id),
+                    })
+                }).collect::<Vec<_>>(),
+            }))
+        }
+        "POST /api/endpoints" => add_endpoint(state, &body),
+        "POST /api/endpoints/test" => Err(ApiError::not_ported(&key)),
+        "POST /api/endpoints/delete" => {
+            let id = get_str(&body, "id").unwrap_or("").to_string();
+            let desc = state
+                .endpoints_store
+                .lock()
+                .ok()
+                .and_then(|s| s.get(&id).cloned());
+            let Some(desc) = desc else {
+                let shown = if id.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    id.clone()
+                };
+                return Err(DomainError::new(
+                    "not_found",
+                    format!("{shown} is not a user-added endpoint"),
+                )
+                .into());
+            };
+            if let Some(secret) = get_str(&desc, "secretRef") {
+                if let Ok(mut keys) = state.keys.lock() {
+                    let _ = keys.delete(secret);
+                }
+            }
+            if let Ok(mut store) = state.endpoints_store.lock() {
+                let _ = store.remove(&id);
+            }
+            if let Ok(mut settings) = state.settings.write() {
+                settings.endpoints.retain(|e| get_str(e, "id") != Some(&id));
+            }
+            if let Ok(mut projection) = state.projection.lock() {
+                projection.remove_endpoint(&id);
+            }
+            Ok(json!({ "ok": true }))
+        }
         "GET /api/simulations" => {
             Ok(json!({ "enabled": false, "active": Value::Null, "scenarios": [] }))
         }
@@ -584,6 +759,207 @@ fn api(
         }
         _ => Err(ApiError::not_ported(&key)),
     }
+}
+
+fn or_null_value(v: Option<&Value>) -> Value {
+    v.cloned().unwrap_or(Value::Null)
+}
+
+/// `POST /api/internal/permission`: called by a harness with its session
+/// capability; held open until the operator or the policy decides.
+async fn internal_permission(
+    state: &Arc<AppState>,
+    body: Value,
+    authority: &Authority,
+) -> Result<Value, ApiError> {
+    let Authority::Harness { session_id } = authority else {
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "internal_auth_required",
+            "Valid harness authorization is required.",
+        ));
+    };
+    let outcome = state
+        .registry
+        .lock()
+        .map_err(|_| ApiError::internal("registry lock poisoned"))?
+        .request_permission(
+            session_id,
+            get_str(&body, "toolName").unwrap_or(""),
+            body.get("input").cloned().unwrap_or(Value::Null),
+            body.get("toolUseId").cloned(),
+            Some(session_id),
+        );
+    let decision = match outcome {
+        PermissionOutcome::Immediate(d) => d,
+        PermissionOutcome::Pending(rx) => rx.await.unwrap_or(super::registry::Decision {
+            decision: "deny".into(),
+            message: Some("the permission request was dropped".into()),
+        }),
+    };
+    Ok(json!({ "decision": decision.decision, "message": decision.message }))
+}
+
+fn agent_settings(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let agent_id = get_str(body, "agentId").unwrap_or("").trim().to_string();
+    let mut settings = state
+        .settings
+        .write()
+        .map_err(|_| ApiError::internal("settings lock poisoned"))?;
+    let Some(index) = settings
+        .agents
+        .iter()
+        .position(|a| get_str(a, "id") == Some(&agent_id))
+    else {
+        let shown = if agent_id.is_empty() {
+            "(empty)".to_string()
+        } else {
+            agent_id.clone()
+        };
+        return Err(DomainError::new("not_found", format!("agent {shown} does not exist")).into());
+    };
+    let agent = settings.agents[index].clone();
+    let role = get_str(&agent, "role").and_then(|r| {
+        settings
+            .roles
+            .iter()
+            .find(|x| get_str(x, "id") == Some(r))
+            .cloned()
+    });
+    let role_tools: Vec<String> = role
+        .as_ref()
+        .and_then(|r| get_arr(r, "tools_allow"))
+        .map(|t| t.iter().map(js_string).collect())
+        .unwrap_or_default();
+    let requested: Vec<String> = match get_arr(body, "toolsAllow") {
+        Some(items) => items.iter().map(js_string).collect(),
+        None => get_arr(&agent, "tools_allow")
+            .map(|t| t.iter().map(js_string).collect())
+            .unwrap_or_else(|| role_tools.clone()),
+    };
+    let mut tools_allow: Vec<String> = Vec::new();
+    for tool in requested {
+        if role_tools.contains(&tool) && !tools_allow.contains(&tool) {
+            tools_allow.push(tool);
+        }
+    }
+    let name: String = get(body, "name")
+        .map(js_string)
+        .or_else(|| get_str(&agent, "name").map(str::to_string))
+        .unwrap_or_else(|| agent_id.clone())
+        .trim()
+        .chars()
+        .take(64)
+        .collect();
+    let name = if name.is_empty() {
+        agent_id.clone()
+    } else {
+        name
+    };
+    let updates = json!({ "name": name, "tools_allow": tools_allow });
+    if let Some(file) = get_str(&agent, "file") {
+        update_frontmatter_file(Path::new(file), &updates)
+            .map_err(|e| ApiError::internal(format!("cannot update {file}: {e}")))?;
+    }
+    if let Value::Object(a) = &mut settings.agents[index] {
+        a.insert("name".into(), json!(name));
+        a.insert("tools_allow".into(), json!(tools_allow));
+    }
+    let mut stripped = settings.agents[index]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    stripped.remove("body");
+    stripped.remove("file");
+    drop(settings);
+    state.emit(
+        "agent.settings_updated",
+        json!({ "agentId": agent_id, "name": name, "toolsAllow": tools_allow }),
+        AppendOptions::subject(agent_id.clone()),
+    )?;
+    Ok(json!({ "agent": Value::Object(stripped), "appliesTo": "future_sessions" }))
+}
+
+fn add_endpoint(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let raw_id = get(body, "id").map(js_string).unwrap_or_default();
+    let id: String = raw_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(48)
+        .collect();
+    if id.is_empty() {
+        return Err(
+            DomainError::new("bad_request", "id is required (letters, digits, - _)").into(),
+        );
+    }
+    let kind = get_str(body, "kind").unwrap_or("").to_string();
+    if !matches!(kind.as_str(), "anthropic" | "openai-compatible") {
+        return Err(DomainError::new(
+            "bad_request",
+            "kind must be \"anthropic\" or \"openai-compatible\"",
+        )
+        .into());
+    }
+    let name: String = get(body, "name")
+        .map(js_string)
+        .unwrap_or_else(|| id.clone())
+        .chars()
+        .take(64)
+        .collect();
+    let model: Option<String> = get(body, "model")
+        .filter(|m| super::js::truthy(m))
+        .map(|m| js_string(m).chars().take(128).collect());
+    let base_url: Option<String> = get(body, "base_url")
+        .filter(|b| super::js::truthy(b))
+        .map(|b| js_string(b).trim().to_string());
+    if let Some(b) = &base_url {
+        let lower = b.to_ascii_lowercase();
+        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+            return Err(DomainError::new(
+                "bad_request",
+                "base_url must start with http:// or https://",
+            )
+            .into());
+        }
+    }
+    let mut desc =
+        json!({ "id": id, "name": name, "kind": kind, "model": model, "base_url": base_url });
+    let key = get(body, "key")
+        .filter(|k| super::js::truthy(k))
+        .map(js_string);
+    if let Some(key) = &key {
+        let secret_ref = format!("ep:{id}");
+        state
+            .keys
+            .lock()
+            .map_err(|_| ApiError::internal("key store lock poisoned"))?
+            .set(&secret_ref, key)
+            .map_err(|e| ApiError::internal(format!("cannot store the key: {e}")))?;
+        if let Ok(mut log) = state.log.lock() {
+            log.add_secret(key.clone());
+        }
+        desc["secretRef"] = json!(secret_ref);
+    }
+    state
+        .endpoints_store
+        .lock()
+        .map_err(|_| ApiError::internal("endpoints store lock poisoned"))?
+        .add(desc.clone())
+        .map_err(|e| ApiError::internal(format!("cannot store the endpoint: {e}")))?;
+    if let Ok(mut settings) = state.settings.write() {
+        match settings
+            .endpoints
+            .iter()
+            .position(|e| get_str(e, "id") == Some(&id))
+        {
+            Some(i) => settings.endpoints[i] = desc.clone(),
+            None => settings.endpoints.push(desc.clone()),
+        }
+    }
+    if let Ok(mut projection) = state.projection.lock() {
+        projection.ensure_endpoint(&id, &name, &kind, model.as_deref(), base_url.as_deref());
+    }
+    Ok(json!({ "ok": true, "id": id, "hasKey": key.is_some() }))
 }
 
 fn world_cluster(input: &Value) -> Result<Value, DomainError> {
@@ -656,7 +1032,7 @@ fn reconcile_world(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiErro
         .unwrap_or_else(|| {
             json!({
                 "clusterKey": capital_key,
-                "label": state.settings.workspace(&capital_workspace_id).and_then(|w| get(w, "name")).cloned().unwrap_or(json!(capital_workspace_id)),
+                "label": state.settings.read().ok().and_then(|s| s.workspace(&capital_workspace_id).and_then(|w| get(w, "name")).cloned()).unwrap_or(json!(capital_workspace_id)),
                 "kind": "project",
                 "workspaceId": capital_workspace_id,
             })
@@ -901,10 +1277,115 @@ pub struct Running {
 
 impl Running {
     pub async fn stop(mut self) {
+        if let Ok(mut registry) = self.state.registry.lock() {
+            registry.shutdown();
+        }
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
         }
         let _ = self.task.await;
+    }
+}
+
+/// Real health for real inference connections, on a slow heartbeat. Port of
+/// `field/server/src/endpoints.js`: an `openai-compatible` endpoint answers
+/// `GET /models`; an `anthropic` one is probed for reachability of the
+/// provider host, which proves the route out and nothing about credentials.
+fn spawn_endpoint_probes(state: Arc<AppState>) {
+    const INTERVAL: Duration = Duration::from_secs(20);
+    const HEARTBEAT: Duration = Duration::from_secs(5 * 60);
+    const TIMEOUT: Duration = Duration::from_millis(2500);
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder().timeout(TIMEOUT).build().ok();
+        let mut last: std::collections::HashMap<String, (String, std::time::Instant)> =
+            std::collections::HashMap::new();
+        loop {
+            let endpoints: Vec<Value> = state
+                .settings
+                .read()
+                .map(|s| s.endpoints.clone())
+                .unwrap_or_default();
+            for ep in endpoints {
+                let id = get_str(&ep, "id").unwrap_or("").to_string();
+                let kind = get_str(&ep, "kind").unwrap_or("");
+                let base = get_str(&ep, "base_url")
+                    .or(get_str(&ep, "baseUrl"))
+                    .map(|b| b.trim_end_matches('/').to_string());
+                let (status, latency, detail) = match (kind, base, &client) {
+                    ("openai-compatible" | "cameo", Some(base), Some(client)) => {
+                        probe_http(client, &format!("{base}/models")).await
+                    }
+                    ("anthropic", _, Some(client)) => {
+                        let (s, l, d) =
+                            probe_http(client, "https://api.anthropic.com/v1/models").await;
+                        let d = if s == "up" {
+                            format!("reachable · {d}")
+                        } else {
+                            d
+                        };
+                        (s, l, d)
+                    }
+                    _ => (
+                        "unknown".to_string(),
+                        None,
+                        format!("no probe defined for kind \"{kind}\""),
+                    ),
+                };
+                let now = std::time::Instant::now();
+                let previous = last.get(&id).cloned();
+                let changed = previous.as_ref().map(|(s, _)| s != &status).unwrap_or(true);
+                let stale = previous
+                    .as_ref()
+                    .map(|(_, at)| now.duration_since(*at) > HEARTBEAT)
+                    .unwrap_or(true);
+                let at = if changed || stale {
+                    now
+                } else {
+                    previous.as_ref().map(|(_, at)| *at).unwrap_or(now)
+                };
+                last.insert(id.clone(), (status.clone(), at));
+                if changed || stale {
+                    let _ = state.emit(
+                        "endpoint.health",
+                        json!({ "endpointId": id, "status": status, "latencyMs": latency, "detail": detail }),
+                        AppendOptions::subject(id.clone()),
+                    );
+                }
+                if changed {
+                    if let Ok(mut registry) = state.registry.lock() {
+                        registry.on_endpoint_health(&id, &status);
+                    }
+                }
+            }
+            tokio::time::sleep(INTERVAL).await;
+        }
+    });
+}
+
+async fn probe_http(client: &reqwest::Client, url: &str) -> (String, Option<u64>, String) {
+    let started = std::time::Instant::now();
+    match client.get(url).send().await {
+        Ok(res) => {
+            let code = res.status().as_u16();
+            let status = if res.status().is_success() || code == 401 || code == 403 {
+                "up"
+            } else {
+                "degraded"
+            };
+            (
+                status.to_string(),
+                Some(started.elapsed().as_millis() as u64),
+                format!("HTTP {code}"),
+            )
+        }
+        Err(e) => {
+            let detail = if e.is_timeout() {
+                "no response in 2500ms".to_string()
+            } else {
+                e.to_string()
+            };
+            ("down".to_string(), None, detail)
+        }
     }
 }
 
@@ -947,6 +1428,28 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
     let log = EventLog::open(&options.state_dir, secrets, options.backend)
         .context("opening the event log")?;
 
+    // UI-added models: keys live only in the key store; endpoint descriptors
+    // merge over field.yaml. Every stored key is a redaction secret before
+    // anything runs.
+    let keys = KeyStore::open(&options.state_dir);
+    let endpoints_store = EndpointsStore::open(&options.state_dir);
+    let mut log = log;
+    for value in keys.values() {
+        log.add_secret(value);
+    }
+    let mut settings = settings;
+    for desc in endpoints_store.all() {
+        let id = get_str(&desc, "id").unwrap_or("").to_string();
+        match settings
+            .endpoints
+            .iter()
+            .position(|e| get_str(e, "id") == Some(&id))
+        {
+            Some(i) => settings.endpoints[i] = desc,
+            None => settings.endpoints.push(desc),
+        }
+    }
+
     let mut projection = Projection::new(settings.projection_config());
     let replay_started = std::time::Instant::now();
     let replayed = replay_into(&log, &mut projection, Range::default());
@@ -967,15 +1470,73 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         .filter_map(|(k, v)| Some((HeaderName::from_static(k), HeaderValue::from_str(&v).ok()?)))
         .collect();
     let bootstrap_url = security.bootstrap_url();
+    let settings = Arc::new(RwLock::new(settings));
+    let log = Arc::new(Mutex::new(log));
+    let security = Arc::new(Mutex::new(security));
+    let keys = Arc::new(Mutex::new(keys));
+
+    // The registry emits through the same append-fold-fanout path as the API.
+    let emit_log = Arc::clone(&log);
+    let emit_projection = Arc::clone(&projection);
+    let emit_hub = Arc::clone(&hub);
+    let emit: super::registry::Emit =
+        Arc::new(move |kind: &str, data: Value, options: AppendOptions| {
+            let event = emit_log.lock().ok()?.append(kind, data, options).ok()?;
+            if let Ok(mut p) = emit_projection.lock() {
+                p.apply(&event);
+            }
+            emit_hub.push_event(&event);
+            Some(event)
+        });
+    let policy_projection = Arc::clone(&projection);
+    let campaign_policy: super::registry::CampaignPolicy = Arc::new(move |id: &str| {
+        let p = policy_projection.lock().ok()?;
+        let campaign = p.campaigns.campaigns.get(id)?;
+        Some(p.campaigns.campaign_view(campaign))
+    });
+    let mint_security = Arc::clone(&security);
+    let revoke_security = Arc::clone(&security);
+    let secret_log = Arc::clone(&log);
+    let registry = Registry::new(RegistryOptions {
+        settings: Arc::clone(&settings),
+        emit,
+        api_base: format!("http://127.0.0.1:{port}"),
+        keys: Some(Arc::clone(&keys)),
+        capabilities: Some(Capabilities {
+            mint: Arc::new(move |session_id: &str| {
+                mint_security
+                    .lock()
+                    .ok()
+                    .map(|mut s| s.mint_harness_token(session_id))
+            }),
+            revoke: Arc::new(move |session_id: &str| {
+                if let Ok(mut s) = revoke_security.lock() {
+                    s.revoke_harness_token(session_id);
+                }
+            }),
+        }),
+        register_secret: Some(Arc::new(move |secret: &str| {
+            if let Ok(mut l) = secret_log.lock() {
+                l.add_secret(secret.to_string());
+            }
+        })),
+        campaign_policy: Some(campaign_policy),
+        factory: None,
+    });
+
     let state = Arc::new(AppState {
         settings,
-        log: Mutex::new(log),
+        log,
         projection,
-        security: Mutex::new(security),
+        security,
         hub,
+        registry,
+        keys,
+        endpoints_store: Arc::new(Mutex::new(endpoints_store)),
         dist_dir: options.dist_dir.clone(),
         headers,
     });
+    spawn_endpoint_probes(Arc::clone(&state));
 
     let app = Router::new()
         .fallback(handle)
@@ -996,8 +1557,11 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
             .log
             .lock()
             .map_err(|_| anyhow::anyhow!("event log lock poisoned"))?;
-        let mounted = state
+        let settings = state
             .settings
+            .read()
+            .map_err(|_| anyhow::anyhow!("settings lock poisoned"))?;
+        let mounted = settings
             .workspaces
             .iter()
             .filter(|w| w.get("mounted") == Some(&Value::Bool(true)))
@@ -1013,13 +1577,18 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         );
         eprintln!(
             "  workspaces    {mounted}/{} mounted",
-            state.settings.workspaces.len()
+            settings.workspaces.len()
         );
+        eprintln!(
+            "  agents        {} defined · {} roles",
+            settings.agents.len(),
+            settings.roles.len()
+        );
+        eprintln!("  endpoints     {} configured", settings.endpoints.len());
         eprintln!(
             "  runtime       rust (knossos field --native); routes not yet ported answer 501"
         );
-        for w in state
-            .settings
+        for w in settings
             .workspaces
             .iter()
             .filter(|w| w.get("mounted") != Some(&Value::Bool(true)))

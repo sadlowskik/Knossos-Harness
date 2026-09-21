@@ -61,9 +61,15 @@ async fn fixture() -> Fixture {
     std::fs::create_dir_all(&dist).unwrap();
     std::fs::write(
         field_dir.join("field.yaml"),
-        "field:\n  name: Test Field\nworkspaces:\n  - id: here\n    name: Here\n    path: .\n  - id: ghost\n    name: Ghost\n    path: missing\nendpoints: []\nwebsites: []\n",
+        "field:\n  name: Test Field\nworkspaces:\n  - id: here\n    name: Here\n    path: .\n  - id: ghost\n    name: Ghost\n    path: missing\nendpoints:\n  - id: local\n    name: Local\n    kind: openai-compatible\n    model: test-model\n    base_url: http://127.0.0.1:9/v1\nwebsites: []\n",
     )
     .unwrap();
+    std::fs::create_dir_all(field_dir.join("roles")).unwrap();
+    std::fs::write(field_dir.join("roles").join("builder.md"), "---\nid: builder\nname: Builder\ndefault_endpoint: local\ntools_allow: [Read, Grep, Edit, Bash]\n---\nBuild carefully.\n").unwrap();
+    std::fs::create_dir_all(field_dir.join("agents")).unwrap();
+    std::fs::write(field_dir.join("agents").join("builder-1.md"), "---\nid: builder-1\nname: Builder One\nrole: builder\nendpoint: local\n---\nYou are the builder.\n").unwrap();
+    // The registry starts the real binary that cargo built for this test.
+    std::env::set_var("FIELD_KNOSSOS_BIN", env!("CARGO_BIN_EXE_knossos"));
     std::fs::write(dist.join("index.html"), "<!doctype html><h1>Field</h1>").unwrap();
     std::fs::write(dist.join("app.js"), "console.log('field')").unwrap();
     let running = knossos::field::server::start(ServerOptions {
@@ -259,11 +265,92 @@ async fn bootstrap_gates_api_static_and_logout() {
     assert_eq!(trace["events"][0]["kind"], "world.capital_selected");
 
     // What is not ported yet says so, distinctly from a refusal.
-    let spawn = f.post("/api/sessions", json!({}), true).await;
-    assert_eq!(spawn.status(), StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(spawn.json::<Value>().await.unwrap()["code"], "not_ported");
+    let campaign = f.post("/api/campaigns/create", json!({}), true).await;
+    assert_eq!(campaign.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(
+        campaign.json::<Value>().await.unwrap()["code"],
+        "not_ported"
+    );
     let replay = f.get("/api/campaigns/replay?campaignId=nope").await;
     assert_eq!(replay.status(), StatusCode::NOT_FOUND);
+
+    // The registry: an unknown agent is refused; a known one starts the real
+    // knossos binary and its life shows up in the log and the state.
+    let unknown = f
+        .post("/api/sessions", json!({ "agentId": "nobody" }), true)
+        .await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+    assert!(unknown.json::<Value>().await.unwrap()["error"]
+        .as_str()
+        .unwrap()
+        .contains("unknown agent"));
+    let endpoints = f.get("/api/endpoints").await.json::<Value>().await.unwrap();
+    assert_eq!(endpoints["endpoints"][0]["id"], "local");
+    assert_eq!(endpoints["endpoints"][0]["source"], "config");
+    let spawned = f
+        .post(
+            "/api/sessions",
+            json!({ "agentId": "builder-1", "orders": "Say ready and stop." }),
+            true,
+        )
+        .await;
+    assert_eq!(
+        spawned.status(),
+        StatusCode::OK,
+        "{}",
+        spawned.text().await.unwrap_or_default()
+    );
+    let session_id = spawned.json::<Value>().await.unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let state = f.get("/api/state").await.json::<Value>().await.unwrap();
+        let unit = state["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == session_id)
+            .cloned();
+        if let Some(unit) = unit {
+            let state_word = unit["state"].as_str().unwrap_or("").to_string();
+            if state_word != "spawning" || std::time::Instant::now() > deadline {
+                assert_eq!(unit["agentId"], "builder-1");
+                assert_eq!(unit["endpointId"], "local");
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the spawned session never reached the state"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let events = f
+        .get("/api/events?from=0&limit=100")
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    let kinds: Vec<&str> = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["kind"].as_str())
+        .collect();
+    assert!(
+        kinds.contains(&"budget.reserved") && kinds.contains(&"session.spawned"),
+        "{kinds:?}"
+    );
+    let cancelled = f
+        .post(
+            "/api/command",
+            json!({ "kind": "cancel", "sessionIds": [session_id] }),
+            true,
+        )
+        .await;
+    assert_eq!(cancelled.status(), StatusCode::OK);
 
     // Body limits by wire bytes, and malformed JSON.
     let huge = f
@@ -361,9 +448,9 @@ async fn bootstrap_gates_api_static_and_logout() {
 
     // The log outlived the session: a restart replays the same state.
     let seq_before = f.running.state.log.lock().unwrap().size();
-    assert_eq!(
-        seq_before, 5,
-        "position, capital, two assignments, position"
+    assert!(
+        seq_before >= 5,
+        "position, capital, two assignments, position, then the session's life: {seq_before}"
     );
     f.running.stop().await;
 }

@@ -256,6 +256,45 @@ impl Projection {
         self.sessions.get(id)
     }
 
+    /// A UI-added endpoint appears in the snapshot at once, as `unknown`.
+    pub fn ensure_endpoint(
+        &mut self,
+        id: &str,
+        name: &str,
+        kind: &str,
+        model: Option<&str>,
+        base_url: Option<&str>,
+    ) {
+        if self.endpoints.contains(id) {
+            return;
+        }
+        let mut ep = Obj::new();
+        set(&mut ep, "id", id);
+        set(&mut ep, "name", name);
+        set(&mut ep, "kind", kind);
+        set(
+            &mut ep,
+            "model",
+            model.map(Value::from).unwrap_or(Value::Null),
+        );
+        set(
+            &mut ep,
+            "baseUrl",
+            base_url.map(Value::from).unwrap_or(Value::Null),
+        );
+        set(&mut ep, "costPerMtok", json!({ "input": 0, "output": 0 }));
+        set(&mut ep, "status", "unknown");
+        set(&mut ep, "latencyMs", Value::Null);
+        set(&mut ep, "lastCheck", 0);
+        set(&mut ep, "detail", Value::Null);
+        set(&mut ep, "failures", 0);
+        self.endpoints.insert(id.to_string(), ep);
+    }
+
+    pub fn remove_endpoint(&mut self, id: &str) {
+        self.endpoints.remove(id);
+    }
+
     pub fn world(&self) -> &Obj {
         &self.world
     }
