@@ -1,0 +1,18 @@
+heartbeat 14:09:30 0s
+=== phase build 14:09:30
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1106       11323          46        3955       14887
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   2121       01:07  5.3 133112 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2103       01:08  1.6 95668 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   2034       03:23  1.5 137160 /tmp/provjobd265032768
+      1       03:48  1.1 14392 /sbin/init
+   1449       03:36  0.3 37216 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -run-exthandlers
+/proc/pressure/io: some avg10=3.02 avg60=1.69 avg300=1.00 total=5275521 full avg10=2.20 avg60=1.31 avg300=0.85 total=4555154
+/proc/pressure/cpu: some avg10=5.99 avg60=5.46 avg300=2.05 total=8576734 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 11596828 102620 3954548    0    0   164     0 3320 2326 21  7 72  0  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
