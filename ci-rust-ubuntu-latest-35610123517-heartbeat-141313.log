@@ -1,0 +1,18 @@
+heartbeat 14:13:12 222s
+=== phase test-codegen 14:12:12
+               total        used        free      shared  buff/cache   available
+Mem:           15993        2234        8302          47        5849       13758
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  13218       00:16  100 1280308 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered
+   2121       04:48  1.5 135188 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2034       07:05  0.8 135448 /tmp/provjobd265032768
+      1       07:30  0.6 14392 /sbin/init
+   2103       04:50  0.4 98228 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.05 avg300=0.46 total=5500433 full avg10=0.00 avg60=0.04 avg300=0.38 total=4774212
+/proc/pressure/cpu: some avg10=0.04 avg60=0.79 avg300=1.70 total=12493239 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 8506424 106592 5891824    0    0     0 239188 2241  959 24  3 71  3  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
