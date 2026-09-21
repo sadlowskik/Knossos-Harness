@@ -167,6 +167,24 @@ jobs:
             fi
             echo "target dir: ${CARGO_TARGET_DIR:-target}"; df -h "${CARGO_TARGET_DIR:-.}" || true
           fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Fenced: the same build inside a container with limits well
+            # below the VM's, so whatever resource explodes during codegen
+            # (nothing the host-wide samplers can see) fails the build with
+            # a message instead of taking the runner down.
+            {
+              docker run --rm                 --memory=8g --memory-swap=8g --pids-limit=2048 --ulimit nofile=65536:65536                 --security-opt seccomp=unconfined                 -v "$PWD:/work" -w /work                 -e KNOSSOS_CONFINE -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG                 -e CARGO_BUILD_JOBS -e CARGO_TARGET_DIR=/work/target-fenced                 rust:1.98 bash -c '
+                  set -x
+                  echo "=== phase build $(date -u +%H:%M:%S)"
+                  cargo build --locked --bin knossos
+                  echo "=== phase test-codegen $(date -u +%H:%M:%S)"
+                  cargo test --all-targets --locked --no-run
+                  echo "=== phase run $(date -u +%H:%M:%S)"
+                  cargo test --all-targets --locked
+                '
+              echo "=== docker exit $?"
+            } > "$LOG" 2>&1 &
+          else
           {
             echo "=== phase build $(date -u +%H:%M:%S)"
             $NICE cargo build --locked --bin knossos
@@ -175,6 +193,7 @@ jobs:
             echo "=== phase run $(date -u +%H:%M:%S)"
             $NICE cargo test --all-targets --locked
           } > "$LOG" 2>&1 &
+          fi
           pid=$!
           # An independent heartbeat, so a stall in the main loop (a hung git
           # push in the partial publish, say) can be told apart from a runner
