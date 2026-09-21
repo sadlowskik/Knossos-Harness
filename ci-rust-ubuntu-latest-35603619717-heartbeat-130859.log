@@ -1,0 +1,14 @@
+heartbeat 13:08:59 0s
+=== phase build 13:08:59
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1106       11319          47        3958       14883
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   5808       00:00  100 14964 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   2151       01:07  5.9 134472 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2097       01:09  4.3 131256 /tmp/provjobd752590560
+      1       01:35  3.3 14352 /sbin/init
+   2131       01:09  1.6 95500 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+[   49.355081] mlx5_core 5210:00:02.0 enP21008s1: Link up
+[   49.381113] hv_netvsc 000d3afa-5537-000d-3afa-5537000d3afa eth0: Data path switched to VF: enP21008s1
+[   49.381399] mlx5_core 5210:00:02.0 mlx5_0: Port: 1 Link ACTIVE
