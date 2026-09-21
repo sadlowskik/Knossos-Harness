@@ -1036,6 +1036,23 @@ fn api(
             }
             Ok(out)
         }
+        "GET /api/git/changes" => {
+            let settings = settings_read(state)?;
+            let ws_id = param(params, "ws");
+            let resolved =
+                resolve_workspace_path(&settings, ws_id, None, ResolveOptions::directory())
+                    .map_err(|e| ApiError::bad_request(e.0))?;
+            let ws_path = workspace_dir(&resolved.ws);
+            drop(settings);
+            let changes = super::git::read_changes(&ws_path).map_err(ApiError::bad_request)?;
+            let mut out = json!({ "ws": ws_id });
+            if let (Value::Object(out), Value::Object(changes)) = (&mut out, changes) {
+                out.extend(changes);
+            }
+            Ok(out)
+        }
+        "POST /api/git/revert" => git_revert(state, &body),
+        "POST /api/git/commit" => git_commit(state, &body),
         "POST /api/terminal/run" => terminal_run(state, &body),
         "POST /api/terminal/kill" => {
             let id = get_str(&body, "terminalId").unwrap_or("");
@@ -1043,6 +1060,125 @@ fn api(
         }
         _ => Err(ApiError::not_ported(&key)),
     }
+}
+
+/// The workspace root and the body's `paths` (every changed file when the
+/// list is absent or empty), each one admitted by `resolve_workspace_path`
+/// so nothing outside the mounted workspace or hidden by its policy is touched.
+fn git_write_target(
+    state: &Arc<AppState>,
+    body: &Value,
+) -> Result<(String, PathBuf, Option<Vec<String>>), ApiError> {
+    let ws_id = get_str(body, "ws")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("ws is required"))?;
+    let listed: Option<Vec<String>> = match get(body, "paths") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(items)) => {
+            let paths: Vec<String> = items
+                .iter()
+                .map(|p| match p {
+                    Value::String(s) => Ok(s.clone()),
+                    _ => Err(ApiError::bad_request("paths must be strings")),
+                })
+                .collect::<Result<_, _>>()?;
+            if paths.is_empty() {
+                None
+            } else {
+                Some(paths)
+            }
+        }
+        Some(_) => return Err(ApiError::bad_request("paths must be an array")),
+    };
+    let settings = settings_read(state)?;
+    let resolved =
+        resolve_workspace_path(&settings, Some(ws_id), None, ResolveOptions::directory())
+            .map_err(|e| ApiError::bad_request(e.0))?;
+    let ws_path = workspace_dir(&resolved.ws);
+    let paths = match listed {
+        Some(paths) => paths,
+        None => {
+            let changes = super::git::read_changes(&ws_path).map_err(ApiError::bad_request)?;
+            changes
+                .get("files")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f.get("path").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        }
+    };
+    let mut admitted = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let file =
+            resolve_workspace_path(&settings, Some(ws_id), Some(path), ResolveOptions::file())
+                .map_err(|e| ApiError::bad_request(format!("{path}: {}", e.0)))?;
+        admitted.push(file.relative);
+    }
+    drop(settings);
+    Ok((ws_id.to_string(), ws_path, Some(admitted)))
+}
+
+/// `POST /api/git/revert`: discard the working-tree changes of the listed
+/// paths (all changed files when omitted). Destructive, so it needs
+/// `confirmRisk: true` like a campaign checkpoint.
+fn git_revert(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    if get(body, "confirmRisk") != Some(&Value::Bool(true)) {
+        return Err(DomainError::new(
+            "confirmation_required",
+            "reverting workspace changes requires explicit operator confirmation",
+        )
+        .into());
+    }
+    let (ws_id, ws_path, paths) = git_write_target(state, body)?;
+    let paths = paths.unwrap_or_default();
+    let reverted = super::git::revert_paths(&ws_path, &paths).map_err(ApiError::bad_request)?;
+    let revision = super::git::head(&ws_path);
+    state.emit(
+        "git.reverted",
+        json!({ "ws": ws_id, "workspaceId": ws_id, "paths": reverted, "revision": revision }),
+        AppendOptions::subject(ws_id.clone()),
+    )?;
+    Ok(json!({ "ws": ws_id, "paths": reverted, "revision": revision }))
+}
+
+/// `POST /api/git/commit`: accept the agent's work by committing the listed
+/// paths (all changed files when omitted) with the operator's message.
+fn git_commit(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let message = get_str(body, "message").map(str::trim).unwrap_or("");
+    if message.is_empty() {
+        return Err(ApiError::bad_request("message is required"));
+    }
+    if message.chars().count() > 4000 {
+        return Err(ApiError::bad_request(
+            "message is too long (max 4000 chars)",
+        ));
+    }
+    let explicit = matches!(get(body, "paths"), Some(Value::Array(items)) if !items.is_empty());
+    let (ws_id, ws_path, paths) = git_write_target(state, body)?;
+    let committed = super::git::commit_paths(
+        &ws_path,
+        message,
+        if explicit { paths.as_deref() } else { None },
+    )
+    .map_err(ApiError::bad_request)?;
+    state.emit(
+        "git.committed",
+        json!({
+            "ws": ws_id, "workspaceId": ws_id,
+            "paths": committed.get("files").cloned().unwrap_or(json!([])),
+            "revision": committed.get("revision").cloned().unwrap_or(Value::Null),
+            "branch": committed.get("branch").cloned().unwrap_or(Value::Null),
+            "message": message,
+        }),
+        AppendOptions::subject(ws_id.clone()),
+    )?;
+    let mut out = json!({ "ws": ws_id });
+    if let (Value::Object(out), Value::Object(committed)) = (&mut out, committed) {
+        out.extend(committed);
+    }
+    Ok(out)
 }
 
 /// `POST /api/campaigns/action`: checkpoints and rollbacks need explicit

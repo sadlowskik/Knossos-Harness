@@ -1831,15 +1831,16 @@ impl Registry {
     ) -> PermissionOutcome {
         let session_id = capability_session_id.unwrap_or(session_id).to_string();
         let permission_id = uuid();
+        let session = self.sessions.get(&session_id).cloned();
+        let info = session.as_ref().map(|s| s.info());
+        let context = permission_context(tool_name, &input, info.as_ref().map(|i| i.cwd.as_path()));
         self.emit(
             "permission.requested",
-            json!({ "permissionId": permission_id, "sessionId": session_id, "toolName": tool_name, "input": input, "toolUseId": tool_use_id }),
+            json!({ "permissionId": permission_id, "sessionId": session_id, "toolName": tool_name, "input": input, "toolUseId": tool_use_id, "context": context }),
             Some(&session_id),
             None,
             None,
         );
-        let session = self.sessions.get(&session_id).cloned();
-        let info = session.as_ref().map(|s| s.info());
         let meta = self.meta.get(&session_id).cloned().unwrap_or_default();
         let role = info
             .as_ref()
@@ -2059,6 +2060,151 @@ fn bounded_positive(value: Option<&Value>, fallback: f64, integer: bool) -> f64 
     }
 }
 
+// ---- permission context ---------------------------------------------------
+
+/// Lines of rendered diff kept in a permission request.
+const PERMISSION_DIFF_MAX_LINES: usize = 200;
+/// Characters of pretty-printed tool input kept in a permission request.
+const PERMISSION_INPUT_MAX_CHARS: usize = 4000;
+/// Largest file read back from disk to diff a whole-file `Write` against.
+const PERMISSION_BEFORE_MAX_BYTES: u64 = 512 * 1024;
+
+/// A workspace-relative, `/`-separated view of a tool path; absolute paths
+/// outside the workspace are shown as given.
+fn workspace_relative(path: &str, workspace: Option<&Path>) -> String {
+    let normalized = path.replace('\\', "/");
+    let Some(root) = workspace else {
+        return normalized;
+    };
+    let root_text = root.to_string_lossy().replace('\\', "/");
+    let root_text = root_text.trim_end_matches('/');
+    if let Some(rest) = normalized.strip_prefix(root_text) {
+        let rest = rest.trim_start_matches('/');
+        return if rest.is_empty() {
+            ".".to_string()
+        } else {
+            rest.to_string()
+        };
+    }
+    normalized
+}
+
+/// The on-disk location of a tool path when it stays inside the workspace.
+fn inside_workspace(path: &str, workspace: Option<&Path>) -> Option<PathBuf> {
+    let root = workspace?;
+    let candidate = Path::new(path);
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        root.join(candidate)
+    };
+    if absolute
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    absolute.starts_with(root).then_some(absolute)
+}
+
+fn cap_lines(text: &str, max_lines: usize) -> (String, bool) {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= max_lines {
+        return (text.trim_end().to_string(), false);
+    }
+    let mut kept = lines[..max_lines].join("\n");
+    kept.push_str(&format!(
+        "\n… {} more line(s) not shown",
+        lines.len() - max_lines
+    ));
+    (kept, true)
+}
+
+fn cap_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if text.chars().count() <= max_chars {
+        return (text.to_string(), false);
+    }
+    let mut kept: String = text.chars().take(max_chars).collect();
+    kept.push_str("\n… truncated");
+    (kept, true)
+}
+
+/// What the operator needs to see before deciding: a unified diff for an
+/// edit, the command and its directory for a shell, the input otherwise.
+/// Redaction is not applied here; the event log scrubs registered secrets
+/// from every payload it appends, and this context travels inside one.
+pub fn permission_context(tool_name: &str, input: &Value, workspace: Option<&Path>) -> Value {
+    let name = tool_name.to_ascii_lowercase();
+    let path_field = get_str(input, "file_path")
+        .or_else(|| get_str(input, "path"))
+        .or_else(|| get_str(input, "filePath"));
+    let is_edit = matches!(
+        name.as_str(),
+        "edit"
+            | "write"
+            | "multiedit"
+            | "str_replace"
+            | "strreplace"
+            | "write_file"
+            | "notebookedit"
+    );
+    let command = get_str(input, "command");
+    if is_edit {
+        if let Some(path) = path_field {
+            let relative = workspace_relative(path, workspace);
+            let display = Path::new(&relative);
+            let mut diffs = Vec::new();
+            if let Some(edits) = get_arr(input, "edits") {
+                for edit in edits {
+                    if let Some(new) = get_str(edit, "new_string") {
+                        let old = get_str(edit, "old_string").unwrap_or("");
+                        diffs.push(crate::diff::diff_file(display, Some(old), new));
+                    }
+                }
+            } else if let Some(new) = get_str(input, "new_string") {
+                let old = get_str(input, "old_string").unwrap_or("");
+                diffs.push(crate::diff::diff_file(display, Some(old), new));
+            } else if let Some(content) = get_str(input, "content") {
+                let before = inside_workspace(path, workspace)
+                    .filter(|p| {
+                        std::fs::metadata(p)
+                            .map(|m| m.is_file() && m.len() <= PERMISSION_BEFORE_MAX_BYTES)
+                            .unwrap_or(false)
+                    })
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                diffs.push(crate::diff::diff_file(display, before.as_deref(), content));
+            }
+            if !diffs.is_empty() {
+                let (additions, deletions) = diffs
+                    .iter()
+                    .fold((0, 0), |(a, r), d| (a + d.added, r + d.removed));
+                let (diff, truncated) =
+                    cap_lines(&crate::diff::render(&diffs), PERMISSION_DIFF_MAX_LINES);
+                return json!({
+                    "kind": "diff", "path": relative, "diff": diff,
+                    "additions": additions, "deletions": deletions, "truncated": truncated,
+                });
+            }
+        }
+    }
+    if let Some(command) = command.filter(|c| !c.trim().is_empty()) {
+        let cwd = get_str(input, "cwd")
+            .or_else(|| get_str(input, "working_directory"))
+            .or_else(|| get_str(input, "workdir"))
+            .map(|c| workspace_relative(c, workspace))
+            .unwrap_or_else(|| ".".to_string());
+        let (command, truncated) = cap_chars(command, PERMISSION_INPUT_MAX_CHARS);
+        return json!({ "kind": "command", "command": command, "cwd": cwd, "truncated": truncated });
+    }
+    let pretty = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
+    let (text, truncated) = cap_chars(&pretty, PERMISSION_INPUT_MAX_CHARS);
+    let mut context = json!({ "kind": "input", "text": text, "truncated": truncated });
+    if let Some(path) = path_field {
+        context["path"] = json!(workspace_relative(path, workspace));
+    }
+    context
+}
+
 fn synthetic_event(kind: &str, data: Value) -> Event {
     Event {
         seq: 0,
@@ -2099,4 +2245,81 @@ fn count_files(dir: &Path, cap: usize) -> usize {
         }
     }
     n
+}
+
+#[cfg(test)]
+mod permission_context_tests {
+    use super::*;
+
+    #[test]
+    fn edits_render_a_unified_diff_relative_to_the_workspace() {
+        let ws = std::env::temp_dir().join("field-ws");
+        let file = ws.join("src").join("lib.rs");
+        let context = permission_context(
+            "Edit",
+            &json!({
+                "file_path": file.to_string_lossy(),
+                "old_string": "fn a() {}\n",
+                "new_string": "fn a() { b() }\n",
+            }),
+            Some(&ws),
+        );
+        assert_eq!(context["kind"], "diff");
+        assert_eq!(context["path"], "src/lib.rs");
+        assert_eq!(context["additions"], 1);
+        assert_eq!(context["deletions"], 1);
+        assert_eq!(context["truncated"], false);
+        let diff = context["diff"].as_str().unwrap();
+        assert!(diff.contains("-fn a() {}"), "{diff}");
+        assert!(diff.contains("+fn a() { b() }"), "{diff}");
+
+        let many: String = (0..400).map(|i| format!("line {i}\n")).collect();
+        let big = permission_context(
+            "Write",
+            &json!({ "file_path": "notes.txt", "content": many }),
+            Some(&ws),
+        );
+        assert_eq!(big["kind"], "diff");
+        assert_eq!(big["truncated"], true);
+        assert!(big["diff"]
+            .as_str()
+            .unwrap()
+            .contains("more line(s) not shown"));
+        assert!(big["diff"].as_str().unwrap().lines().count() <= 202);
+
+        let multi = permission_context(
+            "MultiEdit",
+            &json!({ "file_path": "a.txt", "edits": [
+                { "old_string": "x", "new_string": "y" },
+                { "old_string": "p", "new_string": "q" },
+            ] }),
+            None,
+        );
+        assert_eq!(multi["additions"], 2);
+        assert_eq!(multi["deletions"], 2);
+    }
+
+    #[test]
+    fn commands_carry_their_cwd_and_other_tools_their_input() {
+        let ws = Path::new("/srv/ws");
+        let shell = permission_context(
+            "Bash",
+            &json!({ "command": "npm test", "cwd": "/srv/ws/web" }),
+            Some(ws),
+        );
+        assert_eq!(shell["kind"], "command");
+        assert_eq!(shell["command"], "npm test");
+        assert_eq!(shell["cwd"], "web");
+        let bare = permission_context("Bash", &json!({ "command": "ls" }), Some(ws));
+        assert_eq!(bare["cwd"], ".");
+
+        let other = permission_context("WebFetch", &json!({ "url": "https://x.test" }), Some(ws));
+        assert_eq!(other["kind"], "input");
+        assert!(other["text"].as_str().unwrap().contains("https://x.test"));
+        assert_eq!(other["truncated"], false);
+
+        let huge = permission_context("Custom", &json!({ "blob": "z".repeat(10_000) }), None);
+        assert_eq!(huge["truncated"], true);
+        assert!(huge["text"].as_str().unwrap().chars().count() < 4100);
+    }
 }

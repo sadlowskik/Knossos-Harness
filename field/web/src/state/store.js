@@ -101,11 +101,11 @@ export function clearSelection() { setState({ selection: [] }); }
 
 export function setMode(mode) { setState({ mode }); }
 
-export function selectProject(workspaceId, { open = false, path = null } = {}) {
+export function selectProject(workspaceId, { open = false, path = null, view = null } = {}) {
   if (!workspaceId) return;
   setState({
     activeWorkspaceId: workspaceId,
-    focus: { type: 'workspace', workspaceId, ...(path ? { path } : {}) },
+    focus: { type: 'workspace', workspaceId, ...(path ? { path } : {}), ...(view ? { view } : {}) },
     ...(open ? { mode: 'workspace' } : {}),
   });
 }
@@ -137,6 +137,8 @@ export function selectCampaign(campaignId, { open = false } = {}) {
 }
 
 export function openCity(workspaceId, path = null) { selectProject(workspaceId, { open: true, path }); }
+/** Open Workspace mode on the project's change review (the git Changes list). */
+export function openChanges(workspaceId) { selectProject(workspaceId, { open: true, view: 'changes' }); }
 
 export function openSenate(sessionId = null, campaignId = null) {
   if (sessionId) selectAgent(sessionId, { open: true });

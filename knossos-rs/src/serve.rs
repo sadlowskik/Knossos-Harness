@@ -161,6 +161,8 @@ pub enum Event {
         passed: bool,
         summary: String,
         dry_run: bool,
+        /// Highest tier that actually executed.
+        reached_tier: u8,
         tiers: Vec<TierPayload>,
     },
     Index {
@@ -247,6 +249,10 @@ pub struct TierPayload {
     pub label: String,
     pub passed: bool,
     pub detail: String,
+    /// The tier could not run (tool not installed); not evidence either way.
+    pub skipped: bool,
+    /// The tier failed but was already failing before the change.
+    pub forgiven: bool,
 }
 
 /// Where events go. Cloneable, so the permission approver can hold one too.
@@ -585,6 +591,7 @@ async fn dispatch(
                 passed: verdict.passed,
                 summary: verdict.summary(),
                 dry_run: verdict.dry_run,
+                reached_tier: verdict.reached_tier,
                 tiers: verdict
                     .tiers
                     .iter()
@@ -593,6 +600,8 @@ async fn dispatch(
                         label: t.label.clone(),
                         passed: t.passed,
                         detail: t.detail.clone(),
+                        skipped: t.skipped,
+                        forgiven: t.forgiven,
                     })
                     .collect(),
             });

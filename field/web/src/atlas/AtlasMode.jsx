@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, on } from '../net/client.js';
-import { openInWorkspace, selectAgent, useField } from '../state/store.js';
+import { openChanges, openInWorkspace, selectAgent, useField } from '../state/store.js';
 import {
   identityFor,
   initials,
@@ -210,7 +210,17 @@ function AgentColumn({ column, identity, selected, permissions, campaigns, now, 
         <div className="atlas-context">
           <span className="atlas-ws" title={workspace?.path}>{workspace?.name ?? session?.cwd}</span>
           {workspace?.git?.branch && (
-            <span className="atlas-git">{workspace.git.branch}{workspace.changeCount ? ` · ${workspace.changeCount} changed` : ''}</span>
+            <span className="atlas-git">
+              {workspace.git.branch}
+              {(workspace.git.files?.length ?? workspace.changeCount) ? (
+                <>
+                  {' · '}
+                  <button type="button" className="atlas-changes" onClick={() => openChanges(workspace.id)} title="Review, accept or revert the changes">
+                    {workspace.git.files?.length ?? workspace.changeCount} changed
+                  </button>
+                </>
+              ) : ''}
+            </span>
           )}
         </div>
       )}
@@ -249,7 +259,10 @@ function AgentColumn({ column, identity, selected, permissions, campaigns, now, 
             {pct != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">progress</span><code>{pct}%</code></span>}
             {elapsed != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">elapsed</span><code>{elapsed < 1 ? '<1m' : `${elapsed}m`}</code></span>}
             {session.contextPct != null && <span className="atlas-foot-tool"><span className="atlas-foot-label">context</span><code>{session.contextPct}%</code></span>}
-            <span className="atlas-foot-cost"><span className="atlas-foot-label">cost</span><code>{cost || '$0.000'}{session.budgetUsd ? ` / $${Number(session.budgetUsd).toFixed(2)}` : ''}</code></span>
+            <span className={`atlas-foot-cost${session.budgetExhausted ? ' budget-exhausted' : ''}`} title={session.budgetExhausted ? 'budget exhausted; the agent is paused' : 'spent / budget'}>
+              <span className="atlas-foot-label">{session.budgetExhausted ? 'budget' : 'cost'}</span>
+              <code>{cost || '$0.000'}{session.budgetUsd ? ` / ${Number(session.budgetUsd).toFixed(2)}` : ''}{session.budgetExhausted ? ' · exhausted' : ''}</code>
+            </span>
           </div>
           {session.error && <p className="atlas-foot-error" role="alert">{session.error}</p>}
           <AgentControls session={session} compact onOpen={() => openInWorkspace({ type: 'session', id: session.id })} />

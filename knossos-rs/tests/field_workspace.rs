@@ -409,6 +409,178 @@ async fn git_status_log_and_diff() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn git_changes_revert_and_commit() {
+    let f = fixture().await;
+    let ws = f.workspace();
+    let ready = git(&ws, &["init", "-q"])
+        && git(&ws, &["config", "user.email", "field@example.invalid"])
+        && git(&ws, &["config", "user.name", "Field"])
+        && git(&ws, &["config", "commit.gpgsign", "false"])
+        && git(&ws, &["add", "."])
+        && git(&ws, &["commit", "-q", "-m", "initial import"]);
+    if !ready {
+        eprintln!("git is not usable here; skipping");
+        f.running.stop().await;
+        return;
+    }
+    std::fs::write(ws.join("src").join("fresh.rs"), "// new\nfn x() {}\n").unwrap();
+    std::fs::write(ws.join("README.md"), "# Fixture\n\nchanged\n").unwrap();
+
+    // Changes: status plus line counts, untracked files counted as additions.
+    let changes: Value = f
+        .get("/api/git/changes?ws=here")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(changes["ws"], "here");
+    assert!(changes["branch"].is_string(), "{changes}");
+    let files = changes["files"].as_array().unwrap();
+    let readme = files.iter().find(|x| x["path"] == "README.md").unwrap();
+    assert_eq!(readme["status"], "modified");
+    assert_eq!(readme["additions"], 2);
+    assert_eq!(readme["deletions"], 0);
+    let fresh = files.iter().find(|x| x["path"] == "src/fresh.rs").unwrap();
+    assert_eq!(fresh["status"], "untracked");
+    assert_eq!(fresh["additions"], 2);
+    assert_eq!(changes["additions"], 4);
+    assert_eq!(changes["deletions"], 0);
+
+    // Revert refuses without confirmation and outside the workspace.
+    let unconfirmed = f
+        .post(
+            "/api/git/revert",
+            json!({ "ws": "here", "paths": ["README.md"] }),
+        )
+        .await;
+    assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+    let body: Value = unconfirmed.json().await.unwrap();
+    assert_eq!(body["code"], "confirmation_required");
+    let escape = f
+        .post(
+            "/api/git/revert",
+            json!({ "ws": "here", "paths": ["../field/field.yaml"], "confirmRisk": true }),
+        )
+        .await;
+    assert_eq!(escape.status(), StatusCode::BAD_REQUEST);
+    assert!(std::fs::read_to_string(ws.join("README.md"))
+        .unwrap()
+        .contains("changed"));
+
+    // Revert one untracked file: it is deleted and leaves the list.
+    let reverted: Value = f
+        .post(
+            "/api/git/revert",
+            json!({ "ws": "here", "paths": ["src/fresh.rs"], "confirmRisk": true }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reverted["paths"], json!(["src/fresh.rs"]));
+    assert!(reverted["revision"].as_str().unwrap().len() >= 40);
+    assert!(!ws.join("src").join("fresh.rs").exists());
+    let changes: Value = f
+        .get("/api/git/changes?ws=here")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(changes["files"].as_array().unwrap().len(), 1, "{changes}");
+
+    // Commit needs a message; then it records the accepted files.
+    let no_message = f.post("/api/git/commit", json!({ "ws": "here" })).await;
+    assert_eq!(no_message.status(), StatusCode::BAD_REQUEST);
+    let committed: Value = f
+        .post(
+            "/api/git/commit",
+            json!({ "ws": "here", "message": "Field: accept agent changes" }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(committed["ws"], "here");
+    assert!(
+        committed["revision"].as_str().unwrap().len() >= 40,
+        "{committed}"
+    );
+    assert!(committed["branch"].is_string());
+    assert_eq!(committed["files"], json!(["README.md"]));
+    let clean: Value = f
+        .get("/api/git/changes?ws=here")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(clean["files"], json!([]));
+    let log: Value = f.get("/api/git/log?ws=here").await.json().await.unwrap();
+    assert_eq!(log["commits"][0]["subject"], "Field: accept agent changes");
+    assert_eq!(log["commits"].as_array().unwrap().len(), 2);
+    let again = f
+        .post(
+            "/api/git/commit",
+            json!({ "ws": "here", "message": "empty" }),
+        )
+        .await;
+    assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+
+    // Revert everything: a tracked edit and a new file, with no path list.
+    std::fs::write(ws.join("src").join("main.rs"), "fn main() { panic!() }\n").unwrap();
+    std::fs::write(ws.join("extra.txt"), "x\n").unwrap();
+    let all: Value = f
+        .post(
+            "/api/git/revert",
+            json!({ "ws": "here", "confirmRisk": true }),
+        )
+        .await
+        .json()
+        .await
+        .unwrap();
+    let mut paths: Vec<String> = all["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_string())
+        .collect();
+    paths.sort();
+    assert_eq!(paths, vec!["extra.txt", "src/main.rs"]);
+    assert_eq!(
+        std::fs::read_to_string(ws.join("src").join("main.rs"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "fn main() {}\n"
+    );
+    assert!(!ws.join("extra.txt").exists());
+
+    // Both writes reached the event log.
+    let events: Value = f
+        .get("/api/events?from=0&limit=200")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let kinds: Vec<&str> = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds.iter().filter(|k| **k == "git.reverted").count(), 2);
+    assert_eq!(kinds.iter().filter(|k| **k == "git.committed").count(), 1);
+    let commit_event = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "git.committed")
+        .unwrap();
+    assert_eq!(commit_event["data"]["ws"], "here");
+    assert_eq!(commit_event["data"]["paths"], json!(["README.md"]));
+    assert_eq!(commit_event["data"]["revision"], committed["revision"]);
+
+    f.running.stop().await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn terminal_runs_streams_logs_and_kills() {
     let f = fixture().await;
     let mut socket = f.socket().await;

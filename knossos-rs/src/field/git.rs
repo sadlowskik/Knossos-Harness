@@ -234,6 +234,280 @@ fn parse_log(out: &str) -> Vec<Value> {
         .collect()
 }
 
+// ---- change review: changes, revert, commit ------------------------------
+
+/// Root-relative path with the workspace prefix stripped and `/` separators.
+fn scope_path(path: &str, prefix: &str) -> String {
+    let norm = path.replace('\\', "/");
+    if prefix.is_empty() {
+        norm
+    } else {
+        norm.strip_prefix(prefix).unwrap_or(&norm).to_string()
+    }
+}
+
+/// `git diff --numstat -M` output as `path -> (additions, deletions)`, with a
+/// rename (`old => new`, `dir/{old => new}/file`) keyed by its new path.
+fn parse_numstat(out: &str, prefix: &str) -> BTreeMap<String, (u64, u64)> {
+    let mut counts = BTreeMap::new();
+    for line in out.split('\n').filter(|l| !l.trim().is_empty()) {
+        let mut fields = line.splitn(3, '\t');
+        let adds = fields.next().unwrap_or("-").trim();
+        let dels = fields.next().unwrap_or("-").trim();
+        let Some(path) = fields.next() else { continue };
+        let path = numstat_new_path(path.trim());
+        let adds: u64 = adds.parse().unwrap_or(0);
+        let dels: u64 = dels.parse().unwrap_or(0);
+        let entry = counts.entry(scope_path(&path, prefix)).or_insert((0, 0));
+        entry.0 += adds;
+        entry.1 += dels;
+    }
+    counts
+}
+
+fn numstat_new_path(path: &str) -> String {
+    if let (Some(open), Some(close)) = (path.find('{'), path.rfind('}')) {
+        if open < close {
+            let inner = &path[open + 1..close];
+            if let Some((_, new)) = inner.split_once(" => ") {
+                return format!("{}{}{}", &path[..open], new, &path[close + 1..]);
+            }
+        }
+    }
+    match path.split_once(" => ") {
+        Some((_, new)) => new.to_string(),
+        None => path.to_string(),
+    }
+}
+
+/// Lines in an untracked file; 0 for binaries and unreadable files.
+fn count_lines(path: &Path) -> u64 {
+    let Ok(bytes) = std::fs::read(path) else {
+        return 0;
+    };
+    if bytes.contains(&0) {
+        return 0;
+    }
+    let newlines = bytes.iter().filter(|b| **b == b'\n').count() as u64;
+    if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+        newlines + 1
+    } else {
+        newlines
+    }
+}
+
+fn has_head(cwd: &Path) -> bool {
+    git(cwd, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok()
+}
+
+/// The HEAD revision as JSON, `null` outside a repository or before the first commit.
+pub fn head(cwd: &Path) -> Value {
+    git(cwd, &["rev-parse", "--verify", "-q", "HEAD"])
+        .map(|r| json!(r.trim()))
+        .unwrap_or(Value::Null)
+}
+
+fn show_prefix(cwd: &Path) -> String {
+    git(cwd, &["rev-parse", "--show-prefix"])
+        .map(|out| out.trim().replace('\\', "/"))
+        .unwrap_or_default()
+}
+
+/// `GET /api/git/changes`: every changed file with its line counts, untracked
+/// files listed one by one and counted as pure additions.
+pub fn read_changes(cwd: &Path) -> Result<Value, String> {
+    let prefix = show_prefix(cwd);
+    let out = git(cwd, &["status", "--porcelain=v1", "-b", "-uall", "--", "."])?;
+    let status = parse_status(&out, &prefix);
+    let numstat = if has_head(cwd) {
+        git(cwd, &["diff", "--numstat", "-M", "HEAD", "--", "."])?
+    } else {
+        let staged = git(cwd, &["diff", "--numstat", "-M", "--cached", "--", "."])?;
+        let unstaged = git(cwd, &["diff", "--numstat", "-M", "--", "."])?;
+        format!("{staged}{unstaged}")
+    };
+    let counts = parse_numstat(&numstat, &prefix);
+    Ok(build_changes(&status, &counts, |rel| {
+        count_lines(&cwd.join(rel))
+    }))
+}
+
+fn build_changes(
+    status: &Value,
+    counts: &BTreeMap<String, (u64, u64)>,
+    untracked_lines: impl Fn(&str) -> u64,
+) -> Value {
+    let mut files = Vec::new();
+    let (mut total_add, mut total_del) = (0u64, 0u64);
+    for f in status
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let raw = f.get("path").and_then(Value::as_str).unwrap_or("");
+        let label = f.get("status").and_then(Value::as_str).unwrap_or("changed");
+        if raw.is_empty() || raw == "." || label == "ignored" {
+            continue;
+        }
+        let (path, from) = match (label, raw.split_once(" -> ")) {
+            ("renamed" | "copied", Some((old, new))) => (new.to_string(), Some(old.to_string())),
+            _ => (raw.to_string(), None),
+        };
+        let (additions, deletions) = if label == "untracked" {
+            (untracked_lines(&path), 0)
+        } else {
+            counts.get(&path).copied().unwrap_or((0, 0))
+        };
+        total_add += additions;
+        total_del += deletions;
+        let mut entry = json!({
+            "path": path,
+            "status": label,
+            "staged": f.get("staged").cloned().unwrap_or(Value::Bool(false)),
+            "additions": additions,
+            "deletions": deletions,
+        });
+        if let Some(from) = from {
+            entry["from"] = json!(from);
+        }
+        files.push(entry);
+    }
+    json!({
+        "branch": status.get("branch").cloned().unwrap_or(Value::Null),
+        "files": files,
+        "additions": total_add,
+        "deletions": total_del,
+    })
+}
+
+/// `POST /api/git/revert`: put the listed workspace-relative paths back to
+/// HEAD. Tracked files are unstaged and checked out; a staged addition is
+/// removed from the index and deleted; an untracked file is deleted.
+/// Returns the paths actually reverted.
+pub fn revert_paths(cwd: &Path, paths: &[String]) -> Result<Vec<String>, String> {
+    let changes = read_changes(cwd)?;
+    let mut by_path: BTreeMap<String, Value> = BTreeMap::new();
+    for f in changes
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(p) = f.get("path").and_then(Value::as_str) {
+            by_path.insert(p.to_string(), f.clone());
+        }
+    }
+    let head = has_head(cwd);
+    let mut reverted = Vec::new();
+    for path in paths {
+        let Some(entry) = by_path.get(path) else {
+            return Err(format!("{path} has no changes to revert"));
+        };
+        let label = entry.get("status").and_then(Value::as_str).unwrap_or("");
+        match label {
+            "untracked" => remove_file(&cwd.join(path))?,
+            "added" => {
+                git(cwd, &["rm", "-q", "--cached", "--force", "--", path])?;
+                remove_file(&cwd.join(path))?;
+            }
+            "renamed" | "copied" => {
+                let from = entry.get("from").and_then(Value::as_str).unwrap_or(path);
+                if head {
+                    git(cwd, &["reset", "-q", "HEAD", "--", from, path])?;
+                } else {
+                    git(cwd, &["reset", "-q", "--", from, path])?;
+                }
+                git(cwd, &["checkout", "--", from])?;
+                let tracked = git(cwd, &["ls-files", "--", path]).unwrap_or_default();
+                if tracked.trim().is_empty() {
+                    remove_file(&cwd.join(path))?;
+                }
+            }
+            _ => {
+                if head {
+                    git(cwd, &["reset", "-q", "HEAD", "--", path])?;
+                } else {
+                    git(cwd, &["reset", "-q", "--", path])?;
+                }
+                git(cwd, &["checkout", "--", path])?;
+            }
+        }
+        reverted.push(path.clone());
+    }
+    Ok(reverted)
+}
+
+fn remove_file(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove {}: {e}", path.display())),
+    }
+}
+
+/// `POST /api/git/commit`: stage the listed paths (or everything) and commit
+/// them. Author comes from git config; without one, a local `Field`
+/// identity is set for this commit only.
+pub fn commit_paths(cwd: &Path, message: &str, paths: Option<&[String]>) -> Result<Value, String> {
+    let changes = read_changes(cwd)?;
+    if changes
+        .get("files")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+    {
+        return Err("nothing to commit: the workspace is clean".into());
+    }
+    let prefix = show_prefix(cwd);
+    let has_identity = |key: &str| {
+        git(cwd, &["config", key])
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    };
+    let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false"];
+    if !(has_identity("user.name") && has_identity("user.email")) {
+        args.extend_from_slice(&[
+            "-c",
+            "user.name=Field",
+            "-c",
+            "user.email=field@knossos.invalid",
+        ]);
+    }
+    args.extend_from_slice(&["commit", "-q", "-m", message]);
+    let listed: Vec<&str> = paths.into_iter().flatten().map(String::as_str).collect();
+    if listed.is_empty() {
+        git(cwd, &["add", "-A", "--", "."])?;
+    } else {
+        let mut add = vec!["add", "-A", "--"];
+        add.extend_from_slice(&listed);
+        git(cwd, &add)?;
+        args.push("--");
+        args.extend_from_slice(&listed);
+    }
+    git(cwd, &args)?;
+    let revision = git(cwd, &["rev-parse", "--verify", "HEAD"])?
+        .trim()
+        .to_string();
+    let branch = git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|b| json!(b.trim()))
+        .unwrap_or(Value::Null);
+    let files: Vec<String> = git(
+        cwd,
+        &[
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "--root",
+            "HEAD",
+        ],
+    )?
+    .split('\n')
+    .filter(|l| !l.is_empty())
+    .map(|l| scope_path(l, &prefix))
+    .collect();
+    Ok(json!({ "revision": revision, "branch": branch, "files": files }))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +559,51 @@ mod tests {
         );
         assert_eq!(commits[1]["subject"], "");
         assert!(parse_log("").is_empty());
+    }
+
+    #[test]
+    fn numstat_counts_key_renames_by_their_new_path() {
+        let out = "3\t1\tsrc/a.rs\n-\t-\timg.png\n2\t2\tsrc/{old => new}/x.rs\n5\t0\told.txt => new.txt\n1\t0\tsub/inner.txt\n";
+        let counts = parse_numstat(out, "sub/");
+        assert_eq!(counts["src/a.rs"], (3, 1));
+        assert_eq!(counts["img.png"], (0, 0));
+        assert_eq!(counts["src/new/x.rs"], (2, 2));
+        assert_eq!(counts["new.txt"], (5, 0));
+        assert_eq!(counts["inner.txt"], (1, 0));
+    }
+
+    #[test]
+    fn changes_merge_status_with_counts_and_count_untracked_lines() {
+        let status = parse_status(
+            "## main\n M src/a.rs\n?? fresh.txt\nR  old.txt -> new.txt\n?? .\n",
+            "",
+        );
+        let mut counts = BTreeMap::new();
+        counts.insert("src/a.rs".to_string(), (3, 1));
+        counts.insert("new.txt".to_string(), (0, 0));
+        let changes = build_changes(&status, &counts, |p| if p == "fresh.txt" { 4 } else { 0 });
+        assert_eq!(changes["branch"], "main");
+        assert_eq!(changes["additions"], 7);
+        assert_eq!(changes["deletions"], 1);
+        let files = changes["files"].as_array().unwrap();
+        assert_eq!(files.len(), 3, "{changes}");
+        assert_eq!(files[0]["path"], "src/a.rs");
+        assert_eq!(files[0]["additions"], 3);
+        assert_eq!(files[1]["status"], "untracked");
+        assert_eq!(files[1]["additions"], 4);
+        assert_eq!(files[2]["path"], "new.txt");
+        assert_eq!(files[2]["from"], "old.txt");
+        assert_eq!(files[2]["status"], "renamed");
+
+        let dir = tempfile::tempdir().unwrap();
+        let text = dir.path().join("t.txt");
+        std::fs::write(&text, "a\nb\nc").unwrap();
+        assert_eq!(count_lines(&text), 3);
+        std::fs::write(&text, "a\nb\n").unwrap();
+        assert_eq!(count_lines(&text), 2);
+        std::fs::write(&text, b"a\0b\n").unwrap();
+        assert_eq!(count_lines(&text), 0);
+        assert_eq!(count_lines(&dir.path().join("missing")), 0);
     }
 
     #[test]

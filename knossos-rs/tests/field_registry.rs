@@ -414,6 +414,17 @@ async fn endpoint_failover_budget_pause_and_exactly_once_settlement() {
             knossos::field::registry::PermissionOutcome::Pending(_)
         ));
         assert_eq!(r.pending_permissions(), 1);
+        let requested = log
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|e| e.kind == "permission.requested")
+            .cloned()
+            .expect("permission.requested emitted");
+        assert_eq!(requested.data["context"]["kind"], "command");
+        assert_eq!(requested.data["context"]["command"], "npm test");
+        assert_eq!(requested.data["context"]["cwd"], ".");
         let abandoned = r.abandon_operator();
         assert!(abandoned["denied"].as_u64().unwrap() >= 1);
         assert!(abandoned["cancelled"].as_u64().unwrap() >= 1);

@@ -60,7 +60,7 @@ function AgentChamber({ session }) {
     </section>
     <div className="senate-chamber-grid">
       {trace.length >= 2000 && <div className="label">Showing the first 2,000 events. Open History to load the rest.</div>}
-      <section className="senate-brief"><span>PROMPT</span><p>{spawn.initialOrders ?? spawn.systemPrompt ?? 'No prompt was recorded for this session.'}</p>{spawn.systemPrompt && spawn.systemPrompt !== spawn.initialOrders && <details><summary>System instructions</summary><p>{spawn.systemPrompt}</p></details>}<dl><div><dt>Model</dt><dd>{session.model ?? 'unreported'}</dd></div><div><dt>Endpoint</dt><dd>{endpoint?.name ?? session.endpointId ?? 'local'}</dd></div><div><dt>Cost</dt><dd>${(session.costUsd ?? 0).toFixed(4)}{session.budgetUsd ? ` of $${Number(session.budgetUsd).toFixed(2)}` : ''}</dd></div><div><dt>Tools</dt><dd>{(role?.tools_allow ?? []).join(', ') || 'none declared'}</dd></div></dl><AgentControls session={session} /></section>
+      <section className="senate-brief"><span>PROMPT</span><p>{spawn.initialOrders ?? spawn.systemPrompt ?? 'No prompt was recorded for this session.'}</p>{spawn.systemPrompt && spawn.systemPrompt !== spawn.initialOrders && <details><summary>System instructions</summary><p>{spawn.systemPrompt}</p></details>}<dl><div><dt>Model</dt><dd>{session.model ?? 'unreported'}</dd></div><div><dt>Endpoint</dt><dd>{endpoint?.name ?? session.endpointId ?? 'local'}</dd></div><div className={session.budgetExhausted ? 'budget-exhausted' : ''}><dt>Cost</dt><dd>${(session.costUsd ?? 0).toFixed(4)}{session.budgetUsd ? ` of ${Number(session.budgetUsd).toFixed(2)}` : ''}{session.budgetRemainingUsd != null && !session.budgetExhausted ? ` · ${Number(session.budgetRemainingUsd).toFixed(2)} left` : ''}{session.budgetExhausted ? ' · exhausted' : ''}</dd></div><div><dt>Tools</dt><dd>{(role?.tools_allow ?? []).join(', ') || 'none declared'}</dd></div></dl><AgentControls session={session} /></section>
       <section className="senate-conversation"><span>CONVERSATION</span>{messages.length ? messages.map((event) => <article key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{event.data?.text ?? event.data?.content ?? event.data?.summary}</p></article>) : <em>No messages yet.</em>}</section>
       <section className="senate-cohort"><span>WORKING WITH</span>{collaborators.length ? collaborators.map((item) => <button type="button" key={item.id} onClick={() => openSenate(item.id)}><i className={`state-${item.state}`} /><b>{item.name}</b><small>{item.role} · {item.state}</small></button>) : <em>No active links.</em>}<span className="senate-activity-title">RECENT ACTIVITY</span>{activity.length ? activity.map((event) => <article key={event.id ?? event.seq}><b>{event.kind.replace('session.', '')}</b><p>{event.data?.summary ?? event.data?.detail ?? event.data?.name ?? 'Status updated'}</p></article>) : <em>Nothing yet.</em>}</section>
     </div>
@@ -149,7 +149,9 @@ function PlansCommand() {
               {historyOpen && <span className="history-status">replay · event {replay?.actualSeq ?? '…'}</span>}
               <span>{campaign.scope}</span>
               <span>{members.filter((m) => m.status === 'active').length} working</span>
-              <span>${spent.toFixed(2)} of ${campaign.budgetUsd.toFixed(0)}</span>
+              <span className={campaign.budgetExhausted || spent >= campaign.budgetUsd ? 'budget-exhausted' : ''} title="spent of budget · remaining">
+                ${spent.toFixed(2)} of ${campaign.budgetUsd.toFixed(0)} · ${Math.max(0, campaign.budgetUsd - spent).toFixed(2)} left
+              </span>
               <button type="button" onClick={() => { setHistoryOpen((value) => !value); setReplay(null); }}>
                 {historyOpen ? 'return live' : 'history'}
               </button>

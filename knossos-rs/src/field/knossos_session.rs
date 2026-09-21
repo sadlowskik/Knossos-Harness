@@ -494,12 +494,21 @@ impl KnossosSession {
                 );
             }
             Some("verdict") => {
+                let ladder =
+                    verdict_ladder(get_arr(&msg, "tiers").map(Vec::as_slice).unwrap_or(&[]));
+                let reached = msg
+                    .get("reached_tier")
+                    .and_then(Value::as_u64)
+                    .map(|t| json!(t))
+                    .unwrap_or_else(|| or_null(ladder.reached.as_ref()));
                 self.emit(
                     "session.verification",
                     json!({
                         "passed": msg.get("passed").is_some_and(|v| v.as_bool().unwrap_or(false)),
                         "summary": get(&msg, "summary").cloned().unwrap_or(json!("")),
-                        "tiers": get_arr(&msg, "tiers").cloned().unwrap_or_default(),
+                        "tiers": ladder.tiers,
+                        "reachedTier": reached,
+                        "forgivenCount": ladder.forgiven,
                         "dryRun": msg.get("dry_run").is_some_and(|v| v.as_bool().unwrap_or(false)),
                     }),
                 );
@@ -665,6 +674,68 @@ impl Adapter for KnossosSession {
 }
 
 #[allow(dead_code)]
+/// Characters of per-tier detail kept in a `session.verification` event.
+const TIER_DETAIL_MAX_CHARS: usize = 400;
+
+/// The Oracle ladder as Field records it.
+struct VerdictLadder {
+    tiers: Vec<Value>,
+    /// Tiers that failed but were already failing before the change.
+    forgiven: u64,
+    /// Highest tier that actually ran, from the tiers themselves.
+    reached: Option<Value>,
+}
+
+/// Normalise the `tiers` of a `verdict` line: label, pass/skip/forgive
+/// flags and a capped detail, plus the derived counts.
+fn verdict_ladder(raw: &[Value]) -> VerdictLadder {
+    let mut forgiven = 0u64;
+    let mut reached: Option<u64> = None;
+    let tiers = raw
+        .iter()
+        .map(|t| {
+            let flag = |key: &str| t.get(key).and_then(Value::as_bool).unwrap_or(false);
+            let tier = t.get("tier").and_then(Value::as_u64);
+            let skipped = flag("skipped");
+            let is_forgiven = flag("forgiven");
+            if is_forgiven {
+                forgiven += 1;
+            }
+            if !skipped {
+                if let Some(n) = tier {
+                    reached = Some(reached.map_or(n, |r| r.max(n)));
+                }
+            }
+            let mut detail: String = get(t, "detail")
+                .map(js_string)
+                .unwrap_or_default()
+                .chars()
+                .take(TIER_DETAIL_MAX_CHARS + 1)
+                .collect();
+            if detail.chars().count() > TIER_DETAIL_MAX_CHARS {
+                detail = detail.chars().take(TIER_DETAIL_MAX_CHARS).collect();
+                detail.push('…');
+            }
+            let label = get_str(t, "label")
+                .map(str::to_string)
+                .unwrap_or_else(|| tier.map_or("tier".to_string(), |n| format!("tier {n}")));
+            json!({
+                "tier": or_null(t.get("tier")),
+                "label": label,
+                "passed": flag("passed"),
+                "skipped": skipped,
+                "forgiven": is_forgiven,
+                "detail": detail,
+            })
+        })
+        .collect();
+    VerdictLadder {
+        tiers,
+        forgiven,
+        reached: reached.map(|n| json!(n)),
+    }
+}
+
 fn _path_probe(p: &Path) -> bool {
     p.is_file()
 }
@@ -734,7 +805,18 @@ mod tests {
         s.handle_line(
             &json!({ "event": "plan", "steps": ["inspect", "edit", "verify"] }).to_string(),
         );
-        s.handle_line(&json!({ "event": "verdict", "passed": true, "summary": "green", "tiers": [{ "tier": 1, "passed": true }] }).to_string());
+        s.handle_line(
+            &json!({
+                "event": "verdict", "passed": true, "summary": "green", "reached_tier": 2,
+                "tiers": [
+                    { "tier": 0, "label": "syntax", "passed": true, "detail": "ok" },
+                    { "tier": 1, "label": "cargo check", "passed": false, "forgiven": true, "detail": "x".repeat(600) },
+                    { "tier": 2, "label": "cargo test", "passed": true, "detail": "" },
+                    { "tier": 3, "label": "clippy", "passed": false, "skipped": true, "detail": "not installed" },
+                ],
+            })
+            .to_string(),
+        );
         s.handle_line(
             &json!({
                 "event": "outcome", "halt": "done", "succeeded": true, "steps_used": 3,
@@ -749,9 +831,27 @@ mod tests {
         assert!(events
             .iter()
             .any(|(k, d)| k == "session.progress" && d["total"] == 3));
-        assert!(events
+        let verification = &events
             .iter()
-            .any(|(k, d)| k == "session.verification" && d["passed"] == true));
+            .find(|(k, _)| k == "session.verification")
+            .expect("verdict translated")
+            .1;
+        assert_eq!(verification["passed"], true);
+        assert_eq!(verification["reachedTier"], 2);
+        assert_eq!(verification["forgivenCount"], 1);
+        let tiers = verification["tiers"].as_array().unwrap();
+        assert_eq!(tiers.len(), 4);
+        assert_eq!(tiers[1]["label"], "cargo check");
+        assert_eq!(tiers[1]["forgiven"], true);
+        assert_eq!(tiers[1]["detail"].as_str().unwrap().chars().count(), 401);
+        assert_eq!(tiers[3]["skipped"], true);
+        assert_eq!(tiers[3]["passed"], false);
+        let derived = verdict_ladder(&[
+            json!({ "tier": 1, "passed": true }),
+            json!({ "tier": 2, "skipped": true }),
+        ]);
+        assert_eq!(derived.reached, Some(json!(1)));
+        assert_eq!(derived.tiers[0]["label"], "tier 1");
         assert!(events.iter().any(|(k, d)| k == "session.turn_complete"
             && d["result"].as_str().unwrap().contains("FIELD_REPORT")));
         assert!(events

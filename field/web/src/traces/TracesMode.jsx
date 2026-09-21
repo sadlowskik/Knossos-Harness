@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../net/client.js';
 import { useField } from '../state/store.js';
+import VerdictLadder from '../ui/VerdictLadder.jsx';
 
 // Traces replay the real event log. The slider does not simulate anything: it folds the
 // same events the Field folded live, up to the chosen point.
@@ -105,7 +106,13 @@ export default function TracesMode() {
               <Stat k="cost" v={`$${folded.cost.toFixed(4)}`} />
               <Stat k="approvals" v={`${folded.approved}/${folded.requested}`} />
               <Stat k="verified" v={folded.verified ?? '—'} />
+              {folded.budget != null && <Stat k="budget" v={`${folded.budget.toFixed(2)}${folded.exhausted ? ' · exhausted' : ''}`} />}
             </div>
+            {folded.verdict && (
+              <div className="trace-verdict">
+                <VerdictLadder verdict={folded.verdict} />
+              </div>
+            )}
 
             <div style={{ flex: '1 1 auto', overflow: 'auto', minHeight: 0 }}>
               {loading && <div className="empty">loading trace…</div>}
@@ -138,6 +145,7 @@ function fold(events) {
   const out = {
     state: '—', tools: 0, edits: 0, files: new Set(),
     cost: 0, requested: 0, approved: 0, verified: null,
+    budget: null, exhausted: false, verdict: null,
   };
   for (const e of events) {
     const d = e.data ?? {};
@@ -153,6 +161,22 @@ function fold(events) {
       case 'permission.requested': out.requested += 1; break;
       case 'permission.decided': if (d.decision === 'allow') out.approved += 1; break;
       case 'work.verified': out.verified = d.result; break;
+      case 'budget.reserved': if (typeof d.limitUsd === 'number') out.budget = d.limitUsd; break;
+      case 'budget.exhausted': out.exhausted = true; break;
+      case 'budget.reactivated': out.exhausted = false; break;
+      case 'session.verification':
+        out.verdict = { ...d, ts: e.ts, residualRisk: [], recovery: [], turnSettled: false };
+        break;
+      case 'session.turn_complete':
+        if (out.verdict && !out.verdict.turnSettled) {
+          out.verdict = {
+            ...out.verdict,
+            residualRisk: Array.isArray(d.residualRisk) ? d.residualRisk : [],
+            recovery: Array.isArray(d.recovery) ? d.recovery : [],
+            turnSettled: true,
+          };
+        }
+        break;
       case 'session.ended': out.state = d.reason === 'error' ? 'error' : 'ended'; break;
       default: break;
     }
@@ -181,6 +205,15 @@ function describe(e) {
     case 'permission.decided': return `${d.decision} by ${d.by}`;
     case 'browser.navigated': return d.url;
     case 'work.verified': return `${d.result}`;
+    case 'session.verification': {
+      const tiers = Array.isArray(d.tiers) ? d.tiers : [];
+      const ladder = tiers.map((t) => `${t.label ?? `tier ${t.tier}`}:${t.skipped ? 'skip' : t.forgiven ? 'forgiven' : t.passed ? 'pass' : 'FAIL'}`).join(' ');
+      return `${d.passed ? 'verified' : 'not verified'}${d.reachedTier != null ? ` · reached tier ${d.reachedTier}` : ''}${ladder ? ` · ${ladder}` : ''}`;
+    }
+    case 'budget.reserved': return `${Number(d.limitUsd ?? 0).toFixed(2)} reserved`;
+    case 'budget.exhausted': return `${String(d.budget ?? 'budget').replaceAll('_', ' ')} exhausted (${d.used} of ${d.limit})`;
+    case 'git.committed': return `${String(d.revision ?? '').slice(0, 7)} ${d.message ?? ''} · ${(d.paths ?? []).length} file(s)`;
+    case 'git.reverted': return `reverted ${(d.paths ?? []).join(', ').slice(0, 100)}`;
     case 'command.issued': return `${d.kind} × ${(d.sessionIds ?? []).length}`;
     case 'routine.triggered': return `${d.routineId} — ${d.reason ?? 'manual'}`;
     case 'terminal.run': return d.command;

@@ -3,6 +3,7 @@ import { api, on } from '../net/client.js';
 import { selectProject, setState, useField } from '../state/store.js';
 import { renderMarkdown } from './md.js';
 import { validateBrowserUrl } from './browser-url.js';
+import VerdictLadder from '../ui/VerdictLadder.jsx';
 
 export default function WorkspaceMode() {
   const st = useField();
@@ -17,6 +18,7 @@ export default function WorkspaceMode() {
   const [openPath, setOpenPath] = useState(null);
   const [centerTab, setCenterTab] = useState('file');
   const [rightTab, setRightTab] = useState('terminal');
+  const [leftTab, setLeftTab] = useState('files');
 
   // Follow whatever the operator opened from the Field.
   useEffect(() => {
@@ -27,6 +29,7 @@ export default function WorkspaceMode() {
     } else if (focus.workspaceId) {
       setWsId(focus.workspaceId);
       if (focus.path) setOpenPath(focus.path);
+      if (focus.view === 'changes') setLeftTab('changes');
     } else if (focus.type === 'browser') {
       setRightTab('browser');
     }
@@ -69,16 +72,38 @@ export default function WorkspaceMode() {
           </select>
           {ws?.git && <span className="label">{ws.git.branch}</span>}
         </div>
+        <div className="pane-head pane-head-sub">
+          <div className="tabs">
+            {[['files', 'files'], ['changes', `changes${ws?.git?.files?.length ? ` · ${ws.git.files.length}` : ''}`]].map(([t, label]) => (
+              <button
+                key={t}
+                className={`tab${leftTab === t ? ' on' : ''}`}
+                onClick={() => setLeftTab(t)}
+                type="button"
+              >{label}</button>
+            ))}
+          </div>
+        </div>
         <div className="pane-body">
-          <FileTree
-            wsId={wsId}
-            git={ws?.git}
-            openPath={openPath}
-            onOpen={(p) => {
-              setOpenPath(p);
-              setCenterTab(p.toLowerCase().endsWith('.md') ? 'markdown' : 'file');
-            }}
-          />
+          {leftTab === 'changes'
+            ? (
+              <Changes
+                wsId={wsId}
+                openPath={openPath}
+                onOpen={(p) => { setOpenPath(p); setCenterTab('diff'); }}
+              />
+            )
+            : (
+              <FileTree
+                wsId={wsId}
+                git={ws?.git}
+                openPath={openPath}
+                onOpen={(p) => {
+                  setOpenPath(p);
+                  setCenterTab(p.toLowerCase().endsWith('.md') ? 'markdown' : 'file');
+                }}
+              />
+            )}
         </div>
       </div>
 
@@ -194,6 +219,145 @@ function fmtSize(n) {
   return `${(n / 1048576).toFixed(1)}m`;
 }
 
+/* ------------------------------------------------------------------ changes */
+
+const DEFAULT_COMMIT_MESSAGE = 'Field: accept agent changes';
+
+// Review what the agents changed in the working tree: every file with its line
+// counts, the per-file diff one click away, and the two operator decisions,
+// accept (commit) or revert. Both go through the server and land in History.
+function Changes({ wsId, openPath, onOpen }) {
+  const [changes, setChanges] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [dialog, setDialog] = useState(null); // { kind: 'commit' | 'revert' }
+  const [message, setMessage] = useState(DEFAULT_COMMIT_MESSAGE);
+  const generation = useRef(0);
+
+  const refresh = useCallback(async () => {
+    if (!wsId) { setChanges(null); return; }
+    const mine = ++generation.current;
+    try {
+      const r = await api.gitChanges(wsId);
+      if (mine === generation.current) { setChanges(r); setError(null); }
+    } catch (e) {
+      if (mine === generation.current) { setChanges(null); setError(e.message); }
+    }
+  }, [wsId]);
+
+  // Re-read on open and whenever the server reports the tree changed; git.status
+  // arrives from the watcher, the other two from our own accept / revert.
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => on('event', (evt) => {
+    if (['git.status', 'git.reverted', 'git.committed'].includes(evt.kind) && (evt.data?.workspaceId ?? evt.data?.ws) === wsId) refresh();
+  }), [wsId, refresh]);
+
+  const files = changes?.files ?? [];
+
+  const commit = async () => {
+    const text = message.trim() || DEFAULT_COMMIT_MESSAGE;
+    setBusy('commit');
+    try {
+      await api.gitCommit(wsId, text);
+      setDialog(null);
+      setMessage(DEFAULT_COMMIT_MESSAGE);
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally { setBusy(null); }
+  };
+
+  const revert = async () => {
+    setBusy('revert');
+    try {
+      await api.gitRevert(wsId);
+      setDialog(null);
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally { setBusy(null); }
+  };
+
+  if (!wsId) return <div className="empty">No project selected.</div>;
+
+  return (
+    <div className="changes">
+      <div className="changes-summary mono">
+        {changes
+          ? <><b>{files.length}</b> changed · <span className="add">+{changes.additions ?? 0}</span> <span className="del">−{changes.deletions ?? 0}</span></>
+          : error ? 'git unavailable' : 'reading…'}
+      </div>
+      {error && <div className="changes-error" role="alert">{error}</div>}
+      <div className="changes-list">
+        {files.map((f) => (
+          <button
+            key={f.path}
+            type="button"
+            className={`tree-row change-row${openPath === f.path ? ' on' : ''}`}
+            onClick={() => onOpen(f.path)}
+            title={`${f.status}${f.from ? ` from ${f.from}` : ''}: click to open the diff`}
+          >
+            <span className={`change-status st-${f.status}`}>{STATUS_MARK[f.status] ?? '•'}</span>
+            <span className="nm">{f.path}</span>
+            <span className="change-counts">
+              {f.additions > 0 && <span className="add">+{f.additions}</span>}
+              {f.deletions > 0 && <span className="del">−{f.deletions}</span>}
+            </span>
+          </button>
+        ))}
+        {changes && !files.length && <div className="empty"><b>Working tree is clean.</b>Nothing to accept or revert.</div>}
+      </div>
+      <div className="changes-actions">
+        <button
+          type="button"
+          className="btn primary sm"
+          disabled={!files.length || busy != null}
+          onClick={() => setDialog({ kind: 'commit' })}
+        >Accept: commit</button>
+        <button
+          type="button"
+          className="btn danger sm"
+          disabled={!files.length || busy != null}
+          onClick={() => setDialog({ kind: 'revert' })}
+        >Revert</button>
+      </div>
+      {dialog?.kind === 'commit' && (
+        <div className="changes-dialog" role="dialog" aria-label="Commit changes">
+          <span className="label">commit {files.length} file{files.length === 1 ? '' : 's'}</span>
+          <input
+            className="changes-message mono"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setDialog(null); }}
+            placeholder={DEFAULT_COMMIT_MESSAGE}
+            autoFocus
+          />
+          <div className="changes-actions">
+            <button type="button" className="btn ghost sm" disabled={busy != null} onClick={() => setDialog(null)}>Cancel</button>
+            <button type="button" className="btn primary sm" disabled={busy != null} onClick={commit}>{busy === 'commit' ? 'Committing…' : 'Commit'}</button>
+          </div>
+        </div>
+      )}
+      {dialog?.kind === 'revert' && (
+        <div className="changes-dialog danger" role="dialog" aria-label="Revert changes">
+          <span className="label">discard changes in {files.length} file{files.length === 1 ? '' : 's'}</span>
+          <ul className="changes-dialog-files mono">
+            {files.slice(0, 12).map((f) => <li key={f.path}>{f.path}</li>)}
+            {files.length > 12 && <li>… and {files.length - 12} more</li>}
+          </ul>
+          <p className="perm-warn">Tracked files go back to HEAD; new files are deleted. This cannot be undone.</p>
+          <div className="changes-actions">
+            <button type="button" className="btn ghost sm" disabled={busy != null} onClick={() => setDialog(null)}>Keep changes</button>
+            <button type="button" className="btn danger sm" disabled={busy != null} onClick={revert}>{busy === 'revert' ? 'Reverting…' : 'Revert all'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const STATUS_MARK = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: '?', copied: 'C', conflicted: 'U' };
+
 /* ------------------------------------------------------------------ file */
 
 function FileView({ wsId, path, markdown }) {
@@ -263,10 +427,15 @@ function FileView({ wsId, path, markdown }) {
 
 function Diff({ wsId, path }) {
   const [text, setText] = useState('');
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!wsId || !path) { setText(''); return; }
     api.diff(wsId, path).then((r) => setText(r.diff)).catch((e) => setText(`(${e.message})`));
   }, [wsId, path]);
+  useEffect(() => { load(); }, [load]);
+  // An accept or revert changes what the diff shows without changing the path.
+  useEffect(() => on('event', (evt) => {
+    if (['git.reverted', 'git.committed'].includes(evt.kind) && (evt.data?.workspaceId ?? evt.data?.ws) === wsId) load();
+  }), [wsId, load]);
 
   if (!path) return <div className="empty"><b>No file open.</b>Diffs show real git output.</div>;
 
@@ -315,7 +484,7 @@ function Transcript({ session }) {
 
   const rows = events.filter((e) => [
     'session.spawned', 'session.message', 'session.thinking', 'session.tool_use', 'session.tool_result',
-    'session.ended', 'permission.requested', 'permission.decided', 'work.verified',
+    'session.ended', 'permission.requested', 'permission.decided', 'work.verified', 'session.verification',
   ].includes(e.kind));
   const objective = st.snap.campaigns
     .flatMap((campaign) => campaign.objectives ?? [])
@@ -398,6 +567,13 @@ function TranscriptRow({ evt }) {
         <div className="tr tool">
           <div className="who">verified</div>
           <div className="body">{d.result}{d.tier ? ` · ${d.tier}` : ''}{d.summary ? ` — ${d.summary}` : ''}</div>
+        </div>
+      );
+    case 'session.verification':
+      return (
+        <div className="tr tool">
+          <div className="who">verdict</div>
+          <div className="body"><VerdictLadder verdict={{ ...d, ts: evt.ts }} compact /></div>
         </div>
       );
     case 'session.ended':

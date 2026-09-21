@@ -372,6 +372,10 @@ impl Projection {
             );
             set(&mut s, "contextPct", 0);
             set(&mut s, "costUsd", 0);
+            set(&mut s, "budgetUsd", Value::Null);
+            set(&mut s, "budgetRemainingUsd", Value::Null);
+            set(&mut s, "budgetExhausted", false);
+            set(&mut s, "lastVerdict", Value::Null);
             set(&mut s, "startedAt", 0);
             set(&mut s, "endedAt", Value::Null);
             set(&mut s, "lastEventTs", 0);
@@ -676,6 +680,7 @@ impl Projection {
                 let previous_cost = onum(s, "costUsd");
                 let cost = cumulative(finite(&d, "costUsd"), previous_cost);
                 set(s, "costUsd", jnum(cost));
+                refresh_budget_remaining(s);
                 self.totals.cost_usd += cost - previous_cost;
                 self.totals.input_tokens += input - prev_in;
                 self.totals.output_tokens += output - prev_out;
@@ -907,13 +912,87 @@ impl Projection {
                 assign(s, "model", model);
                 set(s, "rerouted", or_null(d.get("reason")));
             }
+            "budget.reserved" => {
+                let Some(id) = session_id else {
+                    return;
+                };
+                let Some(limit) = finite(&d, "limitUsd").filter(|l| *l > 0.0) else {
+                    return;
+                };
+                let s = self.session(&id);
+                set(s, "budgetUsd", jnum(limit));
+                refresh_budget_remaining(s);
+            }
+            "budget.exhausted" => {
+                let Some(id) = session_id else {
+                    return;
+                };
+                let s = self.session(&id);
+                set(s, "budgetExhausted", true);
+                set(s, "budgetExhaustedReason", or_null(d.get("budget")));
+                if get_str(&d, "budget") == Some("dollar_cost") {
+                    set(s, "budgetRemainingUsd", 0);
+                }
+            }
+            "budget.reactivated" => {
+                let Some(id) = session_id else {
+                    return;
+                };
+                let s = self.session(&id);
+                set(s, "budgetExhausted", false);
+                set(s, "budgetExhaustedReason", Value::Null);
+                refresh_budget_remaining(s);
+            }
+            "session.verification" => {
+                let Some(id) = session_id else {
+                    return;
+                };
+                let mut verdict = Obj::new();
+                set(&mut verdict, "passed", d.get("passed").is_some_and(truthy));
+                set(&mut verdict, "summary", or_null(d.get("summary")));
+                set(&mut verdict, "dryRun", d.get("dryRun").is_some_and(truthy));
+                set(
+                    &mut verdict,
+                    "tiers",
+                    d.get("tiers").cloned().unwrap_or(json!([])),
+                );
+                set(&mut verdict, "reachedTier", or_null(d.get("reachedTier")));
+                set(
+                    &mut verdict,
+                    "forgivenCount",
+                    d.get("forgivenCount").cloned().unwrap_or(json!(0)),
+                );
+                set(&mut verdict, "residualRisk", json!([]));
+                set(&mut verdict, "recovery", json!([]));
+                set(&mut verdict, "turnSettled", false);
+                set(&mut verdict, "ts", evt.ts);
+                let s = self.session(&id);
+                set(s, "lastVerdict", Value::Object(verdict));
+            }
+            "session.turn_complete" => {
+                let Some(id) = session_id else {
+                    return;
+                };
+                let s = self.session(&id);
+                if let Some(Value::Object(verdict)) = s.get_mut("lastVerdict") {
+                    if verdict.get("turnSettled") != Some(&Value::Bool(true)) {
+                        if let Some(Value::Array(risk)) = d.get("residualRisk") {
+                            verdict.insert("residualRisk".into(), Value::Array(risk.clone()));
+                        }
+                        if let Some(Value::Array(recovery)) = d.get("recovery") {
+                            verdict.insert("recovery".into(), Value::Array(recovery.clone()));
+                        }
+                        verdict.insert("turnSettled".into(), Value::Bool(true));
+                    }
+                }
+            }
             "permission.requested" => {
                 let permission_id = get(&d, "permissionId")
                     .map(js_string)
                     .unwrap_or_else(|| "undefined".into());
                 let mut p = Obj::new();
                 set(&mut p, "id", permission_id.clone());
-                for key in ["sessionId", "toolName", "input"] {
+                for key in ["sessionId", "toolName", "input", "context"] {
                     assign(&mut p, key, d.get(key).cloned());
                 }
                 set(&mut p, "status", "pending");
@@ -1184,6 +1263,18 @@ impl ApplyEvent for Projection {
     fn apply(&mut self, event: &Event) {
         Projection::apply(self, event)
     }
+}
+
+/// `budgetRemainingUsd = max(0, budgetUsd - costUsd)`; null without a reservation.
+fn refresh_budget_remaining(session: &mut Obj) {
+    let budget = session.get("budgetUsd").and_then(Value::as_f64);
+    let remaining = match budget {
+        Some(limit) if limit.is_finite() && limit > 0.0 => {
+            jnum((limit - onum(session, "costUsd")).max(0.0))
+        }
+        _ => Value::Null,
+    };
+    set(session, "budgetRemainingUsd", remaining);
 }
 
 fn bump_revision(world: &mut Obj) {

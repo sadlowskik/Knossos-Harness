@@ -7,10 +7,10 @@ trigger:
 role: verifier
 endpoint: anthropic-opus
 thinking: high
-workspace: cameo
+workspace: knossos
 orders: |
-  Run the full check suite for the Cameo workspace: cargo check across the workspace,
-  shellcheck over archiso/, and the site build. Report only what failed, with real output.
+  Run the full check suite for the Knossos workspace: cargo fmt --check, cargo clippy and
+  cargo test in knossos-rs, then npm test in field. Report only what failed, with real output.
   Do not fix anything.
 budget_usd: 2.00
 completion:

@@ -105,6 +105,9 @@ export const api = {
 
   diff:          (ws, path) => request('GET', `/api/git/diff?ws=${ws}&path=${encodeURIComponent(path)}`),
   gitLog:        (ws) => request('GET', `/api/git/log?ws=${ws}`),
+  gitChanges:    (ws) => request('GET', `/api/git/changes?ws=${ws}`),
+  gitRevert:     (ws, paths) => request('POST', '/api/git/revert', { ws, paths: paths ?? undefined, confirmRisk: true }),
+  gitCommit:     (ws, message, paths) => request('POST', '/api/git/commit', { ws, message, paths: paths ?? undefined }),
 
   runCommand:    (ws, command, terminalId) => request('POST', '/api/terminal/run', { ws, command, terminalId }),
   killCommand:   (terminalId) => request('POST', '/api/terminal/kill', { terminalId }),

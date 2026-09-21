@@ -1683,3 +1683,71 @@
 /* Atlas: the one-time nudge when projects exist but no model does. */
 .atlas-nudge p { margin: 4px 0 10px; color: var(--text-2); max-width: 60ch; }
 .atlas-nudge .atlas-empty-actions { margin: 0; }
+
+/* Change review: the Changes tab beside the file tree. */
+.pane-head-sub { min-height: 28px; }
+.changes { display: flex; flex-direction: column; min-height: 100%; font-size: 11.5px; }
+.changes-summary { padding: 8px 12px; color: var(--text-3); border-bottom: 1px solid var(--edge); font-size: 11px; }
+.changes-summary b { color: var(--text-1); }
+.changes .add, .perm-context .add, .change-counts .add { color: var(--st-done); }
+.changes .del, .perm-context .del, .change-counts .del { color: var(--st-failed); }
+.changes-error { margin: 8px 12px 0; padding: 6px 8px; border-radius: var(--radius); background: var(--st-failed-soft); color: #FFB3A8; font-size: 11px; }
+.changes-list { flex: 1 1 auto; padding: 4px 0; }
+.change-row { padding-left: 10px; }
+.change-status { width: 12px; flex: 0 0 auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
+.change-status.st-added, .change-status.st-untracked { color: var(--st-done); }
+.change-status.st-deleted { color: var(--st-failed); }
+.change-status.st-modified, .change-status.st-renamed { color: var(--st-attention); }
+.change-counts { margin-left: auto; display: flex; gap: 6px; font-family: var(--font-mono); font-size: 10.5px; flex: 0 0 auto; }
+.changes-actions { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--edge); }
+.changes-actions .btn { flex: 1 1 auto; }
+.changes-dialog { padding: 10px 12px 4px; border-top: 1px solid var(--edge); background: var(--surface-2); display: flex; flex-direction: column; gap: 6px; }
+.changes-dialog.danger { border-top-color: rgba(240, 112, 95, .45); }
+.changes-dialog .changes-actions { padding: 6px 0 4px; border-top: 0; }
+.changes-message { width: 100%; box-sizing: border-box; padding: 6px 8px; background: var(--surface-0); border: 1px solid var(--edge); border-radius: var(--radius); color: var(--text-1); font-size: 11.5px; outline: none; }
+.changes-message:focus { border-color: var(--ember-dim); }
+.changes-dialog-files { margin: 0; padding: 0 0 0 14px; max-height: 140px; overflow: auto; color: var(--text-2); font-size: 10.5px; line-height: 1.5; }
+.atlas-changes, .field-card-changes { background: none; border: 0; padding: 0; font: inherit; color: var(--st-attention); cursor: pointer; text-decoration: underline dotted; }
+.atlas-changes:hover, .field-card-changes:hover { color: var(--amber); }
+
+/* Permission requests: the diff or command the operator is deciding on. */
+.perm-context { margin: 8px 0 10px; }
+.perm-context-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 11px; color: var(--text-3); }
+.perm-context-path { color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.perm-context-counts { margin-left: auto; flex: 0 0 auto; }
+.perm-diff { max-height: 260px; overflow: auto; padding: 4px 0; background: var(--surface-0); border: 1px solid var(--edge); border-radius: var(--radius); }
+.perm-diff div { padding: 0 10px; }
+.perm-context .perm-input { margin: 0; }
+.perm-command { color: var(--text-1); font-size: 12px; }
+.perm-context-note { margin-top: 4px; font-size: 10.5px; color: var(--text-3); }
+
+/* Budget per session: spent / budget, alarmed when exhausted. */
+.budget-exhausted, .budget-exhausted dd, .budget-exhausted code { color: var(--st-failed) !important; }
+.unit-inspector-verdict { padding: 8px 12px; border-bottom: 1px solid var(--edge); }
+.trace-verdict { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+
+/* Verification evidence: the Oracle tier ladder. */
+.verdict { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--text-2); }
+.verdict-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.verdict-pill { padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.verdict-pill.passed { background: var(--st-done-soft); color: var(--st-done); }
+.verdict-pill.failed { background: var(--st-failed-soft); color: var(--st-failed); }
+.verdict-note { font-size: 10.5px; color: var(--text-3); }
+.verdict-summary { margin: 0; line-height: 1.45; white-space: pre-wrap; }
+.verdict-tiers { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 10.5px; }
+.verdict-tier { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.verdict-tier-mark { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; align-self: center; background: var(--text-3); }
+.verdict-tier.passed .verdict-tier-mark { background: var(--st-done); }
+.verdict-tier.failed .verdict-tier-mark { background: var(--st-failed); }
+.verdict-tier.skipped .verdict-tier-mark { background: transparent; border: 1px solid var(--text-3); }
+.verdict-tier.forgiven .verdict-tier-mark { background: var(--st-attention); }
+.verdict-tier-label { color: var(--text-1); flex: 0 0 auto; }
+.verdict-tier-state { color: var(--text-3); flex: 0 0 auto; }
+.verdict-tier.failed .verdict-tier-state { color: var(--st-failed); font-weight: 600; }
+.verdict-tier.forgiven .verdict-tier-state { color: var(--st-attention); }
+.verdict-tier-detail { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.verdict-forgiven { margin: 0; font-size: 10.5px; color: var(--st-attention); line-height: 1.4; }
+.verdict-list { display: flex; flex-direction: column; gap: 2px; }
+.verdict-list ul { margin: 0; padding-left: 16px; line-height: 1.4; }
+.verdict.compact { gap: 3px; }
+.verdict.compact .verdict-tiers { flex-direction: row; flex-wrap: wrap; gap: 4px 10px; }

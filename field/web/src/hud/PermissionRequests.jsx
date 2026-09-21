@@ -58,7 +58,7 @@ export default function PermissionRequests() {
             </div>
             <div className="perm-tool"><span className="perm-tool-label">wants to run</span><code className="mono">{p.toolName}</code></div>
             {workspace && <div className="perm-ws mono">{workspace.name} · {workspace.path}</div>}
-            <pre className="perm-input mono">{detail}</pre>
+            <PermissionContext context={p.context} fallback={detail} />
             {(session?.lastSay || session?.stateDetail) && (
               <p className="perm-why"><span className="perm-tool-label">agent said</span>{String(session.lastSay ?? session.stateDetail).slice(0, 240)}</p>
             )}
@@ -91,6 +91,55 @@ export default function PermissionRequests() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// What the operator is deciding on: the unified diff for an edit, the command with
+// its directory for a shell, the tool input otherwise. The server built this from the
+// request; secrets registered with the event log were already scrubbed from it.
+function PermissionContext({ context, fallback }) {
+  if (!context || typeof context !== 'object') return <pre className="perm-input mono">{fallback}</pre>;
+  if (context.kind === 'diff') {
+    const lines = String(context.diff ?? '').split('\n');
+    return (
+      <div className="perm-context">
+        <div className="perm-context-head mono">
+          <span className="perm-context-path" title={context.path}>{context.path}</span>
+          <span className="perm-context-counts">
+            <span className="add">+{context.additions ?? 0}</span> <span className="del">−{context.deletions ?? 0}</span>
+          </span>
+        </div>
+        <div className="diff perm-diff">
+          {lines.map((line, i) => {
+            const cls = line.startsWith('+') && !line.startsWith('+++') ? 'add'
+              : line.startsWith('-') && !line.startsWith('---') ? 'del'
+                : line.startsWith('@@') ? 'hunk'
+                  : line.startsWith('…') ? 'meta' : '';
+            return <div key={i} className={cls}>{line || ' '}</div>;
+          })}
+        </div>
+        {context.truncated && <div className="perm-context-note">Diff truncated; the full change lands in the workspace diff once allowed.</div>}
+      </div>
+    );
+  }
+  if (context.kind === 'command') {
+    return (
+      <div className="perm-context">
+        <div className="perm-context-head mono">
+          <span className="perm-tool-label">in</span>
+          <span className="perm-context-path" title={context.cwd}>{context.cwd || '.'}</span>
+        </div>
+        <pre className="perm-input perm-command mono">{context.command}</pre>
+        {context.truncated && <div className="perm-context-note">Command truncated.</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="perm-context">
+      {context.path && <div className="perm-context-head mono"><span className="perm-context-path">{context.path}</span></div>}
+      <pre className="perm-input mono">{context.text ?? fallback}</pre>
+      {context.truncated && <div className="perm-context-note">Input truncated.</div>}
     </div>
   );
 }

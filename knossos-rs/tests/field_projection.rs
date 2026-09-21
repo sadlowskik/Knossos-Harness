@@ -419,6 +419,120 @@ fn concurrent_reservation_unknown_and_zero_cost_monotonic_usage_and_replay() {
 }
 
 #[test]
+fn sessions_carry_their_budget_verdict_and_permission_context() {
+    let mut projection = Projection::new(alpha());
+    projection.apply(&ev(
+        1,
+        1_000,
+        "session.spawned",
+        json!({ "sessionId": "s1", "agentId": "a", "name": "One", "workspaceId": "alpha" }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let s = session(&snap, "s1");
+    assert!(s["budgetUsd"].is_null());
+    assert!(s["budgetRemainingUsd"].is_null());
+    assert_eq!(s["budgetExhausted"], false);
+    assert!(s["lastVerdict"].is_null());
+
+    projection.apply(&ev(
+        2,
+        1_100,
+        "budget.reserved",
+        json!({ "sessionId": "s1", "campaignId": null, "limitUsd": 5 }),
+    ));
+    projection.apply(&ev(
+        3,
+        1_200,
+        "session.usage",
+        json!({ "sessionId": "s1", "inputTokens": 10, "outputTokens": 5, "costUsd": 1.25 }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let s = session(&snap, "s1");
+    assert_eq!(s["budgetUsd"], 5.0);
+    assert_eq!(s["costUsd"], 1.25);
+    assert_eq!(s["budgetRemainingUsd"], 3.75);
+
+    projection.apply(&ev(
+        4,
+        1_300,
+        "budget.exhausted",
+        json!({ "sessionId": "s1", "budget": "dollar_cost", "used": 5.2, "limit": 5 }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let s = session(&snap, "s1");
+    assert_eq!(s["budgetExhausted"], true);
+    assert_eq!(s["budgetExhaustedReason"], "dollar_cost");
+    assert_eq!(s["budgetRemainingUsd"], 0.0);
+    projection.apply(&ev(
+        5,
+        1_400,
+        "budget.reactivated",
+        json!({ "sessionId": "s1" }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let s = session(&snap, "s1");
+    assert_eq!(s["budgetExhausted"], false);
+    assert_eq!(s["budgetRemainingUsd"], 3.75);
+
+    // The harness verdict lands on the session; the outcome adds its risk.
+    projection.apply(&ev(
+        6,
+        1_500,
+        "session.verification",
+        json!({
+            "sessionId": "s1", "passed": true, "summary": "green", "reachedTier": 2, "forgivenCount": 1,
+            "tiers": [
+                { "tier": 1, "label": "check", "passed": false, "skipped": false, "forgiven": true, "detail": "pre-existing" },
+                { "tier": 2, "label": "test", "passed": true, "skipped": false, "forgiven": false, "detail": "" },
+            ],
+        }),
+    ));
+    projection.apply(&ev(
+        7,
+        1_600,
+        "session.turn_complete",
+        json!({ "sessionId": "s1", "result": "done", "residualRisk": ["no e2e"], "recovery": ["git revert"] }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let verdict = &session(&snap, "s1")["lastVerdict"];
+    assert_eq!(verdict["passed"], true);
+    assert_eq!(verdict["reachedTier"], 2);
+    assert_eq!(verdict["forgivenCount"], 1);
+    assert_eq!(verdict["tiers"][0]["forgiven"], true);
+    assert_eq!(verdict["residualRisk"], json!(["no e2e"]));
+    assert_eq!(verdict["recovery"], json!(["git revert"]));
+    assert_eq!(verdict["ts"], 1_500);
+    // A later turn without a verdict does not rewrite the settled one.
+    projection.apply(&ev(
+        8,
+        1_700,
+        "session.turn_complete",
+        json!({ "sessionId": "s1", "result": "more", "residualRisk": ["other"] }),
+    ));
+    let snap = projection.snapshot(2_000);
+    assert_eq!(
+        session(&snap, "s1")["lastVerdict"]["residualRisk"],
+        json!(["no e2e"])
+    );
+
+    // A permission request keeps the operator-facing context.
+    projection.apply(&ev(
+        9,
+        1_800,
+        "permission.requested",
+        json!({
+            "permissionId": "p1", "sessionId": "s1", "toolName": "Bash",
+            "input": { "command": "npm test" },
+            "context": { "kind": "command", "command": "npm test", "cwd": "." },
+        }),
+    ));
+    let snap = projection.snapshot(2_000);
+    let permission = &snap["permissions"][0];
+    assert_eq!(permission["id"], "p1");
+    assert_eq!(permission["context"]["kind"], "command");
+    assert_eq!(permission["context"]["cwd"], ".");
+}
+#[test]
 fn typed_topology_lifecycle_hysteresis_and_contest_edges() {
     let t0: i64 = 1_700_000_000_000;
     let mut seq = 0u64;

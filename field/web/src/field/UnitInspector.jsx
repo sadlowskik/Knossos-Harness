@@ -2,6 +2,17 @@ import { useEffect } from 'react';
 import { openCity, openInWorkspace, useField } from '../state/store.js';
 import { ColumnTranscript } from '../atlas/AtlasMode.jsx';
 import AgentControls from '../hud/AgentControls.jsx';
+import VerdictLadder from '../ui/VerdictLadder.jsx';
+
+// "$spent / $budget · $left" when a reservation exists, plain spend otherwise.
+export function budgetLine(session) {
+  const spent = `${(session.costUsd ?? 0).toFixed(4)}`;
+  if (!session.budgetUsd) return spent;
+  const budget = `${Number(session.budgetUsd).toFixed(2)}`;
+  if (session.budgetExhausted) return `${spent} / ${budget} · exhausted`;
+  const left = session.budgetRemainingUsd != null ? ` · ${Number(session.budgetRemainingUsd).toFixed(2)} left` : '';
+  return `${spent} / ${budget}${left}`;
+}
 
 const STATE_WORD = {
   waiting_permission: 'needs approval', blocked: 'blocked', error: 'failed', thinking: 'thinking',
@@ -49,12 +60,23 @@ export default function UnitInspector({ session, onClose }) {
         <div><dt>project</dt><dd>{workspace?.name ?? session.workspaceId ?? 'staging'}</dd></div>
         {where && <div><dt>file</dt><dd title={where}>{where}</dd></div>}
         {session.lastTool?.name && <div><dt>tool</dt><dd title={session.lastTool.summary}>{session.lastTool.name}</dd></div>}
-        <div><dt>cost</dt><dd>${(session.costUsd ?? 0).toFixed(4)}{session.budgetUsd ? ` / $${Number(session.budgetUsd).toFixed(2)}` : ''}</dd></div>
+        <div className={session.budgetExhausted ? 'budget-exhausted' : ''}>
+          <dt>{session.budgetExhausted ? 'budget' : 'cost'}</dt>
+          <dd title={session.budgetExhausted ? `${String(session.budgetExhaustedReason ?? 'budget').replaceAll('_', ' ')} exhausted; the agent is paused` : 'spent / budget'}>
+            {budgetLine(session)}
+          </dd>
+        </div>
         <div><dt>context</dt><dd>{session.contextPct ?? 0}%</dd></div>
         {elapsed != null && <div><dt>elapsed</dt><dd>{elapsed < 1 ? '<1m' : `${elapsed}m`}</dd></div>}
         {session.verified && session.verified !== 'unverified' && <div><dt>verified</dt><dd>{session.verified}</dd></div>}
       </dl>
+      {session.budgetExhausted && (
+        <p className="unit-inspector-error" role="alert">
+          {String(session.budgetExhaustedReason ?? 'budget').replaceAll('_', ' ')} budget exhausted — the agent is paused until you raise it or stop it.
+        </p>
+      )}
       {session.error && <p className="unit-inspector-error" role="alert">{session.error}</p>}
+      {session.lastVerdict && <div className="unit-inspector-verdict"><VerdictLadder verdict={session.lastVerdict} /></div>}
 
       <div className="unit-inspector-feed">
         <ColumnTranscript session={session} campaigns={st.snap.campaigns ?? []} />

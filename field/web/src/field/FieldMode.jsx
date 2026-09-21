@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { computeLayout, pulseOf } from './layout.js';
 import { draw, minimapRect, minimapToWorld, toScreen, toWorld } from './renderer.js';
 import {
-  addSelection, clearSelection, getState, openInWorkspace, selectOnly, setState, toggleSelection, useField,
+  addSelection, clearSelection, getState, openChanges, openInWorkspace, selectOnly, setState, toggleSelection, useField,
 } from '../state/store.js';
 import { api } from '../net/client.js';
 import ContextMenu from '../hud/ContextMenu.jsx';
@@ -533,12 +533,17 @@ function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSele
     ...sessions.map((s) => stamps[s.id] ?? s.startedAt ?? 0),
   );
   const attention = sessions.filter((s) => ['waiting_permission', 'blocked', 'error'].includes(s.state)).length;
-  const changed = workspace.changeCount ?? workspace.git?.files?.length ?? 0;
+  const changed = workspace.git?.files?.length ?? workspace.changeCount ?? 0;
   return (
     <section className={`field-card${sessions.length ? '' : ' idle'}${attention ? ' attention' : ''}`} aria-label={`${workspace.name} project`}>
       <header>
         <button type="button" className="field-card-name" onClick={onOpen} title={`${workspace.path} — open files`}>{workspace.name}</button>
-        <span className="field-card-git mono" title={workspace.git?.branch ?? ''}>{workspace.git?.branch ?? 'no git'}{changed ? ` · ${changed} changed` : ' · clean'}</span>
+        <span className="field-card-git mono" title={workspace.git?.branch ?? ''}>
+          {workspace.git?.branch ?? 'no git'}
+          {changed
+            ? <>{' · '}<button type="button" className="field-card-changes" onClick={() => openChanges(workspace.id)} title="Review, accept or revert the changes">{changed} changed</button></>
+            : ' · clean'}
+        </span>
       </header>
       <div className="field-card-agents">
         {sessions.length ? sessions.slice(0, 4).map((s) => (
