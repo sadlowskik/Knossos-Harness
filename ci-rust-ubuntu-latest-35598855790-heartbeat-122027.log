@@ -1,0 +1,14 @@
+heartbeat 12:20:27 18s
+=== phase build 12:20:09
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1294       10930          48        4157       14694
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   7027       00:00  100 132792 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name regex_automata --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-19
+   1914       01:10  4.5 201052 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1860       01:12  2.9 130768 /tmp/provjobd393468614
+      1       01:37  2.2 14424 /sbin/init
+   5545       00:18  1.5 82208 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+[   10.583923] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   13.907077] Adding 3145724k swap on /swapfile.  Priority:-2 extents:66 across:56459260k SS
+[   49.602561] hv_balloon: Max. dynamic memory size: 16384 MB
