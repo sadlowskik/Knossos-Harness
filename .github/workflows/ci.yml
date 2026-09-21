@@ -95,7 +95,11 @@ jobs:
           # line tables only.
           CARGO_INCREMENTAL: "0"
           CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
-          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
+          # Linux: one job, low priority. Every Linux VM (x86 and arm, 22.04 and
+          # 24.04) has died while two rustc processes were in codegen on the
+          # knossos crate with memory to spare; if a starved runner agent is
+          # the cause, this keeps it scheduled.
+          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '1' || '4' }}
           # Not exported to cargo: the last Ubuntu run that survived the
           # build (b385c06) is the last one without a token in this step's
           # environment. The publishers below get it per command.
@@ -121,13 +125,15 @@ jobs:
           # Three phases, each visible in the heartbeat: the same plain build
           # the conformance job survives, then test-target codegen, then the
           # run. Whichever phase the runner dies in narrows the cause.
+          NICE=""
+          if [ "$RUNNER_OS" = "Linux" ]; then NICE="nice -n 19"; fi
           {
             echo "=== phase build $(date -u +%H:%M:%S)"
-            cargo build --locked --bin knossos
+            $NICE cargo build --locked --bin knossos
             echo "=== phase test-codegen $(date -u +%H:%M:%S)"
-            cargo test --all-targets --locked --no-run
+            $NICE cargo test --all-targets --locked --no-run
             echo "=== phase run $(date -u +%H:%M:%S)"
-            cargo test --all-targets --locked
+            $NICE cargo test --all-targets --locked
           } > "$LOG" 2>&1 &
           pid=$!
           # An independent heartbeat, so a stall in the main loop (a hung git
