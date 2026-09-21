@@ -82,7 +82,7 @@ jobs:
           # to tick. Fewer parallel jobs there, no incremental artefacts,
           # line tables only.
           CARGO_INCREMENTAL: "0"
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
           CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # `live_engine` skips here -- there is no model server on a runner --
@@ -107,13 +107,13 @@ jobs:
           pid=$!
           deadline=$((SECONDS + 1500))
           ticks=0
-          # Every five minutes, publish what the log holds so far plus the
+          # Every two minutes, publish what the log holds so far plus the
           # live process table and memory. A runner that stalls or dies
           # then still leaves its last five minutes on the ci-logs branch,
           # which no end-of-step publish ever managed (runs 19-36).
           while kill -0 "$pid" 2>/dev/null; do
             ticks=$((ticks + 1))
-            if [ $((ticks % 60)) -eq 0 ]; then
+            if [ $((ticks % 24)) -eq 0 ]; then
               {
                 cat "$LOG"
                 echo "=== progress at $(date -u +%H:%M:%S), ${SECONDS}s into the step"

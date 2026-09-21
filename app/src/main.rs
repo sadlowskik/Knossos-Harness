@@ -86,6 +86,7 @@ fn main() -> Result<()> {
                 backend: None,
                 bootstrap_token: None,
                 browser_token: None,
+                probe_endpoints: true,
             };
             let running = tauri::async_runtime::block_on(knossos::field::server::start(options))
                 .context("starting the Field server")?;

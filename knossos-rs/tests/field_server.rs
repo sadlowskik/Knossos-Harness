@@ -81,6 +81,7 @@ async fn fixture() -> Fixture {
         backend: None,
         bootstrap_token: Some(BOOT.into()),
         browser_token: Some(BROWSER.into()),
+        probe_endpoints: false,
     })
     .await
     .unwrap();

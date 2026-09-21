@@ -592,6 +592,7 @@ async fn run_native_field(explicit: Option<&Path>, port: Option<u16>) -> Result<
             .and_then(|b| knossos::field::eventlog::Backend::parse(&b)),
         bootstrap_token: None,
         browser_token: None,
+        probe_endpoints: true,
     };
     knossos::field::server::serve(options).await
 }

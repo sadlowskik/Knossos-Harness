@@ -69,6 +69,9 @@ pub struct ServerOptions {
     /// Fixed tokens, for tests; production mints random ones.
     pub bootstrap_token: Option<String>,
     pub browser_token: Option<String>,
+    /// Probe every endpoint every 20 s and log `endpoint.health`. Off in
+    /// tests, whose event sequence must not race the prober.
+    pub probe_endpoints: bool,
 }
 
 pub struct AppState {
@@ -699,7 +702,13 @@ fn api(
                     .and_then(|e| e.get("status").cloned())
                     .unwrap_or(json!("unknown"))
             };
+            let key_backend = state
+                .keys
+                .lock()
+                .map(|k| k.backend().as_str())
+                .unwrap_or("file");
             Ok(json!({
+                "keyBackend": key_backend,
                 "endpoints": settings.endpoints.iter().map(|e| {
                     let id = get_str(e, "id").unwrap_or("");
                     json!({
@@ -1431,7 +1440,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
     // UI-added models: keys live only in the key store; endpoint descriptors
     // merge over field.yaml. Every stored key is a redaction secret before
     // anything runs.
-    let keys = KeyStore::open(&options.state_dir);
+    let keys = KeyStore::open_default(&options.state_dir);
     let endpoints_store = EndpointsStore::open(&options.state_dir);
     let mut log = log;
     for value in keys.values() {
@@ -1536,7 +1545,9 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         dist_dir: options.dist_dir.clone(),
         headers,
     });
-    spawn_endpoint_probes(Arc::clone(&state));
+    if options.probe_endpoints {
+        spawn_endpoint_probes(Arc::clone(&state));
+    }
 
     let app = Router::new()
         .fallback(handle)
