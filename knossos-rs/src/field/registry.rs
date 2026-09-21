@@ -6,6 +6,7 @@
 //! task, so the registry lock is never re-entered from inside an emit, and
 //! the order of events is the order the harness produced them.
 
+use super::acp_session::{normalize_args, AcpOptions, AcpSession};
 use super::adapter::{Adapter, EventSink};
 use super::adapters::{select_manifest, ACP, CLAUDE_CODE};
 use super::budget_ledger::BudgetLedger;
@@ -40,8 +41,8 @@ pub type ReportHandler = Arc<dyn Fn(Value) -> Result<(), String> + Send + Sync>;
 pub enum AdapterOptions {
     ClaudeCode(ClaudeOptions),
     Knossos(KnossosOptions),
-    /// The `acp` manifest exists as data; no Rust adapter is ported yet.
-    Acp(KnossosOptions),
+    /// Any ACP-speaking agent binary, named by the endpoint or agent record.
+    Acp(AcpOptions),
 }
 
 impl AdapterOptions {
@@ -56,14 +57,16 @@ impl AdapterOptions {
     pub fn id(&self) -> &str {
         match self {
             AdapterOptions::ClaudeCode(o) => &o.id,
-            AdapterOptions::Knossos(o) | AdapterOptions::Acp(o) => &o.id,
+            AdapterOptions::Knossos(o) => &o.id,
+            AdapterOptions::Acp(o) => &o.id,
         }
     }
 
     pub fn endpoint_id(&self) -> Option<&str> {
         match self {
             AdapterOptions::ClaudeCode(o) => o.endpoint_id.as_deref(),
-            AdapterOptions::Knossos(o) | AdapterOptions::Acp(o) => o.endpoint_id.as_deref(),
+            AdapterOptions::Knossos(o) => o.endpoint_id.as_deref(),
+            AdapterOptions::Acp(o) => o.endpoint_id.as_deref(),
         }
     }
 }
@@ -717,11 +720,13 @@ impl Registry {
         let kind = ep
             .as_ref()
             .and_then(|e| get_str(e, "kind").map(str::to_string));
-        let explicit_harness = ep.as_ref().and_then(|e| {
-            get_str(e, "harness")
-                .or(get_str(e, "adapter"))
-                .map(str::to_string)
-        });
+        // The endpoint names the harness first; an agent record may name it
+        // too, so a plug-and-play ACP agent can be declared on either.
+        let explicit_harness = ep
+            .as_ref()
+            .and_then(|e| get_str(e, "harness").or(get_str(e, "adapter")))
+            .or_else(|| get_str(&agent, "harness").or(get_str(&agent, "adapter")))
+            .map(str::to_string);
         let manifest = select_manifest(kind.as_deref(), explicit_harness.as_deref());
         let credential_env: Vec<String> = ep
             .as_ref()
@@ -784,6 +789,46 @@ impl Registry {
                 binary: None,
                 args_override: None,
             })
+        } else if manifest.id == ACP {
+            // The launch spec comes from the endpoint record, else the agent
+            // record; absent both, the adapter falls back to FIELD_ACP_BIN /
+            // FIELD_ACP_ARGS. ACP is generic: the operator names the agent.
+            let launch_field = |keys: &[&str]| -> Option<Value> {
+                let from = |record: &Value| keys.iter().find_map(|k| get(record, k).cloned());
+                ep.as_ref().and_then(from).or_else(|| from(&agent))
+            };
+            let command = launch_field(&["command", "acpCommand", "acp_command"])
+                .map(|v| js_string(&v))
+                .filter(|c| !c.is_empty());
+            let args =
+                launch_field(&["args", "acpArgs", "acp_args"]).map(|v| normalize_args(Some(&v)));
+            let launch_env: std::collections::BTreeMap<String, String> =
+                launch_field(&["acpEnv", "acp_env"])
+                    .and_then(|v| v.as_object().cloned())
+                    .map(|o| o.iter().map(|(k, v)| (k.clone(), js_string(v))).collect())
+                    .unwrap_or_default();
+            AdapterOptions::Acp(AcpOptions {
+                id: id.clone(),
+                agent_id: Some(agent_id.clone()),
+                name: Some(name),
+                role: role_id.clone(),
+                model,
+                endpoint_id: Some(routed_id.clone()),
+                effort: Some(effort.clone()),
+                cwd,
+                workspace_id: Some(ws_id.clone()),
+                system_prompt: system_prompt.clone(),
+                env: self.endpoint_env(ep.as_ref()),
+                provider_kind: kind.clone(),
+                read_only: role
+                    .as_ref()
+                    .is_some_and(|r| r.get("read_only") == Some(&Value::Bool(true))),
+                environment_scope: environment_scope.clone(),
+                credential_env_keys: credential_env,
+                command,
+                args,
+                launch_env,
+            })
         } else {
             let engine = match kind.as_deref() {
                 Some("openai-compatible") | Some("cameo") => "cameo",
@@ -811,11 +856,7 @@ impl Registry {
                 credential_env_keys: credential_env,
                 binary: None,
             };
-            if manifest.id == ACP {
-                AdapterOptions::Acp(knossos)
-            } else {
-                AdapterOptions::Knossos(knossos)
-            }
+            AdapterOptions::Knossos(knossos)
         };
         let sink = self.sink();
         let adapter: Arc<dyn Adapter> = match &self.factory {
@@ -823,7 +864,7 @@ impl Registry {
             None => match options {
                 AdapterOptions::ClaudeCode(options) => ClaudeSession::new(options, sink),
                 AdapterOptions::Knossos(options) => KnossosSession::new(options, sink),
-                AdapterOptions::Acp(_) => return Err(err("acp adapter not ported")),
+                AdapterOptions::Acp(options) => AcpSession::new(options, sink),
             },
         };
         self.sessions.insert(id.clone(), Arc::clone(&adapter));

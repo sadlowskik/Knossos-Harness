@@ -12,6 +12,7 @@
 //! then the director and routines. The web client and the `field-event-v1`
 //! vocabulary do not change.
 
+pub mod acp_session;
 pub mod adapter;
 pub mod adapters;
 pub mod budget_ledger;
