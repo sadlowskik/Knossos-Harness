@@ -18,6 +18,7 @@ pub mod campaign_projection;
 pub mod child_env;
 pub mod cities;
 pub mod config;
+pub mod director;
 pub mod eventlog;
 pub mod git;
 pub mod graph_projection;
