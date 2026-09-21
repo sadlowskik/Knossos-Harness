@@ -1,0 +1,18 @@
+heartbeat 14:49:00 0s
+mem used MB, last 15 s: 1156 peak: 1156
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1153       10872          48        4356       14835
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   2167       01:22  5.0 205228 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2110       02:28  2.1 150924 /tmp/provjobd3322121197
+      1       02:51  1.4 14316 /sbin/init
+   2147       01:24  1.3 97832 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   1830       02:39  0.4 37336 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.3-py3.12.egg -run-exthandlers
+/proc/pressure/io: some avg10=7.64 avg60=12.41 avg300=5.48 total=21578534 full avg10=7.06 avg60=11.27 avg300=5.01 total=19802779
+/proc/pressure/cpu: some avg10=3.42 avg60=3.88 avg300=1.64 total=6782580 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 0  0      0 11131588 102456 4375972    0    0 10772   824 2775 3752  4  1 94  2  0  0
+[   11.349962] Initializing XFRM netlink socket
+[   11.527561] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.668834] hv_balloon: Max. dynamic memory size: 16384 MB
