@@ -1,0 +1,263 @@
+=== phase build 13:20:54
+[1m[92m   Compiling[0m proc-macro2 v1.0.107
+[1m[92m   Compiling[0m unicode-ident v1.0.24
+[1m[92m   Compiling[0m quote v1.0.47
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m syn v2.0.119
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m shlex v2.0.1
+[1m[92m   Compiling[0m find-msvc-tools v0.1.9
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m synstructure v0.13.2
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m zerofrom-derive v0.1.7
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m pkg-config v0.3.33
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m yoke-derive v0.8.2
+[1m[92m   Compiling[0m syn v3.0.3
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m zerovec-derive v0.11.3
+[1m[92m   Compiling[0m errno v0.3.14
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m signal-hook-registry v1.4.8
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m displaydoc v0.2.6
+[1m[92m   Compiling[0m tokio-macros v2.7.1
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m fs_extra v1.3.0
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m dunce v1.0.5
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m tracing-attributes v0.1.31
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m version_check v0.9.5
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m aws-lc-rs v1.17.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m futures-macro v0.3.33
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m indexmap v2.14.0
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m regex-automata v0.4.16
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m tokio-util v0.7.19
+[1m[92m   Compiling[0m serde_derive v1.0.229
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m try-lock v0.2.5
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m rustls v0.23.42
+[1m[92m   Compiling[0m thiserror v2.0.19
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m tree-sitter-language v0.1.7
+[1m[92m   Compiling[0m h2 v0.4.15
+[1m[92m   Compiling[0m rustls-webpki v0.103.13
+[1m[92m   Compiling[0m want v0.3.1
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m icu_properties v2.2.0
+[1m[92m   Compiling[0m icu_normalizer v2.2.0
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m sync_wrapper v1.0.2
+[1m[92m   Compiling[0m futures-channel v0.3.33
+[1m[92m   Compiling[0m thiserror-impl v2.0.19
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m subtle v2.6.1
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m httpdate v1.0.3
+[1m[92m   Compiling[0m tower-layer v0.3.3
+[1m[92m   Compiling[0m crossbeam-utils v0.8.22
+[1m[92m   Compiling[0m hyper v1.11.0
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m idna_adapter v1.2.2
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m inotify-sys v0.1.8
+[1m[92m   Compiling[0m autocfg v1.5.1
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m ipnet v2.12.0
+[1m[92m   Compiling[0m vcpkg v0.2.15
+[1m[92m   Compiling[0m crossbeam-epoch v0.9.20
+[1m[92m   Compiling[0m libsqlite3-sys v0.38.2
+[1m[92m   Compiling[0m hyper-util v0.1.20
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m tower v0.5.3
+[1m[92m   Compiling[0m sha1 v0.10.7
+[1m[92m   Compiling[0m http-body-util v0.1.4
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m ryu v1.0.23
+[1m[92m   Compiling[0m crossbeam-deque v0.8.7
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m mime v0.3.17
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m same-file v1.0.6
+[1m[92m   Compiling[0m openssl-probe v0.2.1
+[1m[92m   Compiling[0m rustls-native-certs v0.8.4
+[1m[92m   Compiling[0m walkdir v2.5.0
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m tungstenite v0.29.0
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m tree-sitter v0.26.11
+[1m[92m   Compiling[0m tokio-rustls v0.26.4
+[1m[92m   Compiling[0m bstr v1.13.0
+[1m[92m   Compiling[0m tree-sitter-rust v0.24.2
+[1m[92m   Compiling[0m enumflags2_derive v0.7.12
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m heck v0.5.0
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m clap_derive v4.6.4
+[1m[92m   Compiling[0m clap_builder v4.6.2
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m enumflags2 v0.7.12
+[1m[92m   Compiling[0m globset v0.4.19
+[1m[92m   Compiling[0m hyper-rustls v0.27.9
+[1m[92m   Compiling[0m inotify v0.11.5
+[1m[92m   Compiling[0m tower-http v0.6.11
+[1m[92m   Compiling[0m tokio-tungstenite v0.29.0
+[1m[92m   Compiling[0m rustls-platform-verifier v0.7.0
+[1m[92m   Compiling[0m axum-core v0.5.6
+[1m[92m   Compiling[0m serde_urlencoded v0.7.1
+[1m[92m   Compiling[0m notify-types v2.1.0
+[1m[92m   Compiling[0m regex v1.13.1
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m serde_path_to_error v0.1.20
+[1m[92m   Compiling[0m hashlink v0.12.2
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m encoding_rs v0.8.35
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m unsafe-libyaml v0.2.11
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m matchit v0.8.4
+[1m[92m   Compiling[0m streaming-iterator v0.1.9
+[1m[92m   Compiling[0m iana-time-zone v0.1.65
+[1m[92m   Compiling[0m chrono v0.4.45
+[1m[92m   Compiling[0m axum v0.8.9
+=== progress at 13:23:09, 135s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+   9837    5567    1954       00:01 SNl  361160 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name axum --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/axum-0.8.9/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no --warn=rust_2018_idioms --warn=clippy::verbose_file_reads --warn=clippy::unused_self --forbid=unsafe_code --warn=unreachable_pub --warn=clippy::unnested_or_patterns --warn=clippy::uninlined_format_args --allow=clippy::type_complexity --warn=clippy::todo --warn=clippy::suboptimal_flops --warn=clippy::str_to_string --warn=clippy::return_self_not_must_use --warn=clippy::rest_pat_in_fully_bound_structs --warn=clippy::option_option --warn=clippy::needless_continue --warn=clippy::needless_borrow --warn=clippy::must_use_candidate --warn=missing_docs --warn=missing_debug_implementations --warn=clippy::mem_forget --warn=clippy::match_wildcard_for_single_variants --warn=clippy::macro_use_imports --warn=clippy::lossy_float_literal --warn=clippy::linkedlist --warn=clippy::inefficient_to_string --warn=clippy::imprecise_flops --warn=clippy::if_let_mutex --warn=clippy::fn_params_excessive_bools --warn=clippy::filter_map_next --warn=clippy::exit --warn=clippy::enum_glob_use --warn=clippy::empty_enums --warn=clippy::dbg_macro --warn=clippy::await_holding_lock --cfg feature="default" --cfg feature="form" --cfg feature="http1" --cfg feature="json" --cfg feature="matched-path" --cfg feature="original-uri" --cfg feature="query" --cfg feature="tokio" --cfg feature="tower-log" --cfg feature="tracing" --cfg feature="ws" --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values("__private", "__private_docs", "default", "form", "http1", "http2", "json", "macros", "matched-path", "multipart", "original-uri", "query", "tokio", "tower-log", "tracing", "ws")) -C metadata=b6ad0d3b20540538 -C extra-filename=-f1677bc56880633b --out-dir /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps -C strip=debuginfo -L dependency=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps --extern axum_core=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libaxum_core-ea90c7c6d310332f.rmeta --extern base64=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libbase64-c6c3f836afe1acf0.rmeta --extern bytes=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libbytes-588fcc9d3d9931fe.rmeta --extern form_urlencoded=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libform_urlencoded-d4e9fec83790a6c5.rmeta --extern futures_util=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libfutures_util-0ceaff98f7b9c63e.rmeta --extern http=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libhttp-9b41881082bfdf6b.rmeta --extern http_body=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libhttp_body-eaafef737a2896b6.rmeta --extern http_body_util=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libhttp_body_util-5a480ff6968a5e40.rmeta --extern hyper=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libhyper-5ceef2f9fd728c2c.rmeta --extern hyper_util=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libhyper_util-2819984532f634e9.rmeta --extern itoa=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libitoa-bf5643795585cfb3.rmeta --extern matchit=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libmatchit-4e0d73cae0c3048a.rmeta --extern memchr=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libmemchr-c8b4cf4fc3025c1a.rmeta --extern mime=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libmime-cf7d51bce0ea99b5.rmeta --extern percent_encoding=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libpercent_encoding-387cf33e23f70011.rmeta --extern pin_project_lite=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libpin_project_lite-8e4a26d48d099fe2.rmeta --extern serde_core=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_core-5ad6c1956c5f00e5.rmeta --extern serde_json=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_json-dd5e9414cc9a9840.rmeta --extern serde_path_to_error=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_path_to_error-a8ee294f01549887.rmeta --extern serde_urlencoded=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libserde_urlencoded-0ac58ce6120bbe69.rmeta --extern sha1=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsha1-9ee86055af43a519.rmeta --extern sync_wrapper=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libsync_wrapper-494493ad244d1d1f.rmeta --extern tokio=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtokio-a020f47445ea2d5f.rmeta --extern tokio_tungstenite=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtokio_tungstenite-f19db4a613382441.rmeta --extern tower=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtower-a404222a1176549b.rmeta --extern tower_layer=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtower_layer-5f436b67861671ce.rmeta --extern tower_service=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtower_service-8b122f386287a1b0.rmeta --extern tracing=/home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs/target/debug/deps/libtracing-9eea5da4a5e0bdff.rmeta --cap-lints allow
+   1954       1    1954       12:32 Ssl  228952 /opt/hca/hosted-compute-agent
+   2091    2076    1954       03:17 Sl   187356 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+   1970    1967    1954       12:32 Sl   126260 /tmp/provjobd1843620133
+   2076    1954    1954       03:18 Sl   102772 /home/runner/extracted/bin/Runner.Listener run
+   5567    5561    1954       02:14 SNl  81540 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   1281       1    1281       12:34 Ssl  70316 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    939       1     939       12:34 Ss   49096 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+    223       1     223       12:41 SLsl 42756 /sbin/multipathd -d -s
+   1048       1    1048       12:34 Ssl  42216 /usr/bin/containerd
+   1402     994     994       12:33 Sl   36300 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -run-exthandlers
+    994       1     994       12:34 Ss   29412 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   1241     939     939       12:34 S    23872 php-fpm: pool www
+   1242     939     939       12:34 S    23872 php-fpm: pool www
+    936       1     936       12:34 Ss   20036 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+    158       1     158       12:41 S<s  16816 /usr/lib/systemd/systemd-journald
+      1       0       1       12:42 Ss   13564 /sbin/init
+    986       1     986       12:34 Ssl  12832 /usr/libexec/udisks2/udisksd
+    547       1     547       12:40 Ss   12620 /usr/lib/systemd/systemd-resolved
+   1149       1    1149       12:34 Ssl  12108 /usr/sbin/ModemManager
+   1284       1    1284       12:34 Ss   10924 /usr/lib/systemd/systemd --user
+    724       1     724       12:38 Ss    8956 /usr/lib/systemd/systemd-networkd
+    975       1     975       12:34 Ss    8860 /usr/lib/systemd/systemd-logind
+    228       1     228       12:41 Ss    8080 /usr/lib/systemd/systemd-udevd
+    943       1     943       12:34 Ssl   7524 /usr/lib/polkit-1/polkitd --no-debug
+   1967    1954    1954       12:32 S     5896 sudo -n PROVJOBD_E2E=1 /tmp/provjobd1843620133
+   1006       1    1006       12:34 Ssl   5260 /usr/sbin/rsyslogd -n -iNONE
+    931       1     931       12:34 Ss    4760 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+    572       1     572       12:40 Ss    4748 /usr/sbin/haveged --Foreground --verbose=1
+   9843    5560    1954       00:00 R     3808 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   1287    1284    1284       12:34 S     3436 (sd-pam)
+   1070       1    1069       12:34 S     3220 /usr/sbin/chronyd -F 1
+   5560    2091    1954       02:14 S     3188 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/7c19a3a8-8a2f-40fb-bafb-02a83e7695c9.sh
+    542       1     542       12:40 Ss    2544 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+   1024       1    1024       12:34 Ss    2496 /usr/sbin/cron -f -P
+   5562    5560    1954       02:14 S     2332 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/7c19a3a8-8a2f-40fb-bafb-02a83e7695c9.sh
+   5561    5560    1954       02:14 S     2236 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/7c19a3a8-8a2f-40fb-bafb-02a83e7695c9.sh
+   1198       1    1198       12:34 Ss+   1812 /sbin/agetty -o -p -- \u --keep-baud 115200,57600,38400,9600 - vt220
+   1232       1    1232       12:34 Ss+   1768 /sbin/agetty -o -p -- \u --noclear - linux
+               total        used        free      shared  buff/cache   available
+Mem:           15947        1527       11531          49        3199       14419
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   38G  107G  26% /
+/dev/root       145G   38G  107G  26% /
+[    2.349604] hv_utils: KVP IC version 4.0
+[    2.402351] mlx5_core f76b:00:02.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+[    2.465386] hv_netvsc 000d3a90-a58b-000d-3a90-a58b000d3a90 eth0: VF registering: eth1
+[    2.465416] mlx5_core f76b:00:02.0 eth1: joined to eth0
+[    2.468354] mlx5_core f76b:00:02.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(256) RxCqeCmprss(0 basic)
+[    2.476638] mlx5_core f76b:00:02.0 enP63339s1: renamed from eth1
+[    2.493571] MACsec IEEE 802.1AE
+[    2.763762] /dev/sr0: Can't lookup blockdev
+[    2.832440] mlx5_core f76b:00:02.0 enP63339s1: Link up
+[    2.858318] hv_netvsc 000d3a90-a58b-000d-3a90-a58b000d3a90 eth0: Data path switched to VF: enP63339s1
+[    2.858470] mlx5_core f76b:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[    2.868970] 8021q: 802.1Q VLAN Support v1.8
+[    3.629517] hv_netvsc 000d3a90-a58b-000d-3a90-a58b000d3a90 eth0: Data path switched from VF: enP63339s1
+[    3.645564] mlx5_core f76b:00:02.0 mlx5_0: Port: 1 Link DOWN
+[    4.148154] mlx5_core f76b:00:02.0 enP63339s1: Link up
+[    4.162750] hv_netvsc 000d3a90-a58b-000d-3a90-a58b000d3a90 eth0: Data path switched to VF: enP63339s1
+[    4.162885] mlx5_core f76b:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[    6.362255] EXT4-fs (sda1): resizing filesystem from 19398395 to 39059195 blocks
+[    7.304981] EXT4-fs (sda1): resized filesystem to 39059195
+[    8.278211] kauditd_printk_skb: 112 callbacks suppressed
+[    8.278221] audit: type=1400 audit(1789996234.354:123): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=971 comm="apparmor_parser"
+[    8.387412] evm: overlay not supported
+[    8.548724] loop0: detected capacity change from 0 to 8
+[    8.684020] audit: type=1400 audit(1789996234.778:124): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1162 comm="apparmor_parser"
+[    9.068151] systemd-journald[158]: /var/log/journal/eea7dc47ddfa4ee4b3d22011c5f7cb92/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[    9.125393] Adding 3145724k swap on /swapfile.  Priority:-2 extents:104 across:43057148k 
+[    9.289631] audit: type=1400 audit(1789996235.384:125): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1454 comm="apparmor_parser"
+[    9.758428] Initializing XFRM netlink socket
+[    9.911772] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.680375] hv_balloon: Max. dynamic memory size: 16384 MB
