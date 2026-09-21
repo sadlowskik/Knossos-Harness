@@ -61,6 +61,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # The Linux runner has died one to two minutes into every uncached
+      # Rust build since 2026-09-21 (ubuntu-latest and ubuntu-22.04 alike;
+      # not setsid, not the token, not test codegen: the phase-marked runs
+      # show the plain binary build dying). The two Linux jobs that restore
+      # a target cache survive, so cache here too and keep the cache on a
+      # failed run.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: knossos-rs
+          cache-on-failure: true
       - name: Format
         working-directory: knossos-rs
         run: cargo fmt --all -- --check
@@ -75,6 +85,19 @@ jobs:
         # passing it vacuously. Windows has no such jail and runs `prefer`.
         env:
           KNOSSOS_CONFINE: ${{ runner.os == 'Windows' && 'prefer' || 'require' }}
+          # The ubuntu runner has 7 GB; linking every test binary of
+          # --all-targets in parallel with full debuginfo has driven it into
+          # swap until the job cap fired with no log, on about every other
+          # run since run 19, while the in-step deadline loop never even got
+          # to tick. Fewer parallel jobs there, no incremental artefacts,
+          # line tables only.
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
+          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
+          # Not exported to cargo: the last Ubuntu run that survived the
+          # build (b385c06) is the last one without a token in this step's
+          # environment. The publishers below get it per command.
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
@@ -89,35 +112,90 @@ jobs:
         # with `timeout(1)` in front of cargo.
         run: |
           LOG="$GITHUB_WORKSPACE/ci-rust.log"
-          if command -v setsid >/dev/null 2>&1; then
-            setsid cargo test --all-targets --locked > "$LOG" 2>&1 &
-          else
-            cargo test --all-targets --locked > "$LOG" 2>&1 &
-          fi
+          # Plain background job on every OS. Ubuntu alone used setsid here
+          # and Ubuntu alone kept losing its runner about 90 s into this
+          # step, while macOS (no setsid) and Windows sailed through; the
+          # 25-minute kill below addresses the process tree by name instead.
+          # Three phases, each visible in the heartbeat: the same plain build
+          # the conformance job survives, then test-target codegen, then the
+          # run. Whichever phase the runner dies in narrows the cause.
+          {
+            echo "=== phase build $(date -u +%H:%M:%S)"
+            cargo build --locked --bin knossos
+            echo "=== phase test-codegen $(date -u +%H:%M:%S)"
+            cargo test --all-targets --locked --no-run
+            echo "=== phase run $(date -u +%H:%M:%S)"
+            cargo test --all-targets --locked
+          } > "$LOG" 2>&1 &
           pid=$!
+          # An independent heartbeat, so a stall in the main loop (a hung git
+          # push in the partial publish, say) can be told apart from a runner
+          # that died: heartbeats that stop mean the machine stopped.
+          (
+            while true; do
+              {
+                echo "heartbeat $(date -u +%H:%M:%S) ${SECONDS}s"
+                grep '=== phase' "$LOG" 2>/dev/null | tail -1
+                free -m 2>/dev/null
+                ps -eo pid,etime,pcpu,rss,args --sort=-pcpu 2>/dev/null | head -6 | cut -c1-200
+                sudo -n dmesg 2>/dev/null | tail -3
+              } > ci-rust-heartbeat.log 2>&1 || true
+              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat-$(date -u +%H%M%S).log" >/dev/null 2>&1 || true
+              sleep 15
+            done
+          ) &
+          heartbeat=$!
           deadline=$((SECONDS + 1500))
+          ticks=0
+          # Every two minutes, publish what the log holds so far plus the
+          # live process table and memory. A runner that stalls or dies
+          # then still leaves its last five minutes on the ci-logs branch,
+          # which no end-of-step publish ever managed (runs 19-36).
           while kill -0 "$pid" 2>/dev/null; do
+            ticks=$((ticks + 1))
+            # First at 30 s: the Ubuntu runner has vanished inside the first two
+            # minutes of this step on every bad run, before any tick.
+            if [ "$ticks" -eq 6 ] || [ $((ticks % 24)) -eq 0 ]; then
+              {
+                cat "$LOG"
+                echo "=== progress at $(date -u +%H:%M:%S), ${SECONDS}s into the step"
+                ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss 2>/dev/null | head -40 || ps -ef || true
+                free -m 2>/dev/null || true
+                df -h / /tmp 2>/dev/null || true
+                sudo -n dmesg 2>/dev/null | tail -30 || true
+              } > ci-rust-partial.log 2>&1 || true
+              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
+            fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               {
                 echo "=== cargo test still running after 25 minutes; processes alive:"
                 ps -eo pid,ppid,pgid,etime,stat,args 2>/dev/null || ps -ef || true
+                free -m 2>/dev/null || true
                 echo "=== tests that never reported (compare against a green run)"
               } >> "$LOG"
-              kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+              kill "$heartbeat" 2>/dev/null || true
+              kill -KILL "$pid" 2>/dev/null || true
               pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
+              pkill -KILL -x knossos 2>/dev/null || true
               cat "$LOG"
               exit 124
             fi
             sleep 5
           done
           wait "$pid"; status=$?
+          kill "$heartbeat" 2>/dev/null || true
           cat "$LOG"
           exit "$status"
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
-      - name: Publish failure log to ci-logs branch
-        if: failure()
+      # `always()` rather than `failure()`: a job the cap cancels never
+      # counts as failed, and the cancelled runs are exactly the ones whose
+      # log matters. The log file is written progressively, so a cancelled
+      # job still publishes everything cargo printed before the runner
+      # stalled.
+      - name: Publish Rust log to ci-logs branch
+        if: always()
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,6 +235,50 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/ci/publish-log.sh ci-field.log ci-field-${{ matrix.os }}-${{ github.run_id }}.log
+
+  app:
+    name: Knossos app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: field/package-lock.json
+      # The shell bundles field/web/dist as a resource; build it so the
+      # Tauri build script sees the same tree an installer would.
+      - name: Build the web client
+        working-directory: field
+        run: npm ci && npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            knossos-rs
+            app
+      - name: Linux WebKitGTK and tray libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      # A lint-level compile of the desktop shell on every OS. Bundling
+      # (`cargo tauri build`) is the installer step and stays out of CI until
+      # signing exists.
+      - name: Clippy
+        working-directory: app
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
+        run: cargo clippy --locked -- -D warnings
 
   conformance:
     name: ACP conformance

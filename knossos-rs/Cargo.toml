@@ -17,14 +17,21 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.22.1"
 async-trait = "0.1.91"
+futures-util = "0.3.33"
+getrandom = "0.4.3"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.4", features = ["derive"] }
 ignore = "0.4.31"
 regex = "1.13.1"
+notify = "8"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "charset", "http2", "system-proxy"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serde_yaml_ng = "0.10.0"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 fs2 = "0.4"
@@ -32,6 +39,7 @@ similar = "3.1.1"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "net", "time", "signal"] }
 tracing = "0.1.44"
+url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tree-sitter = "0.26.11"
 tree-sitter-rust = "0.24.2"
@@ -40,11 +48,20 @@ tree-sitter-rust = "0.24.2"
 landlock = "0.4.7"
 libc = "0.2.189"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Endpoint keys live in the login keychain (see field::stores).
+keyring-core = "1"
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
+
 [target.'cfg(windows)'.dependencies]
+# Endpoint keys live in the Credential Manager (see field::stores).
+keyring-core = "1"
+windows-native-keyring-store = "1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tokio-tungstenite = "0.29.0"
 
 [profile.release]
 # The harness ships beside model runtimes where disk and page-cache pressure

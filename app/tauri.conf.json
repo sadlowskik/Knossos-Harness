@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Knossos",
+  "version": "0.2.0",
+  "identifier": "com.knossos.field",
+  "build": {
+    "frontendDist": "../field/web/dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../field/field": "field/field",
+      "../field/web/dist": "field/web/dist"
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "Knossos: agents on your projects, with any model.",
+    "longDescription": "The Field operator surface on the Rust harness. Works with a Cameo box, Ollama on this machine, or a cloud provider key; keys never leave the OS keychain."
+  }
+}

@@ -32,6 +32,7 @@ pub mod environment;
 pub mod episode;
 pub mod eval;
 pub mod eval_checkpoint;
+pub mod field;
 pub mod gate;
 pub mod hooks;
 pub mod interject;

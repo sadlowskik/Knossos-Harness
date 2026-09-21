@@ -13,13 +13,13 @@ const FieldMode = lazy(() => import('./field/FieldMode.jsx'));
 const MODES = [
   { id: 'theater', name: 'Field', key: 'F' },
   { id: 'routines', name: 'Routines', key: 'R' },
-  { id: 'traces', name: 'Traces', key: 'T' },
+  { id: 'traces', name: 'History', key: 'T' },
 ];
 const FIELD_LENSES = [
   { id: 'theater', name: 'Board', key: 'V' },
-  { id: 'rts', name: 'RTS', key: 'G' },
-  { id: 'workspace', name: 'City', key: 'C' },
-  { id: 'campaigns', name: 'Senate', key: 'S' },
+  { id: 'rts', name: 'Map', key: 'G' },
+  { id: 'workspace', name: 'Project', key: 'C' },
+  { id: 'campaigns', name: 'Plans', key: 'S' },
 ];
 const FIELD_MODES = new Set(['theater', 'field', 'rts', 'campaigns', 'workspace']);
 
@@ -60,63 +60,72 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
-          <span className="brand-name">FIELD</span>
-          <span className="brand-sub label">{st.config?.field?.name ?? 'loading…'}</span>
+          <span className="brand-name">Field</span>
+          <span className="brand-sub">{st.config?.field?.name ?? 'connecting…'}</span>
         </div>
 
-        <nav className="modes">
+        <nav className="modes segctl" aria-label="Mode">
           {MODES.map((m) => (
             <button
               key={m.id}
-              className={`mode${m.id === 'theater' ? (FIELD_MODES.has(st.mode) ? ' on' : '') : (st.mode === m.id ? ' on' : '')}`}
+              className={`mode segctl-item${m.id === 'theater' ? (FIELD_MODES.has(st.mode) ? ' on' : '') : (st.mode === m.id ? ' on' : '')}`}
               onClick={() => setMode(m.id)}
               type="button"
               aria-current={m.id === 'theater' ? (FIELD_MODES.has(st.mode) ? 'page' : undefined) : (st.mode === m.id ? 'page' : undefined)}
               aria-keyshortcuts={`Control+Alt+${m.key}`}
             >
               {m.name}
-              <kbd>Ctrl+Alt+{m.key}</kbd>
+              <kbd className="segctl-hint">Ctrl+Alt+{m.key}</kbd>
             </button>
           ))}
         </nav>
 
         {FIELD_MODES.has(st.mode) && (
-          <nav className="field-lenses" aria-label="Field view">
+          <nav className="field-lenses segctl" aria-label="Field view">
             {FIELD_LENSES.map((lens) => (
-              <button key={lens.id} className={st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? 'on' : ''} onClick={() => setMode(lens.id)} type="button" aria-current={st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? 'page' : undefined} aria-keyshortcuts={`Control+Alt+${lens.key}`}>
-                {lens.name}<kbd>Ctrl+Alt+{lens.key}</kbd>
+              <button key={lens.id} className={`segctl-item${st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? ' on' : ''}`} onClick={() => setMode(lens.id)} type="button" aria-current={st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? 'page' : undefined} aria-keyshortcuts={`Control+Alt+${lens.key}`}>
+                {lens.name}<kbd className="segctl-hint">Ctrl+Alt+{lens.key}</kbd>
               </button>
             ))}
           </nav>
         )}
 
-        <div className="topstats mono" aria-live="polite" aria-atomic="true">
-          <button type="button" onClick={async () => {
-            try { await api.logout(); setLoggedOut(true); }
-            catch { setLogoutError('Sign out failed. Check the Field server and try again.'); }
-          }}>Sign out</button>
-          {simulated > 0 && <span className="stat warn">SIMULATION · {simulated} units</span>}
-          {waiting > 0 && <span className="stat warn">{waiting} awaiting approval</span>}
-          <span className="stat">{live.length} active</span>
-          <span className="stat">{realSessionCount} sessions</span>
-          <span className="stat">${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
-          {reservedUsd > 0 && <span className="stat">${reservedUsd.toFixed(2)} reserved</span>}
-          {unknownCosts > 0 && <span className="stat warn">{unknownCosts} costs unconfirmed</span>}
+        <div className="topstats" aria-live="polite" aria-atomic="true">
+          {simulated > 0 && <span className="stat warn"><i aria-hidden="true" />Simulation · {simulated} {simulated === 1 ? 'unit' : 'units'}</span>}
+          {waiting > 0 && <span className="stat warn"><i aria-hidden="true" />{waiting} awaiting approval</span>}
+          <span className="stat"><i aria-hidden="true" />{live.length} active</span>
+          <span className="stat quiet">{realSessionCount} {realSessionCount === 1 ? 'session' : 'sessions'}</span>
+          <span className="stat quiet mono">${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
+          {reservedUsd > 0 && <span className="stat quiet mono">${reservedUsd.toFixed(2)} reserved</span>}
+          {unknownCosts > 0 && <span className="stat warn"><i aria-hidden="true" />{unknownCosts} costs unconfirmed</span>}
         </div>
+
+        <button type="button" className="topbar-signout" onClick={async () => {
+          try { await api.logout(); setLoggedOut(true); }
+          catch { setLogoutError('Sign out failed. Check the Field server and try again.'); }
+        }}>Sign out</button>
       </header>
 
       <main className="stage">
-        {logoutError && <p role="alert">{logoutError}</p>}
-        {st.error && <div className="fatal">Field server unreachable — {st.error}</div>}
+        {logoutError && <p role="alert" className="stage-alert">{logoutError}</p>}
+        {st.error && (
+          <div className="fatal" role="alert">
+            <div className="fatal-card">
+              <b>Can't reach the Field server</b>
+              <p>Field keeps trying in the background. Check that the server is running, then this page will recover on its own.</p>
+              <code>{st.error}</code>
+            </div>
+          </div>
+        )}
         {(st.mode === 'theater' || st.mode === 'field') && <TheaterMode />}
         {st.mode === 'rts' && (
-          <Suspense fallback={<p role="status">Loading RTS…</p>}>
+          <Suspense fallback={<p role="status" className="stage-status">Loading map…</p>}>
             <FieldMode />
           </Suspense>
         )}
         {st.mode === 'campaigns' && <CampaignMode />}
         {st.mode === 'workspace' && (
-          <Suspense fallback={<p role="status">Loading City…</p>}>
+          <Suspense fallback={<p role="status" className="stage-status">Loading project…</p>}>
             <WorkspaceMode />
           </Suspense>
         )}

@@ -224,6 +224,13 @@ enum Command {
         /// Field installation root. Otherwise use KNOSSOS_FIELD_DIR or discover a sibling bundle.
         #[arg(long)]
         dir: Option<PathBuf>,
+        /// Serve Field from this binary (event log, projection, API, WebSocket
+        /// in Rust; no Node). Routes not yet ported answer 501.
+        #[arg(long)]
+        native: bool,
+        /// Listening port for --native. Otherwise FIELD_PORT, field.api_port, or 7749.
+        #[arg(long)]
+        port: Option<u16>,
     },
 
     /// One turn against the configured engine. Smoke test for the engine slot.
@@ -353,6 +360,12 @@ enum Command {
         #[command(flatten)]
         opts: LoopArgs,
     },
+
+    /// Field's permission gate as a stdio MCP server: what a Field-launched
+    /// Claude Code's `--permission-prompt-tool` points at. Not meant to be
+    /// driven by hand; the Field registry writes its `--mcp-config` entry.
+    #[command(name = "field-permission-bridge", hide = true)]
+    FieldPermissionBridge,
 }
 
 #[tokio::main]
@@ -416,7 +429,17 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Command::Field { ref dir } => run_field(dir.as_deref()),
+        Command::Field {
+            ref dir,
+            native,
+            port,
+        } => {
+            if native {
+                run_native_field(dir.as_deref(), port).await
+            } else {
+                run_field(dir.as_deref())
+            }
+        }
         Command::Chat { ref prompt } => chat(&cfg, prompt).await,
         Command::Index { full, ref lookup } => index(&cfg, full, lookup.as_deref()),
         Command::Verify => verify(&cfg).await,
@@ -461,6 +484,9 @@ async fn main() -> Result<()> {
             ref opts,
             ref recovery,
         } => run_acp(&cfg, opts, recovery).await,
+        Command::FieldPermissionBridge => knossos::field::permission_bridge::run_stdio()
+            .await
+            .context("field permission bridge"),
         Command::Eval {
             ref cases,
             ref case_ids,
@@ -547,6 +573,38 @@ fn validate_field_root(path: &Path) -> Result<PathBuf> {
     }
     path.canonicalize()
         .with_context(|| format!("cannot resolve Field installation: {}", path.display()))
+}
+
+/// Field served by this binary: the Rust port of the Node server, selected by
+/// `--native` until it reaches parity and becomes the only server.
+async fn run_native_field(explicit: Option<&Path>, port: Option<u16>) -> Result<()> {
+    let root = field_root(explicit)?;
+    let env_path = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let options = knossos::field::ServerOptions {
+        field_dir: env_path("FIELD_DIR").unwrap_or_else(|| root.join("field")),
+        state_dir: env_path("FIELD_STATE").unwrap_or_else(|| root.join(".field-state")),
+        dist_dir: root.join("web").join("dist"),
+        port: port.or_else(|| {
+            std::env::var("FIELD_PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+        }),
+        ui_origin: std::env::var("FIELD_UI_ORIGIN")
+            .ok()
+            .filter(|v| !v.is_empty()),
+        backend: std::env::var("FIELD_LOG_BACKEND")
+            .ok()
+            .and_then(|b| knossos::field::eventlog::Backend::parse(&b)),
+        bootstrap_token: None,
+        browser_token: None,
+        probe_endpoints: true,
+        watch_git: true,
+    };
+    knossos::field::server::serve(options).await
 }
 
 fn run_field(explicit: Option<&Path>) -> Result<()> {
@@ -1747,7 +1805,7 @@ mod field_tests {
     fn field_subcommand_accepts_an_explicit_bundle() {
         let cli = Cli::try_parse_from(["knossos", "field", "--dir", "bundle"]).unwrap();
         match cli.command {
-            Command::Field { dir } => assert_eq!(dir, Some(PathBuf::from("bundle"))),
+            Command::Field { dir, .. } => assert_eq!(dir, Some(PathBuf::from("bundle"))),
             _ => panic!("field subcommand parsed as a different command"),
         }
     }
