@@ -1,0 +1,19 @@
+heartbeat 14:52:03 183s
+mem used MB, last 15 s: 1753 1768 1828 1884 1940 2008 2012 2083 2142 2161 2159 2156 2157 2145 2137 peak: 2161
+=== phase build 14:49:29
+               total        used        free      shared  buff/cache   available
+Mem:           15988        2136        7060          49        7187       13852
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  11241       00:19  100 1031096 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-an
+   1280       05:43  4.2 80668 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+   2167       04:24  1.7 210312 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   6279       02:34  1.4 186804 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   2110       05:30  1.3 138844 /tmp/provjobd3322121197
+/proc/pressure/io: some avg10=0.46 avg60=1.93 avg300=4.42 total=29274118 full avg10=0.44 avg60=1.77 avg300=4.10 total=27163111
+/proc/pressure/cpu: some avg10=1.76 avg60=4.42 avg300=2.43 total=12875168 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 7832012 147960 7351640    0    0     0     0 1889  977 22  4 74  0  0  0
+[  199.902186] eth0: renamed from veth1b47513
+[  199.903445] docker0: port 1(veth4557096) entered blocking state
+[  199.903451] docker0: port 1(veth4557096) entered forwarding state
