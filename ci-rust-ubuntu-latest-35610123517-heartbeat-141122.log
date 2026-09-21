@@ -1,0 +1,18 @@
+heartbeat 14:11:21 111s
+=== phase build 14:09:30
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1345       10647          46        4394       14648
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9522       00:02 99.6 304540 /usr/libexec/gcc/x86_64-linux-gnu/13/cc1 -quiet -imultiarch x86_64-linux-gnu -D SQLITE_CORE -D SQLITE_DEFAULT_FOREIGN_KEYS=1 -D SQLITE_ENABLE_API_ARMOR -D SQLITE_ENABLE
+   2121       02:58  2.2 134816 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2034       05:14  1.0 135380 /tmp/provjobd265032768
+      1       05:39  0.8 14392 /sbin/init
+   2103       02:59  0.7 97512 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.26 avg300=0.68 total=5368335 full avg10=0.00 avg60=0.19 avg300=0.56 total=4645671
+/proc/pressure/cpu: some avg10=4.23 avg60=4.73 avg300=2.48 total=12120289 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 10859860 104996 4397420    0    0     0     0 1454  521 25  0 75  0  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
