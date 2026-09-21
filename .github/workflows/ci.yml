@@ -84,7 +84,10 @@ jobs:
           CARGO_INCREMENTAL: "0"
           CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
           CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Not exported to cargo: the last Ubuntu run that survived the
+          # build (b385c06) is the last one without a token in this step's
+          # environment. The publishers below get it per command.
+          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
@@ -111,7 +114,7 @@ jobs:
           (
             while true; do
               { echo "heartbeat $(date -u +%H:%M:%S) ${SECONDS}s"; free -m 2>/dev/null; } > ci-rust-heartbeat.log 2>&1 || true
-              timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat.log" >/dev/null 2>&1 || true
+              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat.log" >/dev/null 2>&1 || true
               sleep 60
             done
           ) &
@@ -135,7 +138,7 @@ jobs:
                 df -h / /tmp 2>/dev/null || true
                 sudo -n dmesg 2>/dev/null | tail -30 || true
               } > ci-rust-partial.log 2>&1 || true
-              timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
+              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               {
