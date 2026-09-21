@@ -50,7 +50,7 @@ libc = "0.2.189"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Endpoint keys live in the login keychain (see field::stores).
 keyring-core = "1"
-apple-native-keyring-store = "1"
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [target.'cfg(windows)'.dependencies]
 # Endpoint keys live in the Credential Manager (see field::stores).

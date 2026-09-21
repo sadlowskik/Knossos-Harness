@@ -220,7 +220,7 @@ mod keychain {
         static READY: OnceLock<bool> = OnceLock::new();
         *READY.get_or_init(|| {
             #[cfg(target_os = "macos")]
-            let store = apple_native_keyring_store::Store::new();
+            let store = apple_native_keyring_store::keychain::Store::new();
             #[cfg(windows)]
             let store = windows_native_keyring_store::Store::new();
             match store {
