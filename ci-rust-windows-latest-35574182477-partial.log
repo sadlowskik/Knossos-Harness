@@ -1,0 +1,100 @@
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m windows-link v0.2.1
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m windows-sys v0.61.2
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m regex-automata v0.4.16
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m indexmap v2.14.0
+[1m[92m   Compiling[0m tower-service v0.3.3
+[1m[92m   Compiling[0m libc v0.2.189
+[1m[92m   Compiling[0m serde v1.0.229
+[1m[92m   Compiling[0m tokio-util v0.7.19
+[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[92m   Compiling[0m rustls-pki-types v1.15.1
+[1m[92m   Compiling[0m untrusted v0.9.0
+[1m[92m   Compiling[0m atomic-waker v1.1.2
+[1m[92m   Compiling[0m try-lock v0.2.5
+[1m[92m   Compiling[0m fnv v1.0.7
+[1m[92m   Compiling[0m h2 v0.4.15
+[1m[92m   Compiling[0m ppv-lite86 v0.2.21
+[1m[92m   Compiling[0m tree-sitter-language v0.1.7
+[1m[92m   Compiling[0m want v0.3.1
+[1m[92m   Compiling[0m digest v0.10.7
+[1m[92m   Compiling[0m rand_core v0.9.5
+[1m[92m   Compiling[0m icu_normalizer v2.2.0
+[1m[92m   Compiling[0m icu_properties v2.2.0
+[1m[92m   Compiling[0m form_urlencoded v1.2.2
+[1m[92m   Compiling[0m futures-channel v0.3.33
+[1m[92m   Compiling[0m sync_wrapper v1.0.2
+[1m[92m   Compiling[0m windows-strings v0.5.1
+[1m[92m   Compiling[0m windows-result v0.4.1
+[1m[92m   Compiling[0m bitflags v2.13.1
+[1m[92m   Compiling[0m httpdate v1.0.3
+[1m[92m   Compiling[0m tower-layer v0.3.3
+[1m[92m   Compiling[0m subtle v2.6.1
+[1m[92m   Compiling[0m cpufeatures v0.2.17
+[1m[92m   Compiling[0m windows_x86_64_msvc v0.53.1
+[1m[92m   Compiling[0m hyper v1.11.0
+[1m[92m   Compiling[0m thiserror v2.0.19
+=== progress at 07:44:52, 26s into the step
+     UID     PID    PPID  TTY        STIME COMMAND
+runnerad     854     820 ?        07:44:52 ps -ef 
+runnerad     821     820 ?        07:44:26 C:\Users\runneradmin\.cargo\bin\cargo.exe test --all-targets --locked 
+runnerad     822     820 ?        07:44:26 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\cf134de2-36fa-45b5-b24d-77e4200dc901.sh 
+runnerad     846     822 ?        07:44:34 sleep 60 
+runnerad     820       1 ?        07:44:26 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\cf134de2-36fa-45b5-b24d-77e4200dc901.sh 
+Filesystem            Size  Used Avail Use% Mounted on
+C:/Program Files/Git  150G  121G   29G  81% /
+C:                    150G  121G   29G  81% /c
