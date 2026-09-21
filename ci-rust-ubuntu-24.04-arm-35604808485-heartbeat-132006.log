@@ -1,0 +1,14 @@
+heartbeat 13:20:06 0s
+=== phase build 13:20:06
+               total        used        free      shared  buff/cache   available
+Mem:           15947        1546       12020          48        2690       14400
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   5518       00:00 25.0 30532 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+   2050       01:09  5.8 185568 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+      1       02:17  2.4 13580 /sbin/init
+   1849       02:04  1.8 283068 /opt/hca/hosted-compute-agent
+   2035       01:10  1.5 99216 /home/runner/extracted/bin/Runner.Listener run
+[   11.355615] Initializing XFRM netlink socket
+[   11.469674] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.697383] hv_balloon: Max. dynamic memory size: 16384 MB
