@@ -1,0 +1,19 @@
+heartbeat 14:37:41 78s
+mem used MB, last 15 s: 1129 1108 1099 1093 1084 1150 1141 1166 1137 1193 1123 1125 1234 1149 1173 peak: 1469
+=== phase build 14:36:23
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1201       10605          49        4579       14788
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8634       00:00  100 286508 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name aho_corasick --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949
+   2087       02:41  3.4 141712 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       02:45  3.3 137872 /tmp/provjobd354528372
+      1       03:11  1.6 14408 /sbin/init
+   2066       02:45  0.9 98768 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.41 avg300=0.78 total=4443227 full avg10=0.00 avg60=0.36 avg300=0.68 total=3935307
+/proc/pressure/cpu: some avg10=0.04 avg60=1.97 avg300=2.07 total=10327384 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 10875680 104940 4590792    0    0     0     0 1974  843 24  2 74  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
