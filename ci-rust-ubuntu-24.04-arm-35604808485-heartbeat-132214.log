@@ -1,0 +1,14 @@
+heartbeat 13:22:14 128s
+=== phase test-codegen 13:21:41
+               total        used        free      shared  buff/cache   available
+Mem:           15947        2931        9638          49        3689       13015
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10196       00:01  100 485264 /usr/bin/ld -plugin /usr/libexec/gcc/aarch64-linux-gnu/13/liblto_plugin.so -plugin-opt=/usr/libexec/gcc/aarch64-linux-gnu/13/lto-wrapper -plugin-opt=-fresolution=/tmp/c
+  10208       00:00  100 460924 /usr/bin/ld -plugin /usr/libexec/gcc/aarch64-linux-gnu/13/liblto_plugin.so -plugin-opt=/usr/libexec/gcc/aarch64-linux-gnu/13/lto-wrapper -plugin-opt=-fresolution=/tmp/c
+  10185       00:01 30.2 154080 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name field_projection --edition=2021 tests/field_projection.rs --error-format=json --
+  10198       00:01 22.3 136532 /home/runner/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin/rustc --crate-name jail --edition=2021 tests/jail.rs --error-format=json --json=diagnostic-rendered
+   2050       03:17  2.3 190732 /home/runner/extracted/bin/Runner.Worker spawnclient 142 145
+[   11.355615] Initializing XFRM netlink socket
+[   11.469674] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   48.697383] hv_balloon: Max. dynamic memory size: 16384 MB
