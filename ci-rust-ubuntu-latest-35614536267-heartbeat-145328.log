@@ -1,0 +1,19 @@
+heartbeat 14:53:27 267s
+mem used MB, last 15 s: 1469 1440 1417 1359 1334 1303 1281 1258 1233 1215 1194 1168 1199 1214 1218 peak: 2337
++ echo '=== phase run 14:53:11'
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1310        6712          50        8361       14678
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  16360       00:00 62.7 124676 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/cargo metadata --all-features --format-version 1
+  16342       00:00 13.2 82916 /home/runner/actions-runner/cached/2.337.0/externals/node24/bin/node /home/runner/work/_actions/Swatinem/rust-cache/v2/dist/save.js
+   1280       07:08  3.4 80792 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+   2167       05:49  1.4 218124 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2110       06:55  1.1 141752 /tmp/provjobd3322121197
+/proc/pressure/io: some avg10=3.96 avg60=3.27 avg300=4.14 total=32203004 full avg10=3.86 avg60=3.04 avg300=3.83 total=29904121
+/proc/pressure/cpu: some avg10=0.39 avg60=1.30 avg300=1.87 total=13393017 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=4 full avg10=0.00 avg60=0.00 avg300=0.00 total=4
+ 1  0      0 6932588 154156 8248504    0    0     0  7768 33279 70292 17 22 61  1  0  0
+[  426.813409] veth4557096 (unregistering): left allmulticast mode
+[  426.813414] veth4557096 (unregistering): left promiscuous mode
+[  426.813418] docker0: port 1(veth4557096) entered disabled state
