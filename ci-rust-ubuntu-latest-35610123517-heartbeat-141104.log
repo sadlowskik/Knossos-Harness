@@ -1,0 +1,18 @@
+heartbeat 14:11:03 93s
+=== phase build 14:09:30
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1128       10961          46        4297       14865
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8903       00:00 87.5 168168 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name httpdate --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c
+   8560       00:07  4.7 27912 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.2-py3.12.egg -collect-logs
+   2121       02:39  2.5 134816 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2034       04:55  1.1 135376 /tmp/provjobd265032768
+      1       05:21  0.8 14392 /sbin/init
+/proc/pressure/io: some avg10=0.00 avg60=0.37 avg300=0.73 total=5351595 full avg10=0.00 avg60=0.27 avg300=0.61 total=4629298
+/proc/pressure/cpu: some avg10=13.13 avg60=4.08 avg300=2.16 total=11230610 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 11172984 104436 4302648    0    0     0     0 2230 1253 23  4 73  0  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
