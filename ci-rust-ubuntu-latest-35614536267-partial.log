@@ -1,0 +1,100 @@
+Unable to find image 'rust:1.98' locally
+1.98: Pulling from library/rust
+6eefb2f5d3e9: Pulling fs layer
+42f0cc32f2e3: Pulling fs layer
+38985a14f2b1: Pulling fs layer
+e7272a918094: Pulling fs layer
+ed8a5e9f2f6f: Pulling fs layer
+e7272a918094: Waiting
+ed8a5e9f2f6f: Waiting
+42f0cc32f2e3: Verifying Checksum
+42f0cc32f2e3: Download complete
+6eefb2f5d3e9: Verifying Checksum
+6eefb2f5d3e9: Download complete
+38985a14f2b1: Verifying Checksum
+38985a14f2b1: Download complete
+e7272a918094: Verifying Checksum
+e7272a918094: Download complete
+ed8a5e9f2f6f: Verifying Checksum
+ed8a5e9f2f6f: Download complete
+6eefb2f5d3e9: Pull complete
+42f0cc32f2e3: Pull complete
+38985a14f2b1: Pull complete
+e7272a918094: Pull complete
+=== progress at 14:49:25, 25s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+   2167    2147    2090       01:47 Sl   209664 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2110    2107    2090       02:53 Sl   138892 /tmp/provjobd3322121197
+   2147    2090    2090       01:49 Sl   97844 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   1280       1    1280       03:06 Ssl  90916 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    977       1     977       03:07 Ss   51408 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+   1075       1    1075       03:06 Ssl  46380 /usr/bin/containerd
+    222       1     222       03:14 SLsl 43712 /sbin/multipathd -d -s
+   1830     994     994       03:04 Sl   37340 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.3-py3.12.egg -run-exthandlers
+    994       1     994       03:07 Ss   30964 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   5911    5909    2090       00:25 Sl   29820 docker run --rm --memory=8g --memory-swap=8g --pids-limit=2048 --ulimit nofile=65536:65536 --security-opt seccomp=unconfined -v /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs:/work -w /work -e KNOSSOS_CONFINE -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG -e CARGO_BUILD_JOBS -e CARGO_TARGET_DIR=/work/target-fenced rust:1.98 bash -c          set -x         echo "=== phase build $(date -u +%H:%M:%S)"         cargo build --locked --bin knossos         echo "=== phase test-codegen $(date -u +%H:%M:%S)"         cargo test --all-targets --locked --no-run         echo "=== phase run $(date -u +%H:%M:%S)"         cargo test --all-targets --locked       
+   1330     977     977       03:06 S    21496 php-fpm: pool www
+   1329     977     977       03:06 S    21464 php-fpm: pool www
+    974       1     974       03:07 Ss   20984 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+   2090       1    2090       02:53 Ssl  18416 /opt/hca/hosted-compute-agent
+    157       1     157       03:14 S<s  17828 /usr/lib/systemd/systemd-journald
+   6153    6152    6113       00:01 S    16608 /usr/lib/git-core/git-remote-https https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness
+      1       0       1       03:16 Ss   14316 /sbin/init
+    993       1     993       03:07 Ssl  13832 /usr/libexec/udisks2/udisksd
+    511       1     511       03:13 Ss   13100 /usr/lib/systemd/systemd-resolved
+   1127       1    1127       03:06 Ssl  12856 /usr/sbin/ModemManager
+   1168       1    1168       03:06 Ss   11516 /usr/lib/systemd/systemd --user
+    731       1     731       03:10 Ss    9852 /usr/lib/systemd/systemd-networkd
+    988       1     988       03:07 Ss    9820 /usr/lib/systemd/systemd-logind
+    981       1     981       03:07 Ssl   8192 /usr/lib/polkit-1/polkitd --no-debug
+    226       1     226       03:14 Ss    8048 /usr/lib/systemd/systemd-udevd
+   2107    2090    2090       02:53 S     7104 sudo -n PROVJOBD_E2E=1 /tmp/provjobd3322121197
+    581       1     581       03:13 Ss    6648 /usr/sbin/haveged --Foreground --verbose=1
+   1094       1    1094       03:06 Ssl   6348 /usr/sbin/rsyslogd -n -iNONE
+   6150    6114    6113       00:01 S     5728 git push -q https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness ci-logs
+   6158    6153    6113       00:00 Sl    5668 /usr/lib/git-core/git send-pack --stateless-rpc --helper-status --thin --quiet --no-progress https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness/ --stdin
+    969       1     969       03:07 Ss    5656 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+   6164    5902    2090       00:00 R     4352 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   6152    6150    6113       00:01 S     3844 /usr/lib/git-core/git remote-https https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiJYXzBGSnEtcVFYTzdHNjJacUY0VTR6YmdNUzBxQnBsU216YmdpUzR1bHFfZVZxaDJmQy00N1pJIiwiZXhwIjoxNzkwMDA1NjU4LCJpYXQiOjE3OTAwMDIwNTgsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU0MzNhNjA5LTAxNzQtNDc4MS05YmJlLWE5NDYwYzVhYmQyOSIsInZlciI6M30.54ziC-qXVo_sNpD2WFnL7H8VSR4JaYOTJ05pbn0k6xU_p2wliN0YQPBydhJpEJ809UTSrpy1ws6ukjOzAhrt0g@github.com/sadlowskik/Knossos-Harness
+   1087       1    1086       03:06 S     3772 /usr/sbin/chronyd -F 1
+   5902    2167    2090       00:25 S     3660 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/809bba20-5475-4d25-af8e-c6c334648a11.sh
+   6114    6113    6113       00:03 S     3660 bash /home/runner/work/Knossos-Harness/Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-ubuntu-latest-35614536267-heartbeat-144921.log
+   1209    1168    1168       03:06 S     3576 (sd-pam)
+    324       1     324       03:14 Ss    2968 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+   1027       1    1027       03:07 Ss    2888 /usr/sbin/cron -f -P
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1377        8804          49        6201       14611
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   62G   83G  43% /
+/dev/root       145G   62G   83G  43% /
+[    3.876283] pci_bus 7870:00: busn_res: [bus 00-ff] end is updated to 00
+[    3.876296] pci 7870:00:00.0: BAR 0 [mem 0xfc0000000-0xfc1ffffff 64bit pref]: assigned
+[    3.878124] pci 7870:00:00.0: BAR 4 [mem 0xfc2000000-0xfc2007fff 64bit pref]: assigned
+[    3.880085] mana 7870:00:00.0: enabling device (0000 -> 0002)
+[    3.892445] mana 7870:00:00.0: Microsoft Azure Network Adapter protocol version: 0.1.1
+[    3.893802] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: VF registering: eth1
+[    3.893833] mana 7870:00:00.0 eth1: joined to eth0
+[    3.896405] mana 7870:00:00.0 ens1: renamed from eth1
+[    4.001359] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    4.006385] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    4.007038] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched to VF: ens1
+[    5.415393] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched from VF: ens1
+[    5.415565] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    5.949641] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    5.954781] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    5.955350] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched to VF: ens1
+[    5.955509] mana 7870:00:00.0 mana_0: Port: 1 Link ACTIVE
+[    8.297442] EXT4-fs (sda1): resizing filesystem from 19398395 to 39059195 blocks
+[    9.258157] EXT4-fs (sda1): resized filesystem to 39059195
+[   10.053295] kauditd_printk_skb: 113 callbacks suppressed
+[   10.053299] audit: type=1400 audit(1790001979.159:124): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=1044 comm="apparmor_parser"
+[   10.237293] evm: overlay not supported
+[   10.306064] loop0: detected capacity change from 0 to 8
+[   10.560335] systemd-journald[157]: /var/log/journal/58b34b8c91a94400a52c175421986a53/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   10.628373] audit: type=1400 audit(1790001979.734:125): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1273 comm="apparmor_parser"
+[   10.874993] audit: type=1400 audit(1790001979.980:126): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1439 comm="apparmor_parser"
+[   11.073105] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   11.349962] Initializing XFRM netlink socket
+[   11.527561] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.668834] hv_balloon: Max. dynamic memory size: 16384 MB
