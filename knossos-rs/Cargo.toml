@@ -17,7 +17,11 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.22.1"
 async-trait = "0.1.91"
+futures-util = "0.3.33"
+getrandom = "0.4.3"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6.4", features = ["derive"] }
 ignore = "0.4.31"
@@ -33,6 +37,7 @@ similar = "3.1.1"
 thiserror = "2.0.19"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "sync", "net", "time", "signal"] }
 tracing = "0.1.44"
+url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tree-sitter = "0.26.11"
 tree-sitter-rust = "0.24.2"

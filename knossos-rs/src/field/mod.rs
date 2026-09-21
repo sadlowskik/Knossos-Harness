@@ -16,7 +16,9 @@ pub mod eventlog;
 pub mod page;
 pub mod replay;
 pub mod sanitize;
+pub mod security;
 
 pub use eventlog::{Event, EventLog, Health, Source, EVENT_LOG_SCHEMA_VERSION};
 pub use page::{page_result, parse_event_page, EventPage, PageResult, PaginationError};
 pub use replay::{read_event_range, replay_into, ApplyEvent, Range, ReadEvents, Replayed};
+pub use security::{Authority, Bootstrap, ControlSecurity, Denied, RequestFacts, SecurityOptions};
