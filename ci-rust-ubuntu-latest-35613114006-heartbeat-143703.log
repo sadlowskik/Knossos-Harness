@@ -1,0 +1,19 @@
+heartbeat 14:37:02 39s
+mem used MB, last 15 s: 1200 1165 1160 1184 1181 1170 1146 1133 1121 1113 1100 1088 1085 1076 1081 peak: 1469
+=== phase build 14:36:23
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1076       10813          49        4495       14913
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   7365       00:00 80.0 28768 /usr/libexec/gcc/x86_64-linux-gnu/13/cc1 -quiet -I /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-lc-sys-0.43.0/generated-include -I /home/runner/
+   2087       02:03  4.4 140808 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       02:07  4.3 137864 /tmp/provjobd354528372
+      1       02:32  2.0 14408 /sbin/init
+   2066       02:06  1.2 99616 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.79 avg300=0.90 total=4432830 full avg10=0.00 avg60=0.68 avg300=0.78 total=3925535
+/proc/pressure/cpu: some avg10=0.16 avg60=3.67 avg300=2.35 total=10223693 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 11076796 104332 4499008    0    0     0   324 2073  984 13  4 83  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
