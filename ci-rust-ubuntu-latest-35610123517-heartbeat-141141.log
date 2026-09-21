@@ -1,0 +1,18 @@
+heartbeat 14:11:40 130s
+=== phase build 14:09:30
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1306       10604          46        4476       14687
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10145       00:00  100 278960 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name tracing_subscriber --edition=2018 /home/runner/.cargo/registry/src/index.crates.i
+   2121       03:16  2.0 134820 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2034       05:32  1.0 135380 /tmp/provjobd265032768
+      1       05:58  0.7 14392 /sbin/init
+   2103       03:18  0.6 98848 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.19 avg300=0.64 total=5375704 full avg10=0.00 avg60=0.14 avg300=0.53 total=4652588
+/proc/pressure/cpu: some avg10=0.70 avg60=3.50 avg300=2.33 total=12178294 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=2 full avg10=0.00 avg60=0.00 avg300=0.00 total=2
+ 1  0      0 10897236 105292 4485112    0    0     0     4 1999 1071 24  2 75  0  0  0
+[   30.873388] hv_netvsc 3833c5ec-e971-3833-c5ec-e9713833c5ec eth0: Data path switched to VF: enP23774s1
+[   30.873652] mlx5_core 5cde:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.131098] hv_balloon: Max. dynamic memory size: 16384 MB
