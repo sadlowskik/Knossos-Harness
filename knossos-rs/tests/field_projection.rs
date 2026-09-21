@@ -466,9 +466,8 @@ fn typed_topology_lifecycle_hysteresis_and_contest_edges() {
             .cloned()
             .unwrap()
     };
-    let has_edge = |snap: &Value, f: &dyn Fn(&Value) -> bool| {
-        snap["edges"].as_array().unwrap().iter().any(|e| f(e))
-    };
+    let has_edge =
+        |snap: &Value, f: &dyn Fn(&Value) -> bool| snap["edges"].as_array().unwrap().iter().any(f);
 
     let snap = g.snapshot(t0 + 70_000, None, None);
     let folder = find_node(&snap, "folder:cameo:cameod/src");
@@ -872,14 +871,14 @@ fn a_hundred_thousand_events_fold_deterministically_within_bounds() {
     while events.len() < 100_000 {
         let i = events.len();
         let sid = format!("agent-{}", i % 30);
-        if i % 97 == 0 {
+        if i.is_multiple_of(97) {
             push(
                 &mut events,
                 "agent.communication",
                 json!({ "campaignId": "stress-campaign", "fromSessionId": sid, "toSessionId": format!("agent-{}", (i + 7) % 30), "channel": "handoff" }),
                 Some("stress-campaign"),
             );
-        } else if i % 211 == 0 {
+        } else if i.is_multiple_of(211) {
             push(
                 &mut events,
                 "session.usage",
@@ -891,7 +890,7 @@ fn a_hundred_thousand_events_fold_deterministically_within_bounds() {
                 &mut events,
                 "session.tool_use",
                 json!({
-                    "sessionId": sid, "campaignId": "stress-campaign", "name": if i % 5 == 0 { "Grep" } else { "Read" },
+                    "sessionId": sid, "campaignId": "stress-campaign", "name": if i.is_multiple_of(5) { "Grep" } else { "Read" },
                     "workspaceId": "cameo", "dir": format!("zone-{}", i % 200), "path": format!("zone-{}/file-{}.rs", i % 200, i % 10000),
                     "summary": format!("inspect file {}", i % 10000),
                 }),
