@@ -1,0 +1,14 @@
+heartbeat 13:09:36 37s
+=== phase build 13:08:59
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1136       10985          48        4261       14852
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8176       00:00  100 153352 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name hashbrown --edition=2024 /home/runner/.cargo/registry/src/index.crates.io-1949cf8
+   2151       01:44  4.0 135188 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2097       01:46  2.9 133536 /tmp/provjobd752590560
+      1       02:12  2.4 14352 /sbin/init
+   5808       00:37  1.3 82016 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+[   49.355081] mlx5_core 5210:00:02.0 enP21008s1: Link up
+[   49.381113] hv_netvsc 000d3afa-5537-000d-3afa-5537000d3afa eth0: Data path switched to VF: enP21008s1
+[   49.381399] mlx5_core 5210:00:02.0 mlx5_0: Port: 1 Link ACTIVE
