@@ -1,0 +1,72 @@
+=== phase build 12:22:13
+[1m[92m   Compiling[0m cfg-if v1.0.4
+[1m[92m   Compiling[0m windows-link v0.2.1
+[1m[92m   Compiling[0m itoa v1.0.18
+[1m[92m   Compiling[0m log v0.4.33
+[1m[92m   Compiling[0m windows-sys v0.61.2
+[1m[92m   Compiling[0m getrandom v0.4.3
+[1m[92m   Compiling[0m jobserver v0.1.35
+[1m[92m   Compiling[0m pin-project-lite v0.2.17
+[1m[92m   Compiling[0m bytes v1.12.1
+[1m[92m   Compiling[0m once_cell v1.21.4
+[1m[92m   Compiling[0m cc v1.4.0
+[1m[92m   Compiling[0m zerofrom v0.1.8
+[1m[92m   Compiling[0m futures-core v0.3.33
+[1m[92m   Compiling[0m stable_deref_trait v1.2.1
+[1m[92m   Compiling[0m yoke v0.8.3
+[1m[92m   Compiling[0m equivalent v1.0.2
+[1m[92m   Compiling[0m memchr v2.8.3
+[1m[92m   Compiling[0m zerovec v0.11.6
+[1m[92m   Compiling[0m cmake v0.1.58
+[1m[92m   Compiling[0m http v1.4.2
+[1m[92m   Compiling[0m tracing-core v0.1.36
+[1m[92m   Compiling[0m smallvec v1.15.2
+[1m[92m   Compiling[0m aws-lc-sys v0.43.0
+[1m[92m   Compiling[0m foldhash v0.2.0
+[1m[92m   Compiling[0m futures-sink v0.3.33
+[1m[92m   Compiling[0m hashbrown v0.17.1
+[1m[92m   Compiling[0m tracing v0.1.44
+[1m[92m   Compiling[0m slab v0.4.12
+[1m[92m   Compiling[0m serde_core v1.0.229
+[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[92m   Compiling[0m tinystr v0.8.3
+[1m[92m   Compiling[0m litemap v0.8.2
+[1m[92m   Compiling[0m typenum v1.20.1
+[1m[92m   Compiling[0m zeroize v1.9.0
+[1m[92m   Compiling[0m writeable v0.6.3
+[1m[92m   Compiling[0m icu_locale_core v2.2.0
+[1m[92m   Compiling[0m httparse v1.10.1
+[1m[92m   Compiling[0m zmij v1.0.23
+[1m[92m   Compiling[0m socket2 v0.6.5
+[1m[92m   Compiling[0m mio v1.2.2
+[1m[92m   Compiling[0m http-body v1.1.0
+[1m[92m   Compiling[0m zerotrie v0.2.4
+[1m[92m   Compiling[0m tokio v1.53.1
+[1m[92m   Compiling[0m potential_utf v0.1.5
+[1m[92m   Compiling[0m aho-corasick v1.1.4
+[1m[92m   Compiling[0m utf8_iter v1.0.4
+[1m[92m   Compiling[0m regex-syntax v0.8.11
+[1m[92m   Compiling[0m futures-task v0.3.33
+[1m[92m   Compiling[0m percent-encoding v2.3.2
+[1m[92m   Compiling[0m zerocopy v0.8.57
+[1m[92m   Compiling[0m icu_properties_data v2.2.0
+[1m[92m   Compiling[0m getrandom v0.3.4
+[1m[92m   Compiling[0m futures-util v0.3.33
+[1m[92m   Compiling[0m regex-automata v0.4.16
+[1m[92m   Compiling[0m icu_normalizer_data v2.2.0
+[1m[92m   Compiling[0m icu_collections v2.2.0
+[1m[92m   Compiling[0m icu_provider v2.2.0
+[1m[92m   Compiling[0m indexmap v2.14.0
+=== progress at 12:22:39, 26s into the step
+     UID     PID    PPID  TTY        STIME COMMAND
+runnerad    1002    1001 ?        12:22:13 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\c525744e-fd9e-4361-9fab-f1989039cdd0.sh 
+runnerad    1001       1 ?        12:22:13 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\c525744e-fd9e-4361-9fab-f1989039cdd0.sh 
+runnerad    1008    1002 ?        12:22:13 C:\Users\runneradmin\.cargo\bin\cargo.exe build --locked --bin knossos e¡ 
+runnerad    1060    1001 ?        12:22:39 ps -ef 
+runnerad    1051    1003 ?        12:22:36 timeout 90 bash D:\a\Knossos-Harness\Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-windows-latest-35598855790-heartbeat-122236.log 
+runnerad    1052    1051 ?        12:22:36 bash D:\a\Knossos-Harness\Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-windows-latest-35598855790-heartbeat-122236.log 
+runnerad    1003    1001 ?        12:22:13 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\c525744e-fd9e-4361-9fab-f1989039cdd0.sh 
+runnerad    1054    1052 ?        12:22:37 "C:\Program Files\Git\mingw64\bin\git.exe" clone -q -b ci-logs https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiI1M0F1SDdiM0czOVRzYWI0QXNDRUo0OEFmWHB6Y2JWVmVsYVZLaFNVNi1kRmhZZkg2eUZQclE4IiwiZXhwIjoxNzg5OTk2NzU3LCJpYXQiOjE3ODk5OTMxNTcsImlzcyI6ImdpdGh1YiIsImp0aSI6Ijg0N2JhNjc4LWI0ZmMtNDMxMS1hYTUxLWU0M2RjODlkNmY2MCIsInZlciI6M30.ZGDbxjugMGZr315VYXmCCAhjp6tURc4nzkEk0_N1kvHwm70GiLNY_rCrfiu0J1ImuV_tLY3EtGWvMsKqDfNw6w@github.com/sadlowskik/Knossos-Harness C:/Users/RUNNER~1/AppData/Local/Temp/tmp.maSPTwTnQ7/repo 
+Filesystem            Size  Used Avail Use% Mounted on
+C:/Program Files/Git  150G  118G   32G  79% /
+C:                    150G  118G   32G  79% /c
