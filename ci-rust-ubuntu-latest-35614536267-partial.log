@@ -1,0 +1,541 @@
+Unable to find image 'rust:1.98' locally
+1.98: Pulling from library/rust
+6eefb2f5d3e9: Pulling fs layer
+42f0cc32f2e3: Pulling fs layer
+38985a14f2b1: Pulling fs layer
+e7272a918094: Pulling fs layer
+ed8a5e9f2f6f: Pulling fs layer
+e7272a918094: Waiting
+ed8a5e9f2f6f: Waiting
+42f0cc32f2e3: Verifying Checksum
+42f0cc32f2e3: Download complete
+6eefb2f5d3e9: Verifying Checksum
+6eefb2f5d3e9: Download complete
+38985a14f2b1: Verifying Checksum
+38985a14f2b1: Download complete
+e7272a918094: Verifying Checksum
+e7272a918094: Download complete
+ed8a5e9f2f6f: Verifying Checksum
+ed8a5e9f2f6f: Download complete
+6eefb2f5d3e9: Pull complete
+42f0cc32f2e3: Pull complete
+38985a14f2b1: Pull complete
+e7272a918094: Pull complete
+ed8a5e9f2f6f: Pull complete
+Digest: sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546
+Status: Downloaded newer image for rust:1.98
+++ date -u +%H:%M:%S
++ echo '=== phase build 14:49:29'
+=== phase build 14:49:29
++ cargo build --locked --bin knossos
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded anstyle-parse v1.0.0
+  Downloaded clap_lex v1.1.0
+  Downloaded crypto-common v0.1.7
+  Downloaded cpufeatures v0.2.17
+  Downloaded errno v0.3.14
+  Downloaded form_urlencoded v1.2.2
+  Downloaded cfg_aliases v0.2.2
+  Downloaded anstream v1.0.0
+  Downloaded heck v0.5.0
+  Downloaded matchers v0.2.0
+  Downloaded lazy_static v1.5.0
+  Downloaded zeroize v1.9.0
+  Downloaded zerovec-derive v0.11.3
+  Downloaded colorchoice v1.0.5
+  Downloaded enumflags2_derive v0.7.12
+  Downloaded atomic-waker v1.1.2
+  Downloaded async-trait v0.1.91
+  Downloaded futures-macro v0.3.33
+  Downloaded equivalent v1.0.2
+  Downloaded fs2 v0.4.3
+  Downloaded fallible-streaming-iterator v0.1.9
+  Downloaded zerotrie v0.2.4
+  Downloaded dunce v1.0.5
+  Downloaded fnv v1.0.7
+  Downloaded futures-sink v0.3.33
+  Downloaded block-buffer v0.10.4
+  Downloaded cfg-if v1.0.4
+  Downloaded cpufeatures v0.3.0
+  Downloaded futures-core v0.3.33
+  Downloaded itoa v1.0.18
+  Downloaded generic-array v0.14.7
+  Downloaded mime v0.3.17
+  Downloaded rustc-hash v2.1.3
+  Downloaded inotify-sys v0.1.8
+  Downloaded lru-slab v0.1.2
+  Downloaded zerovec v0.11.6
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded same-file v1.0.6
+  Downloaded yoke-derive v0.8.2
+  Downloaded anstyle v1.0.14
+  Downloaded anstyle-query v1.1.5
+  Downloaded axum-core v0.5.6
+  Downloaded thread_local v1.1.10
+  Downloaded enumflags2 v0.7.12
+  Downloaded jobserver v0.1.35
+  Downloaded fallible-iterator v0.3.0
+  Downloaded crossbeam-epoch v0.9.20
+  Downloaded futures-channel v0.3.33
+  Downloaded httpdate v1.0.3
+  Downloaded find-msvc-tools v0.1.9
+  Downloaded utf8_iter v1.0.4
+  Downloaded version_check v0.9.5
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded foldhash v0.2.0
+  Downloaded futures-task v0.3.33
+  Downloaded digest v0.10.7
+  Downloaded autocfg v1.5.1
+  Downloaded cmake v0.1.58
+  Downloaded data-encoding v2.11.1
+  Downloaded displaydoc v0.2.6
+  Downloaded http-body v1.1.0
+  Downloaded openssl-probe v0.2.1
+  Downloaded subtle v2.6.1
+  Downloaded http-body-util v0.1.4
+  Downloaded hyper-rustls v0.27.9
+  Downloaded streaming-iterator v0.1.9
+  Downloaded tokio-macros v2.7.1
+  Downloaded globset v0.4.19
+  Downloaded idna_adapter v1.2.2
+  Downloaded inotify v0.11.5
+  Downloaded litemap v0.8.2
+  Downloaded chacha20 v0.10.1
+  Downloaded crossbeam-utils v0.8.22
+  Downloaded fs_extra v1.3.0
+  Downloaded utf8parse v0.2.2
+  Downloaded walkdir v2.5.0
+  Downloaded crossbeam-deque v0.8.7
+  Downloaded anyhow v1.0.104
+  Downloaded clap_derive v4.6.4
+  Downloaded getrandom v0.2.17
+  Downloaded hashlink v0.12.2
+  Downloaded iana-time-zone v0.1.65
+  Downloaded tree-sitter-language v0.1.7
+  Downloaded clap v4.6.4
+  Downloaded httparse v1.10.1
+  Downloaded icu_properties v2.2.0
+  Downloaded ipnet v2.12.0
+  Downloaded bitflags v2.13.1
+  Downloaded writeable v0.6.3
+  Downloaded yoke v0.8.3
+  Downloaded nu-ansi-term v0.50.3
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded thiserror-impl v2.0.19
+  Downloaded tokio-tungstenite v0.29.0
+  Downloaded pkg-config v0.3.33
+  Downloaded rand_core v0.9.5
+  Downloaded log v0.4.33
+  Downloaded bytes v1.12.1
+  Downloaded icu_provider v2.2.0
+  Downloaded icu_locale_core v2.2.0
+  Downloaded base64 v0.22.1
+  Downloaded getrandom v0.3.4
+  Downloaded getrandom v0.4.3
+  Downloaded icu_normalizer_data v2.2.0
+  Downloaded ignore v0.4.31
+  Downloaded landlock v0.4.7
+  Downloaded aho-corasick v1.1.4
+  Downloaded hyper-util v0.1.20
+  Downloaded icu_normalizer v2.2.0
+  Downloaded cc v1.4.0
+  Downloaded http v1.4.2
+  Downloaded icu_collections v2.2.0
+  Downloaded indexmap v2.14.0
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded idna v1.1.0
+  Downloaded strsim v0.11.1
+  Downloaded hyper v1.11.0
+  Downloaded hashbrown v0.17.1
+  Downloaded potential_utf v0.1.5
+  Downloaded sync_wrapper v1.0.2
+  Downloaded untrusted v0.9.0
+  Downloaded clap_builder v4.6.2
+  Downloaded futures-util v0.3.33
+  Downloaded h2 v0.4.15
+  Downloaded icu_properties_data v2.2.0
+  Downloaded rand_pcg v0.10.2
+  Downloaded tower-service v0.3.3
+  Downloaded axum v0.8.9
+  Downloaded percent-encoding v2.3.2
+  Downloaded shlex v2.0.1
+  Downloaded aws-lc-rs v1.17.3
+  Downloaded sha2 v0.10.9
+  Downloaded vcpkg v0.2.15
+  Downloaded zerofrom v0.1.8
+  Downloaded chrono v0.4.45
+  Downloaded zerocopy v0.8.57
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded bstr v1.13.0
+  Downloaded sha1 v0.10.7
+  Downloaded try-lock v0.2.5
+  Downloaded zmij v1.0.23
+  Downloaded want v0.3.1
+  Downloaded quinn-udp v0.5.15
+  Downloaded rand_chacha v0.9.0
+  Downloaded pin-project-lite v0.2.17
+  Downloaded notify-types v2.1.0
+  Downloaded quote v1.0.47
+  Downloaded rand_core v0.10.1
+  Downloaded thiserror v2.0.19
+  Downloaded tower-layer v0.3.3
+  Downloaded libc v0.2.189
+  Downloaded synstructure v0.13.2
+  Downloaded serde_path_to_error v0.1.20
+  Downloaded tracing-log v0.2.0
+  Downloaded encoding_rs v0.8.35
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded slab v0.4.12
+  Downloaded tinystr v0.8.3
+  Downloaded notify v8.2.0
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded matchit v0.8.4
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded tokio-rustls v0.26.4
+  Downloaded once_cell v1.21.4
+  Downloaded tracing-core v0.1.36
+  Downloaded smallvec v1.15.2
+  Downloaded tracing-attributes v0.1.31
+  Downloaded unsafe-libyaml v0.2.11
+  Downloaded num-traits v0.2.19
+  Downloaded unicode-ident v1.0.24
+  Downloaded proc-macro2 v1.0.107
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded serde_derive v1.0.229
+  Downloaded sharded-slab v0.1.7
+  Downloaded socket2 v0.6.5
+  Downloaded serde_yaml_ng v0.10.0
+  Downloaded tinyvec v1.12.0
+  Downloaded tungstenite v0.29.0
+  Downloaded quinn v0.11.11
+  Downloaded serde_core v1.0.229
+  Downloaded ryu v1.0.23
+  Downloaded memchr v2.8.3
+  Downloaded rand v0.10.2
+  Downloaded serde v1.0.229
+  Downloaded rustls-webpki v0.103.13
+  Downloaded similar v3.1.1
+  Downloaded url v2.5.8
+  Downloaded libsqlite3-sys v0.38.2
+  Downloaded rand v0.9.5
+  Downloaded tower v0.5.3
+  Downloaded typenum v1.20.1
+  Downloaded mio v1.2.2
+  Downloaded serde_json v1.0.151
+  Downloaded tower-http v0.6.11
+  Downloaded tokio-util v0.7.19
+  Downloaded regex v1.13.1
+  Downloaded rusqlite v0.40.2
+  Downloaded reqwest v0.13.4
+  Downloaded tree-sitter v0.26.11
+  Downloaded quinn-proto v0.11.16
+  Downloaded tracing-subscriber v0.3.23
+  Downloaded aws-lc-sys v0.43.0
+  Downloaded syn v3.0.3
+  Downloaded syn v2.0.119
+  Downloaded tree-sitter-rust v0.24.2
+  Downloaded regex-syntax v0.8.11
+  Downloaded rustls v0.23.42
+  Downloaded tracing v0.1.44
+  Downloaded regex-automata v0.4.16
+  Downloaded tokio v1.53.1
+  Downloaded ring v0.17.14
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.189
+   Compiling syn v2.0.119
+   Compiling jobserver v0.1.35
+   Compiling find-msvc-tools v0.1.9
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.0
+   Compiling log v0.4.33
+   Compiling itoa v1.0.18
+   Compiling synstructure v0.13.2
+   Compiling bytes v1.12.1
+   Compiling pin-project-lite v0.2.17
+   Compiling zerofrom-derive v0.1.7
+   Compiling once_cell v1.21.4
+   Compiling pkg-config v0.3.33
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+   Compiling syn v3.0.3
+   Compiling stable_deref_trait v1.2.1
+   Compiling futures-core v0.3.33
+   Compiling yoke v0.8.3
+   Compiling cfg-if v1.0.4
+   Compiling mio v1.2.2
+   Compiling zerovec-derive v0.11.3
+   Compiling errno v0.3.14
+   Compiling equivalent v1.0.2
+   Compiling signal-hook-registry v1.4.8
+   Compiling zerovec v0.11.6
+   Compiling tracing-core v0.1.36
+   Compiling http v1.4.2
+   Compiling cmake v0.1.58
+   Compiling displaydoc v0.2.6
+   Compiling tokio-macros v2.7.1
+   Compiling socket2 v0.6.5
+   Compiling fs_extra v1.3.0
+   Compiling dunce v1.0.5
+   Compiling smallvec v1.15.2
+   Compiling memchr v2.8.3
+   Compiling aws-lc-sys v0.43.0
+   Compiling tokio v1.53.1
+   Compiling tracing-attributes v0.1.31
+   Compiling futures-sink v0.3.33
+   Compiling foldhash v0.2.0
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling hashbrown v0.17.1
+   Compiling tracing v0.1.44
+   Compiling slab v0.4.12
+   Compiling serde_core v1.0.229
+   Compiling tinystr v0.8.3
+   Compiling writeable v0.6.3
+   Compiling zeroize v1.9.0
+   Compiling litemap v0.8.2
+   Compiling aws-lc-rs v1.17.3
+   Compiling zmij v1.0.23
+   Compiling typenum v1.20.1
+   Compiling httparse v1.10.1
+   Compiling icu_locale_core v2.2.0
+   Compiling zerotrie v0.2.4
+   Compiling http-body v1.1.0
+   Compiling potential_utf v0.1.5
+   Compiling futures-macro v0.3.33
+   Compiling futures-task v0.3.33
+   Compiling getrandom v0.3.4
+   Compiling percent-encoding v2.3.2
+   Compiling icu_properties_data v2.2.0
+   Compiling utf8_iter v1.0.4
+   Compiling zerocopy v0.8.57
+   Compiling icu_normalizer_data v2.2.0
+   Compiling icu_collections v2.2.0
+   Compiling futures-util v0.3.33
+   Compiling icu_provider v2.2.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling indexmap v2.14.0
+   Compiling aho-corasick v1.1.4
+   Compiling serde v1.0.229
+   Compiling tower-service v0.3.3
+   Compiling regex-syntax v0.8.11
+   Compiling regex-automata v0.4.16
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling tokio-util v0.7.19
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v2.0.19
+   Compiling try-lock v0.2.5
+   Compiling tree-sitter-language v0.1.7
+   Compiling bitflags v2.13.1
+   Compiling fnv v1.0.7
+   Compiling atomic-waker v1.1.2
+   Compiling untrusted v0.9.0
+   Compiling rustls v0.23.42
+   Compiling rustls-webpki v0.103.13
+   Compiling h2 v0.4.15
+   Compiling want v0.3.1
+   Compiling digest v0.10.7
+   Compiling icu_normalizer v2.2.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling icu_properties v2.2.0
+   Compiling rand_core v0.9.5
+   Compiling form_urlencoded v1.2.2
+   Compiling futures-channel v0.3.33
+   Compiling sync_wrapper v1.0.2
+   Compiling thiserror-impl v2.0.19
+   Compiling tower-layer v0.3.3
+   Compiling serde_json v1.0.151
+   Compiling crossbeam-utils v0.8.22
+   Compiling subtle v2.6.1
+   Compiling httpdate v1.0.3
+   Compiling cpufeatures v0.2.17
+   Compiling hyper v1.11.0
+   Compiling rand_chacha v0.9.0
+   Compiling idna_adapter v1.2.2
+   Compiling crossbeam-epoch v0.9.20
+   Compiling autocfg v1.5.1
+   Compiling inotify-sys v0.1.8
+   Compiling base64 v0.22.1
+   Compiling ipnet v2.12.0
+   Compiling utf8parse v0.2.2
+   Compiling vcpkg v0.2.15
+   Compiling libsqlite3-sys v0.38.2
+   Compiling anstyle-parse v1.0.0
+   Compiling hyper-util v0.1.20
+   Compiling num-traits v0.2.19
+   Compiling idna v1.1.0
+   Compiling rand v0.9.5
+   Compiling sha1 v0.10.7
+   Compiling tower v0.5.3
+   Compiling http-body-util v0.1.4
+   Compiling data-encoding v2.11.1
+   Compiling openssl-probe v0.2.1
+   Compiling anstyle v1.0.14
+   Compiling mime v0.3.17
+   Compiling same-file v1.0.6
+   Compiling anstyle-query v1.1.5
+   Compiling ryu v1.0.23
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling crossbeam-deque v0.8.7
+   Compiling colorchoice v1.0.5
+   Compiling anstream v1.0.0
+   Compiling walkdir v2.5.0
+   Compiling rustls-native-certs v0.8.4
+   Compiling tungstenite v0.29.0
+   Compiling url v2.5.8
+   Compiling tree-sitter v0.26.11
+   Compiling tokio-rustls v0.26.4
+   Compiling bstr v1.13.0
+   Compiling tree-sitter-rust v0.24.2
+   Compiling enumflags2_derive v0.7.12
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.0
+   Compiling anyhow v1.0.104
+   Compiling lazy_static v1.5.0
+   Compiling heck v0.5.0
+   Compiling getrandom v0.4.3
+   Compiling clap_derive v4.6.4
+   Compiling sharded-slab v0.1.7
+   Compiling clap_builder v4.6.2
+   Compiling enumflags2 v0.7.12
+   Compiling globset v0.4.19
+   Compiling hyper-rustls v0.27.9
+   Compiling inotify v0.11.5
+   Compiling tower-http v0.6.11
+   Compiling tokio-tungstenite v0.29.0
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling axum-core v0.5.6
+   Compiling notify-types v2.1.0
+   Compiling matchers v0.2.0
+   Compiling regex v1.13.1
+   Compiling serde_path_to_error v0.1.20
+   Compiling hashlink v0.12.2
+   Compiling tracing-log v0.2.0
+   Compiling encoding_rs v0.8.35
+   Compiling thread_local v1.1.10
+   Compiling matchit v0.8.4
+   Compiling unsafe-libyaml v0.2.11
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling nu-ansi-term v0.50.3
+   Compiling iana-time-zone v0.1.65
+   Compiling fallible-iterator v0.3.0
+   Compiling streaming-iterator v0.1.9
+   Compiling rusqlite v0.40.2
+   Compiling chrono v0.4.45
+   Compiling tracing-subscriber v0.3.23
+   Compiling serde_yaml_ng v0.10.0
+   Compiling axum v0.8.9
+   Compiling reqwest v0.13.4
+   Compiling notify v8.2.0
+   Compiling ignore v0.4.31
+   Compiling landlock v0.4.7
+   Compiling clap v4.6.4
+   Compiling sha2 v0.10.9
+   Compiling async-trait v0.1.91
+   Compiling fs2 v0.4.3
+   Compiling similar v3.1.1
+   Compiling knossos v0.2.0-beta.2 (/work)
+    Finished `dev` profile [unoptimized] target(s) in 2m 36s
+++ date -u +%H:%M:%S
+=== phase test-codegen 14:52:06
++ echo '=== phase test-codegen 14:52:06'
++ cargo test --all-targets --locked --no-run
+ Downloading crates ...
+  Downloaded fastrand v2.5.0
+  Downloaded tempfile v3.27.0
+  Downloaded rustix v1.1.4
+  Downloaded linux-raw-sys v0.12.1
+   Compiling bitflags v2.13.1
+   Compiling inotify v0.11.5
+   Compiling tower-http v0.6.11
+   Compiling notify-types v2.1.0
+   Compiling rustix v1.1.4
+   Compiling rusqlite v0.40.2
+   Compiling reqwest v0.13.4
+   Compiling notify v8.2.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling knossos v0.2.0-beta.2 (/work)
+=== progress at 14:53:04, 244s into the step
+    PID    PPID    PGID     ELAPSED STAT   RSS COMMAND
+  14227   11896    6246       00:17 Sl   1285528 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no --test --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values()) -C metadata=cf29a9073ac7312c -C extra-filename=-f3800b1d4a2fedd0 --out-dir /work/target-fenced/debug/deps -C incremental=/work/target-fenced/debug/incremental -C strip=debuginfo -L dependency=/work/target-fenced/debug/deps --extern anyhow=/work/target-fenced/debug/deps/libanyhow-c529b6b7c68fe6a6.rlib --extern async_trait=/work/target-fenced/debug/deps/libasync_trait-657e951eb9479ca1.so --extern axum=/work/target-fenced/debug/deps/libaxum-5fbf895d4202526d.rlib --extern base64=/work/target-fenced/debug/deps/libbase64-307dd4b221002d2b.rlib --extern chrono=/work/target-fenced/debug/deps/libchrono-ca18d9bf178ccdf7.rlib --extern clap=/work/target-fenced/debug/deps/libclap-320472a3ab068e6a.rlib --extern fs2=/work/target-fenced/debug/deps/libfs2-a7c71ca869e4b36a.rlib --extern futures_util=/work/target-fenced/debug/deps/libfutures_util-c96db34cb208142f.rlib --extern getrandom=/work/target-fenced/debug/deps/libgetrandom-ea9c2ccae16977d4.rlib --extern ignore=/work/target-fenced/debug/deps/libignore-0f7547f90cd1115b.rlib --extern landlock=/work/target-fenced/debug/deps/liblandlock-5223574dd5b23071.rlib --extern libc=/work/target-fenced/debug/deps/liblibc-867306105dc7d48a.rlib --extern notify=/work/target-fenced/debug/deps/libnotify-c144a60d6dfe5aa3.rlib --extern regex=/work/target-fenced/debug/deps/libregex-b476a35c1d6fcb0b.rlib --extern reqwest=/work/target-fenced/debug/deps/libreqwest-2ea24fc13152a53f.rlib --extern rusqlite=/work/target-fenced/debug/deps/librusqlite-cc2e9f37987add33.rlib --extern serde=/work/target-fenced/debug/deps/libserde-c217245c90d37638.rlib --extern serde_json=/work/target-fenced/debug/deps/libserde_json-2ab9c212364b190b.rlib --extern serde_yaml_ng=/work/target-fenced/debug/deps/libserde_yaml_ng-1788bf43a8e678af.rlib --extern sha1=/work/target-fenced/debug/deps/libsha1-226958f5c45c71b6.rlib --extern sha2=/work/target-fenced/debug/deps/libsha2-ab51e8515fbfddf2.rlib --extern similar=/work/target-fenced/debug/deps/libsimilar-a900be025f383cf6.rlib --extern tempfile=/work/target-fenced/debug/deps/libtempfile-1b36a675ce154991.rlib --extern thiserror=/work/target-fenced/debug/deps/libthiserror-544be262fc56ff20.rlib --extern tokio=/work/target-fenced/debug/deps/libtokio-fcf8d8c00d2f34a1.rlib --extern tokio_tungstenite=/work/target-fenced/debug/deps/libtokio_tungstenite-f0886ac911843d12.rlib --extern tracing=/work/target-fenced/debug/deps/libtracing-17d360482eafb033.rlib --extern tracing_subscriber=/work/target-fenced/debug/deps/libtracing_subscriber-bffa864d830b8050.rlib --extern tree_sitter=/work/target-fenced/debug/deps/libtree_sitter-a6c43180631bab25.rlib --extern tree_sitter_rust=/work/target-fenced/debug/deps/libtree_sitter_rust-79c28ece943eb6be.rlib --extern url=/work/target-fenced/debug/deps/liburl-a5c6c4c24087b1ec.rlib -L native=/work/target-fenced/debug/build/aws-lc-sys-26b2865d50ad3e38/out -L native=/work/target-fenced/debug/build/libsqlite3-sys-c018fa2f917645a4/out -L native=/work/target-fenced/debug/build/tree-sitter-0116263789e31185/out -L native=/work/target-fenced/debug/build/tree-sitter-rust-ce3bad4314bdc51e/out
+   2167    2147    2090       05:25 Sl   210340 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2110    2107    2090       06:31 Sl   138756 /tmp/provjobd3322121197
+   2147    2090    2090       05:27 Sl   100124 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+  11896    6246    6246       00:58 Sl   89732 /usr/local/rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   1280       1    1280       06:44 Ssl  80668 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+    977       1     977       06:45 Ss   51408 php-fpm: master process (/etc/php/8.3/fpm/php-fpm.conf)
+   1075       1    1075       06:45 Ssl  48556 /usr/bin/containerd
+    222       1     222       06:52 SLsl 43712 /sbin/multipathd -d -s
+   1830     994     994       06:42 Sl   37536 /usr/bin/python3 -u bin/WALinuxAgent-2.16.0.3-py3.12.egg -run-exthandlers
+    994       1     994       06:45 Ss   30964 /usr/bin/python3 -u /usr/sbin/waagent -daemon
+   5911    5909    2090       04:03 Sl   30744 docker run --rm --memory=8g --memory-swap=8g --pids-limit=2048 --ulimit nofile=65536:65536 --security-opt seccomp=unconfined -v /home/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs:/work -w /work -e KNOSSOS_CONFINE -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG -e CARGO_BUILD_JOBS -e CARGO_TARGET_DIR=/work/target-fenced rust:1.98 bash -c          set -x         echo "=== phase build $(date -u +%H:%M:%S)"         cargo build --locked --bin knossos         echo "=== phase test-codegen $(date -u +%H:%M:%S)"         cargo test --all-targets --locked --no-run         echo "=== phase run $(date -u +%H:%M:%S)"         cargo test --all-targets --locked       
+   1330     977     977       06:44 S    21496 php-fpm: pool www
+   1329     977     977       06:44 S    21464 php-fpm: pool www
+    974       1     974       06:45 Ss   21016 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+    157       1     157       06:52 S<s  17880 /usr/lib/systemd/systemd-journald
+   2090       1    2090       06:31 Ssl  17712 /opt/hca/hosted-compute-agent
+   6222       1    6222       03:35 Sl   15056 /usr/bin/containerd-shim-runc-v2 -namespace moby -id 90e2b2450664b206c6a72316df32a496754fa44f03402273fbca6dfcbcfd56d5 -address /run/containerd/containerd.sock
+      1       0       1       06:54 Ss   14316 /sbin/init
+    993       1     993       06:45 Ssl  13832 /usr/libexec/udisks2/udisksd
+    511       1     511       06:52 Ss   13104 /usr/lib/systemd/systemd-resolved
+   1127       1    1127       06:45 Ssl  12856 /usr/sbin/ModemManager
+   1168       1    1168       06:45 Ss   11516 /usr/lib/systemd/systemd --user
+    731       1     731       06:49 Ss   10116 /usr/lib/systemd/systemd-networkd
+    988       1     988       06:45 Ss    9820 /usr/lib/systemd/systemd-logind
+    981       1     981       06:45 Ssl   8196 /usr/lib/polkit-1/polkitd --no-debug
+    226       1     226       06:52 Ss    8048 /usr/lib/systemd/systemd-udevd
+   2107    2090    2090       06:31 S     7104 sudo -n PROVJOBD_E2E=1 /tmp/provjobd3322121197
+    581       1     581       06:52 Ss    6648 /usr/sbin/haveged --Foreground --verbose=1
+   1094       1    1094       06:45 Ssl   6348 /usr/sbin/rsyslogd -n -iNONE
+    969       1     969       06:45 Ss    5660 @dbus-daemon --system --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+  14342    5902    2090       00:00 R     4324 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss
+   1087       1    1086       06:45 S     3772 /usr/sbin/chronyd -F 1
+   5902    2167    2090       04:03 S     3672 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/809bba20-5475-4d25-af8e-c6c334648a11.sh
+   1209    1168    1168       06:45 S     3576 (sd-pam)
+   6246    6222    6246       03:35 Ss    3300 bash -c          set -x         echo "=== phase build $(date -u +%H:%M:%S)"         cargo build --locked --bin knossos         echo "=== phase test-codegen $(date -u +%H:%M:%S)"         cargo test --all-targets --locked --no-run         echo "=== phase run $(date -u +%H:%M:%S)"         cargo test --all-targets --locked       
+    324       1     324       06:52 Ss    2968 /usr/lib/linux-tools/6.17.0-1022-azure/hv_kvp_daemon -n
+   1027       1    1027       06:45 Ss    2888 /usr/sbin/cron -f -P
+   5912    5902    2090       04:03 S     2460 /usr/bin/bash --noprofile --norc -e -o pipefail /home/runner/work/_temp/809bba20-5475-4d25-af8e-c6c334648a11.sh
+               total        used        free      shared  buff/cache   available
+Mem:           15988        2309        5704          49        8369       13678
+Swap:           3071           0        3071
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       145G   64G   81G  44% /
+/dev/root       145G   64G   81G  44% /
+[    3.896405] mana 7870:00:00.0 ens1: renamed from eth1
+[    4.001359] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    4.006385] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    4.007038] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched to VF: ens1
+[    5.415393] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched from VF: ens1
+[    5.415565] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    5.949641] mana 7870:00:00.0 ens1: Configured vPort 0 PD 18 DB 16
+[    5.954781] mana 7870:00:00.0 ens1: Configured steering vPort 0 entries 64
+[    5.955350] hv_netvsc f8615163-0000-1000-2000-6045bd233753 eth0: Data path switched to VF: ens1
+[    5.955509] mana 7870:00:00.0 mana_0: Port: 1 Link ACTIVE
+[    8.297442] EXT4-fs (sda1): resizing filesystem from 19398395 to 39059195 blocks
+[    9.258157] EXT4-fs (sda1): resized filesystem to 39059195
+[   10.053295] kauditd_printk_skb: 113 callbacks suppressed
+[   10.053299] audit: type=1400 audit(1790001979.159:124): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=1044 comm="apparmor_parser"
+[   10.237293] evm: overlay not supported
+[   10.306064] loop0: detected capacity change from 0 to 8
+[   10.560335] systemd-journald[157]: /var/log/journal/58b34b8c91a94400a52c175421986a53/user-1001.journal: Journal file uses a different sequence number ID, rotating.
+[   10.628373] audit: type=1400 audit(1790001979.734:125): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/usr/lib/snapd/snap-confine" pid=1273 comm="apparmor_parser"
+[   10.874993] audit: type=1400 audit(1790001979.980:126): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=1439 comm="apparmor_parser"
+[   11.073105] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   11.349962] Initializing XFRM netlink socket
+[   11.527561] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.668834] hv_balloon: Max. dynamic memory size: 16384 MB
+[  199.896403] docker0: port 1(veth4557096) entered blocking state
+[  199.896410] docker0: port 1(veth4557096) entered disabled state
+[  199.896421] veth4557096: entered allmulticast mode
+[  199.896476] veth4557096: entered promiscuous mode
+[  199.902186] eth0: renamed from veth1b47513
+[  199.903445] docker0: port 1(veth4557096) entered blocking state
+[  199.903451] docker0: port 1(veth4557096) entered forwarding state
