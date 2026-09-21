@@ -25,6 +25,7 @@ use super::routines::{RoutineConfig, Routines, RoutinesOptions};
 use super::security::{
     Authority, Bootstrap, ControlSecurity, Denied, RequestFacts, SecurityOptions,
 };
+use super::simulation::FieldSimulator;
 use super::stores::{EndpointsStore, KeyStore};
 use super::terminal::{
     redact_command, validate_terminal_command, RunRequest, Terminals, TERMINAL_LIMITS,
@@ -99,6 +100,8 @@ pub struct AppState {
     pub terminals: Arc<Terminals>,
     /// Strategic command boundary for campaigns.
     pub director: Arc<CampaignDirector>,
+    /// Synthetic world rehearsals; `None` when FIELD_SIMULATION=0.
+    pub simulator: Option<Arc<FieldSimulator>>,
     /// Scheduled and filesystem-triggered work.
     pub routines: Arc<Mutex<Routines>>,
     /// Every appended event also reaches the routine controller, off the
@@ -797,9 +800,42 @@ fn api(
             }
             Ok(json!({ "ok": true }))
         }
-        "GET /api/simulations" => {
-            Ok(json!({ "enabled": false, "active": Value::Null, "scenarios": [] }))
+        "GET /api/simulations" => Ok(json!({
+            "enabled": state.simulator.is_some(),
+            "scenarios": state.simulator.as_ref().map(|s| s.scenarios()).unwrap_or(json!([])),
+            "active": state.simulator.as_ref().map(|s| s.status()).unwrap_or(Value::Null),
+        })),
+        "POST /api/simulations/run" => {
+            let Some(simulator) = state.simulator.as_ref() else {
+                return Err(DomainError::new(
+                    "simulation_disabled",
+                    "Synthetic world rehearsals are disabled on this Field server",
+                )
+                .into());
+            };
+            let scenario = get(&body, "scenario")
+                .map(js_string)
+                .unwrap_or_else(|| "operations-cycle".into());
+            let workspace_id = get(&body, "workspaceId").map(js_string).or_else(|| {
+                state
+                    .projection
+                    .lock()
+                    .ok()
+                    .and_then(|p| p.world().get("capitalWorkspaceId").map(js_string))
+            });
+            simulator
+                .run(
+                    &scenario,
+                    get(&body, "speed").and_then(Value::as_f64),
+                    workspace_id.as_deref(),
+                )
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e))
         }
+        "POST /api/simulations/stop" => Ok(state
+            .simulator
+            .as_ref()
+            .map(|s| s.stop("operator"))
+            .unwrap_or(json!({ "stopped": false }))),
         "GET /api/routines/states" => {
             let routines = routines_lock(state)?;
             Ok(json!({ "states": routines.states(), "details": routines.details() }))
@@ -1730,6 +1766,9 @@ pub struct Running {
 
 impl Running {
     pub async fn stop(mut self) {
+        if let Some(simulator) = &self.state.simulator {
+            simulator.stop("shutdown");
+        }
         if let Ok(mut routines) = self.state.routines.lock() {
             routines.stop();
         }
@@ -1951,6 +1990,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
     let watcher_emit = emit.clone();
     let git_emit = emit.clone();
     let director_emit = emit.clone();
+    let simulator_emit = emit.clone();
     let policy_projection = Arc::clone(&projection);
     let campaign_policy: super::registry::CampaignPolicy = Arc::new(move |id: &str| {
         let p = policy_projection.lock().ok()?;
@@ -2004,6 +2044,34 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         r.set_campaign_report_handler(Some(director.report_handler()));
     }
 
+    let simulator = if std::env::var("FIELD_SIMULATION").as_deref() == Ok("0") {
+        None
+    } else {
+        let workspaces: Vec<(String, String)> = settings
+            .read()
+            .map(|s| {
+                s.workspaces
+                    .iter()
+                    .filter(|w| get(w, "mounted") != Some(&Value::Bool(false)))
+                    .filter_map(|w| {
+                        Some((
+                            get_str(w, "id")?.to_string(),
+                            get(w, "name")
+                                .map(js_string)
+                                .unwrap_or_else(|| "the project".into()),
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(FieldSimulator::new(
+            simulator_emit,
+            workspaces,
+            Arc::new(now_ms),
+            Arc::new(super::registry::uuid),
+        ))
+    };
+
     // Routines validate their enabled records at boot, as the Node server did:
     // a misconfigured enabled routine is a startup error, a disabled one is inert.
     let routine_settings = Arc::clone(&settings);
@@ -2052,6 +2120,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         endpoints_store: Arc::new(Mutex::new(endpoints_store)),
         terminals: Terminals::new(),
         director,
+        simulator,
         routines: Arc::clone(&routines),
         routine_feed,
         _watchers: Mutex::new(watchers),
@@ -2136,7 +2205,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
             settings.roles.len()
         );
         eprintln!("  endpoints     {} configured", settings.endpoints.len());
-        eprintln!("  runtime       rust (knossos field --native); rehearsals answer 501");
+        eprintln!("  runtime       rust (knossos field --native)");
         for w in settings
             .workspaces
             .iter()

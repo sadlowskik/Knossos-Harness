@@ -35,6 +35,7 @@ pub mod routines;
 pub mod sanitize;
 pub mod security;
 pub mod server;
+pub mod simulation;
 pub mod stores;
 pub mod terminal;
 pub mod watch;

@@ -266,13 +266,32 @@ async fn bootstrap_gates_api_static_and_logout() {
     assert_eq!(trace["subject"], "here");
     assert_eq!(trace["events"][0]["kind"], "world.capital_selected");
 
-    // What is not ported yet says so, distinctly from a refusal.
-    let rehearsal = f.post("/api/simulations/run", json!({}), true).await;
-    assert_eq!(rehearsal.status(), StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(
-        rehearsal.json::<Value>().await.unwrap()["code"],
-        "not_ported"
-    );
+    // Rehearsals: a synthetic run starts, reports itself and stops cleanly.
+    let listing = f
+        .get("/api/simulations")
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(listing["enabled"], true);
+    let rehearsal = f
+        .post("/api/simulations/run", json!({ "speed": 4 }), true)
+        .await;
+    assert_eq!(rehearsal.status(), StatusCode::OK);
+    let run_id = rehearsal.json::<Value>().await.unwrap()["runId"].clone();
+    let listing = f
+        .get("/api/simulations")
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(listing["active"]["runId"], run_id);
+    let stopped = f.post("/api/simulations/stop", json!({}), true).await;
+    assert_eq!(stopped.json::<Value>().await.unwrap()["stopped"], true);
+    let unknown = f
+        .post("/api/simulations/run", json!({ "scenario": "nope" }), true)
+        .await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
     // The director validates before it records anything.
     let campaign = f.post("/api/campaigns/create", json!({}), true).await;
     assert_eq!(campaign.status(), StatusCode::BAD_REQUEST);
