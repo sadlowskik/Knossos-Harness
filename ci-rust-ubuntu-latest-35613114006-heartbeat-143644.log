@@ -1,0 +1,19 @@
+heartbeat 14:36:43 20s
+mem used MB, last 15 s: 1404 1146 1232 1191 1173 1226 1299 1352 1123 1183 1209 1145 1173 1230 1331 peak: 1404
+=== phase build 14:36:23
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1366       10559          49        4458       14622
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   6571       00:01  100 443672 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name tokio --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5
+   2087       01:43  5.2 140428 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       01:47  5.0 136836 /tmp/provjobd354528372
+      1       02:13  2.3 14408 /sbin/init
+   5876       00:19  1.5 82644 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+/proc/pressure/io: some avg10=0.04 avg60=1.10 avg300=0.96 total=4423196 full avg10=0.00 avg60=0.96 avg300=0.84 total=3917384
+/proc/pressure/cpu: some avg10=1.19 avg60=5.12 avg300=2.52 total=10161198 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 10719408 104024 4469092    0    0     0     0 1361  343 25  1 75  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
