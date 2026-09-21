@@ -1,0 +1,14 @@
+heartbeat 12:19:54 0s
+=== phase build 12:19:54
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1216       10794          45        3978       14380
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   1836       01:12  4.7 128540 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1816       01:14  1.5 94468 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+   1778       03:18  1.4 128416 /tmp/provjobd3464302349
+      1       03:42  1.2 13336 /sbin/init
+     11       03:42  0.3     0 [kworker/u8:0-flush-8:0]
+[   21.524744] mlx5_core 2ae2:00:02.0 enP10978s1: Link up
+[   21.550252] hv_netvsc 6045bdc7-62b9-6045-bdc7-62b96045bdc7 eth0: Data path switched to VF: enP10978s1
+[   49.236046] hv_balloon: Max. dynamic memory size: 16384 MB
