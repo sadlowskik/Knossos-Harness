@@ -256,6 +256,25 @@ impl Projection {
         self.sessions.get(id)
     }
 
+    /// Every session record, oldest first.
+    pub fn sessions(&self) -> impl Iterator<Item = &Obj> {
+        self.sessions.values()
+    }
+
+    pub fn workspace(&self, id: &str) -> Option<&Obj> {
+        self.workspaces.get(id)
+    }
+
+    /// The folded state of one routine: enabled flag, queue, watermarks.
+    pub fn routine(&self, id: &str) -> Option<&Obj> {
+        self.routines.get(id)
+    }
+
+    /// Every workspace record, in configuration order.
+    pub fn workspaces(&self) -> impl Iterator<Item = &Obj> {
+        self.workspaces.values()
+    }
+
     /// A UI-added endpoint appears in the snapshot at once, as `unknown`.
     pub fn ensure_endpoint(
         &mut self,

@@ -353,6 +353,52 @@ async fn bootstrap_gates_api_static_and_logout() {
         .await;
     assert_eq!(cancelled.status(), StatusCode::OK);
 
+    // Cities are workspaces; routines answer with states and details; an
+    // endpoint test reports the probe outcome rather than failing the call.
+    let cities = f.get("/api/cities").await.json::<Value>().await.unwrap();
+    let names: Vec<&str> = cities["cities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(names.contains(&"here"), "{names:?}");
+    let city = f
+        .get("/api/city?id=here")
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(city["tier"], "outpost");
+    assert!(!city["agents"].as_array().unwrap().is_empty(), "{city}");
+    let missing = f.get("/api/city?id=nowhere").await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    let routines = f
+        .get("/api/routines/states")
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert!(routines["states"].is_object() && routines["details"].is_object());
+    let unknown = f
+        .post(
+            "/api/routines/toggle",
+            json!({ "routineId": "ghost", "enabled": true, "confirmRisk": true }),
+            true,
+        )
+        .await;
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+    let probe = f
+        .post("/api/endpoints/test", json!({ "id": "local" }), true)
+        .await;
+    assert_eq!(probe.status(), StatusCode::OK);
+    let probe = probe.json::<Value>().await.unwrap();
+    assert_eq!(probe["ok"], false, "{probe}");
+    let probe = f
+        .post("/api/endpoints/test", json!({ "id": "ghost" }), true)
+        .await;
+    assert_eq!(probe.status(), StatusCode::NOT_FOUND);
+
     // Body limits by wire bytes, and malformed JSON.
     let huge = f
         .client

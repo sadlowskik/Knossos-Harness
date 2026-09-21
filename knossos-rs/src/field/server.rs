@@ -9,6 +9,7 @@
 //! or process spawning answer `501 not_ported` until their port lands, so a
 //! client can tell "not here yet" from "refused".
 
+use super::cities::{active_city_session_ids, city_detail, list_cities, resolve_city_agent};
 use super::config::{load_config, update_frontmatter_file, FieldSettings};
 use super::eventlog::{AppendOptions, Backend, EventLog};
 use super::hub::{Hub, Outbound};
@@ -18,10 +19,16 @@ use super::page::{page_result, parse_event_page};
 use super::projection::Projection;
 use super::registry::{Capabilities, PermissionOutcome, Registry, RegistryOptions};
 use super::replay::{read_event_range, replay_into, Range};
+use super::routines::{RoutineConfig, Routines, RoutinesOptions};
 use super::security::{
     Authority, Bootstrap, ControlSecurity, Denied, RequestFacts, SecurityOptions,
 };
 use super::stores::{EndpointsStore, KeyStore};
+use super::terminal::{
+    redact_command, validate_terminal_command, RunRequest, Terminals, TERMINAL_LIMITS,
+};
+use super::watch::{start_fs_watchers, FsWatchers};
+use super::workspace::{fs_file, fs_put_file, fs_tree, resolve_workspace_path, ResolveOptions};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, FromRequestParts, State};
@@ -83,6 +90,15 @@ pub struct AppState {
     pub registry: Arc<Mutex<Registry>>,
     pub keys: Arc<Mutex<KeyStore>>,
     pub endpoints_store: Arc<Mutex<EndpointsStore>>,
+    /// Active operator terminals, by id.
+    pub terminals: Arc<Terminals>,
+    /// Scheduled and filesystem-triggered work.
+    pub routines: Arc<Mutex<Routines>>,
+    /// Every appended event also reaches the routine controller, off the
+    /// emitting thread, so a routine never observes its own trigger mid-flight.
+    routine_feed: tokio::sync::mpsc::UnboundedSender<super::Event>,
+    /// Kept for its lifetime: dropping it stops the workspace watchers.
+    _watchers: Mutex<FsWatchers>,
     pub dist_dir: PathBuf,
     headers: Vec<(HeaderName, HeaderValue)>,
 }
@@ -105,6 +121,7 @@ impl AppState {
             projection.apply(&event);
         }
         self.hub.push_event(&event);
+        let _ = self.routine_feed.send(event.clone());
         Ok(event)
     }
 
@@ -150,6 +167,12 @@ impl ApiError {
 
     fn internal(error: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", error)
+    }
+
+    /// A plain `Error` thrown by a route in the Node server: `400 bad_request`
+    /// with the message as-is.
+    fn bad_request(error: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, "bad_request", error)
     }
 
     fn not_ported(route: &str) -> Self {
@@ -411,6 +434,12 @@ async fn dispatch(state: &Arc<AppState>, addr: SocketAddr, req: Request<Body>) -
         };
         if method == Method::POST && facts.path == "/api/internal/permission" {
             return match internal_permission(state, body, &authority).await {
+                Ok(value) => json_response(StatusCode::OK, &value),
+                Err(e) => e.into_response(),
+            };
+        }
+        if method == Method::POST && facts.path == "/api/endpoints/test" {
+            return match test_endpoint(state, &body).await {
                 Ok(value) => json_response(StatusCode::OK, &value),
                 Err(e) => e.into_response(),
             };
@@ -723,7 +752,6 @@ fn api(
             }))
         }
         "POST /api/endpoints" => add_endpoint(state, &body),
-        "POST /api/endpoints/test" => Err(ApiError::not_ported(&key)),
         "POST /api/endpoints/delete" => {
             let id = get_str(&body, "id").unwrap_or("").to_string();
             let desc = state
@@ -763,11 +791,337 @@ fn api(
             Ok(json!({ "enabled": false, "active": Value::Null, "scenarios": [] }))
         }
         "GET /api/routines/states" => {
-            let snapshot = state.snapshot();
-            Ok(json!({ "states": snapshot["routines"], "details": [] }))
+            let routines = routines_lock(state)?;
+            Ok(json!({ "states": routines.states(), "details": routines.details() }))
+        }
+        "POST /api/routines/toggle" => {
+            let id = get(&body, "routineId").map(js_string).unwrap_or_default();
+            let on = get(&body, "enabled").is_some_and(super::js::truthy);
+            let confirm = get(&body, "confirmRisk") == Some(&Value::Bool(true));
+            let mut routines = routines_lock(state)?;
+            match routines.set_enabled(&id, on, confirm) {
+                Ok(true) => Ok(
+                    json!({ "ok": true, "states": routines.states(), "details": routines.details() }),
+                ),
+                Ok(false) => Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    "unknown routine",
+                )),
+                Err(message) => Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    message,
+                )),
+            }
+        }
+        "POST /api/routines/run" => {
+            let id = get(&body, "routineId").map(js_string).unwrap_or_default();
+            let result = routines_lock(state)?.run(&id).map_err(ApiError::internal)?;
+            if get(&result, "admitted") != Some(&Value::Bool(true)) {
+                let reason = get(&result, "reason").map(js_string).unwrap_or_default();
+                return Err(DomainError::new("routine_not_admitted", reason).into());
+            }
+            Ok(json!({ "sessionId": result.get("sessionId"), "runId": result.get("runId") }))
+        }
+        "GET /api/cities" => {
+            let projection = state
+                .projection
+                .lock()
+                .map_err(|_| ApiError::internal("projection lock poisoned"))?;
+            Ok(json!({ "cities": list_cities(&projection, now_ms()) }))
+        }
+        "GET /api/city" => {
+            let id = param(params, "id").unwrap_or("").to_string();
+            let projection = state
+                .projection
+                .lock()
+                .map_err(|_| ApiError::internal("projection lock poisoned"))?;
+            let log = state
+                .log
+                .lock()
+                .map_err(|_| ApiError::internal("event log lock poisoned"))?;
+            city_detail(&projection, &log, &id, now_ms())
+                .ok_or_else(|| DomainError::new("not_found", city_missing(&id)).into())
+        }
+        "POST /api/city/deploy" => {
+            let id = get(&body, "id").map(js_string).unwrap_or_default();
+            let agent_id = {
+                let settings = settings_read(state)?;
+                if !settings
+                    .workspaces
+                    .iter()
+                    .any(|w| get_str(w, "id") == Some(&id))
+                {
+                    return Err(DomainError::new("not_found", city_missing(&id)).into());
+                }
+                resolve_city_agent(&settings, get_str(&body, "role")).ok_or_else(|| {
+                    DomainError::new("no_agent", "no agent is defined in field/agents")
+                })?
+            };
+            let orders = get(&body, "orders")
+                .map(js_string)
+                .map(|o| o.chars().take(CITY_ORDER_MAX).collect::<String>());
+            let spawn = json!({
+                "agentId": agent_id, "workspaceId": id, "orders": orders,
+                "thinking": body.get("thinking"), "endpointId": body.get("endpoint"),
+                "target": { "type": "workspace", "id": id, "workspaceId": id },
+            });
+            let session_id = state
+                .registry
+                .lock()
+                .map_err(|_| ApiError::internal("registry lock poisoned"))?
+                .spawn(&spawn)
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0))?;
+            Ok(json!({ "sessionId": session_id }))
+        }
+        "POST /api/city/orders" => {
+            let id = get(&body, "id").map(js_string).unwrap_or_default();
+            let text: String = get(&body, "text")
+                .map(js_string)
+                .unwrap_or_default()
+                .chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect::<String>()
+                .trim()
+                .to_string();
+            if text.is_empty() {
+                return Err(DomainError::new("empty_order", "order text is required").into());
+            }
+            if text.chars().count() > CITY_ORDER_MAX {
+                return Err(DomainError::new(
+                    "order_too_large",
+                    format!("order exceeds {CITY_ORDER_MAX} characters"),
+                )
+                .into());
+            }
+            let (known, agent_id) = {
+                let settings = settings_read(state)?;
+                (
+                    settings
+                        .workspaces
+                        .iter()
+                        .any(|w| get_str(w, "id") == Some(&id)),
+                    resolve_city_agent(&settings, get_str(&body, "role")),
+                )
+            };
+            if !known {
+                return Err(DomainError::new("not_found", city_missing(&id)).into());
+            }
+            let active = {
+                let projection = state
+                    .projection
+                    .lock()
+                    .map_err(|_| ApiError::internal("projection lock poisoned"))?;
+                active_city_session_ids(&projection, &id)
+            };
+            let mut registry = state
+                .registry
+                .lock()
+                .map_err(|_| ApiError::internal("registry lock poisoned"))?;
+            if !active.is_empty() {
+                let res = registry
+                    .command("say", &json!({ "sessionIds": active, "text": text }))
+                    .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0))?;
+                let delivered = get(&res, "sent").cloned().unwrap_or(json!(active.len()));
+                return Ok(json!({ "delivered": delivered, "sessionIds": active }));
+            }
+            let agent_id = agent_id.ok_or_else(|| {
+                DomainError::new("no_agent", "no agent is defined in field/agents")
+            })?;
+            let session_id = registry
+                .spawn(&json!({
+                    "agentId": agent_id, "workspaceId": id, "orders": text,
+                    "target": { "type": "workspace", "id": id, "workspaceId": id },
+                }))
+                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "bad_request", e.0))?;
+            Ok(json!({ "spawned": session_id }))
+        }
+        "GET /api/fs/tree" => {
+            let settings = settings_read(state)?;
+            fs_tree(&settings, param(params, "ws"), param(params, "dir"))
+                .map_err(|e| ApiError::bad_request(e.0))
+        }
+        "GET /api/fs/file" => {
+            let settings = settings_read(state)?;
+            fs_file(&settings, param(params, "ws"), param(params, "path"))
+                .map_err(|e| ApiError::bad_request(e.0))
+        }
+        "PUT /api/fs/file" => {
+            let settings = settings_read(state)?;
+            fs_put_file(&settings, &body).map_err(|e| ApiError::bad_request(e.0))
+        }
+        "GET /api/git/diff" => {
+            let settings = settings_read(state)?;
+            let ws_id = param(params, "ws");
+            let file = param(params, "path");
+            let resolved = resolve_workspace_path(&settings, ws_id, file, ResolveOptions::file())
+                .map_err(|e| ApiError::bad_request(e.0))?;
+            let ws_path = workspace_dir(&resolved.ws);
+            drop(settings);
+            Ok(json!({
+                "ws": ws_id,
+                "path": file,
+                "diff": super::git::diff_file(&ws_path, file.unwrap_or("null")),
+            }))
+        }
+        "GET /api/git/log" => {
+            let settings = settings_read(state)?;
+            let ws_id = param(params, "ws");
+            let resolved =
+                resolve_workspace_path(&settings, ws_id, None, ResolveOptions::directory())
+                    .map_err(|e| ApiError::bad_request(e.0))?;
+            let ws_path = workspace_dir(&resolved.ws);
+            drop(settings);
+            Ok(json!({ "ws": ws_id, "commits": super::git::git_log(&ws_path, 40) }))
+        }
+        "GET /api/git/status" => {
+            let settings = settings_read(state)?;
+            let ws_id = param(params, "ws");
+            let resolved =
+                resolve_workspace_path(&settings, ws_id, None, ResolveOptions::directory())
+                    .map_err(|e| ApiError::bad_request(e.0))?;
+            let ws_path = workspace_dir(&resolved.ws);
+            drop(settings);
+            let status = super::git::read_status(&ws_path).map_err(ApiError::bad_request)?;
+            let mut out = json!({ "ws": ws_id });
+            if let (Value::Object(out), Value::Object(status)) = (&mut out, status) {
+                out.extend(status);
+            }
+            Ok(out)
+        }
+        "POST /api/terminal/run" => terminal_run(state, &body),
+        "POST /api/terminal/kill" => {
+            let id = get_str(&body, "terminalId").unwrap_or("");
+            Ok(json!({ "ok": state.terminals.kill(id) }))
         }
         _ => Err(ApiError::not_ported(&key)),
     }
+}
+
+const CITY_ORDER_MAX: usize = 8192;
+
+fn city_missing(id: &str) -> String {
+    format!(
+        "city {} is not a mounted workspace",
+        if id.is_empty() { "(empty)" } else { id }
+    )
+}
+
+fn routines_lock(state: &Arc<AppState>) -> Result<std::sync::MutexGuard<'_, Routines>, ApiError> {
+    state
+        .routines
+        .lock()
+        .map_err(|_| ApiError::internal("routines lock poisoned"))
+}
+
+/// `POST /api/endpoints/test`: one GET against the endpoint's own `/models`
+/// route with a four second budget. Anthropic endpoints authenticate through
+/// the harness at spawn and have nothing to probe here.
+async fn test_endpoint(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let id = get(body, "id").map(js_string).unwrap_or_default();
+    let endpoint = settings_read(state)?
+        .endpoints
+        .iter()
+        .find(|e| get_str(e, "id") == Some(&id))
+        .cloned()
+        .ok_or_else(|| {
+            DomainError::new(
+                "not_found",
+                format!(
+                    "endpoint {} not found",
+                    if id.is_empty() { "(empty)" } else { &id }
+                ),
+            )
+        })?;
+    let base = get(&endpoint, "base_url")
+        .or(get(&endpoint, "baseUrl"))
+        .map(js_string);
+    let Some(base) = base else {
+        return Ok(json!({
+            "ok": true, "kind": endpoint.get("kind"),
+            "note": "anthropic endpoints authenticate via the harness at spawn; nothing to probe.",
+        }));
+    };
+    let target = format!("{}/models", base.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(match client.get(&target).send().await {
+        Ok(res) => {
+            json!({ "ok": res.status().is_success(), "status": res.status().as_u16(), "target": target })
+        }
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    })
+}
+
+fn settings_read(
+    state: &Arc<AppState>,
+) -> Result<std::sync::RwLockReadGuard<'_, FieldSettings>, ApiError> {
+    state
+        .settings
+        .read()
+        .map_err(|_| ApiError::internal("settings lock poisoned"))
+}
+
+/// `ws.path`: the canonical root of a mounted workspace.
+fn workspace_dir(ws: &Value) -> PathBuf {
+    PathBuf::from(get_str(ws, "path").unwrap_or("."))
+}
+
+/// `POST /api/terminal/run`.
+fn terminal_run(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let ws_id = get_str(body, "ws");
+    let cwd = get_str(body, "cwd");
+    let resolved = {
+        let settings = settings_read(state)?;
+        resolve_workspace_path(&settings, ws_id, cwd, ResolveOptions::directory())
+            .map_err(|e| ApiError::bad_request(e.0))?
+    };
+    if state.terminals.len() >= TERMINAL_LIMITS.concurrent {
+        return Err(DomainError::new(
+            "terminal_capacity",
+            format!(
+                "Field allows at most {} concurrent terminals",
+                TERMINAL_LIMITS.concurrent
+            ),
+        )
+        .into());
+    }
+    let command = validate_terminal_command(get(body, "command")).map_err(ApiError::bad_request)?;
+    let id = get_str(body, "terminalId")
+        .map(str::to_string)
+        .unwrap_or_else(super::registry::uuid);
+    if state.terminals.contains(&id) {
+        return Err(DomainError::new("terminal_exists", "terminal id is already active").into());
+    }
+    let workspace_id = ws_id.unwrap_or("undefined").to_string();
+    let cwd_label = match cwd {
+        Some(c) if !c.is_empty() => c.to_string(),
+        _ => ".".to_string(),
+    };
+    super::terminal::run(
+        &state.terminals,
+        &state.hub,
+        RunRequest {
+            id: id.clone(),
+            workspace_id: workspace_id.clone(),
+            cwd_label,
+            cwd: resolved.abs,
+            command: command.clone(),
+        },
+    );
+    state.emit(
+        "terminal.run",
+        json!({
+            "workspaceId": workspace_id,
+            "command": redact_command(&command),
+            "terminalId": id,
+        }),
+        AppendOptions::default(),
+    )?;
+    Ok(json!({ "terminalId": id }))
 }
 
 fn or_null_value(v: Option<&Value>) -> Value {
@@ -1286,6 +1640,9 @@ pub struct Running {
 
 impl Running {
     pub async fn stop(mut self) {
+        if let Ok(mut routines) = self.state.routines.lock() {
+            routines.stop();
+        }
         if let Ok(mut registry) = self.state.registry.lock() {
             registry.shutdown();
         }
@@ -1485,9 +1842,11 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
     let keys = Arc::new(Mutex::new(keys));
 
     // The registry emits through the same append-fold-fanout path as the API.
+    let (routine_feed, mut routine_rx) = tokio::sync::mpsc::unbounded_channel::<super::Event>();
     let emit_log = Arc::clone(&log);
     let emit_projection = Arc::clone(&projection);
     let emit_hub = Arc::clone(&hub);
+    let emit_feed = routine_feed.clone();
     let emit: super::registry::Emit =
         Arc::new(move |kind: &str, data: Value, options: AppendOptions| {
             let event = emit_log.lock().ok()?.append(kind, data, options).ok()?;
@@ -1495,8 +1854,11 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
                 p.apply(&event);
             }
             emit_hub.push_event(&event);
+            let _ = emit_feed.send(event.clone());
             Some(event)
         });
+    let routine_emit = emit.clone();
+    let watcher_emit = emit.clone();
     let policy_projection = Arc::clone(&projection);
     let campaign_policy: super::registry::CampaignPolicy = Arc::new(move |id: &str| {
         let p = policy_projection.lock().ok()?;
@@ -1533,6 +1895,31 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         factory: None,
     });
 
+    // Routines validate their enabled records at boot, as the Node server did:
+    // a misconfigured enabled routine is a startup error, a disabled one is inert.
+    let routine_settings = Arc::clone(&settings);
+    let routines = Routines::new(RoutinesOptions {
+        cfg: Arc::new(move || {
+            routine_settings
+                .read()
+                .map(|s| RoutineConfig::from_settings(&s))
+                .unwrap_or_default()
+        }),
+        spawner: Arc::new(Arc::clone(&registry)),
+        emit: routine_emit,
+        projection: Arc::clone(&projection),
+        now: Arc::new(now_ms),
+        create_id: Arc::new(super::registry::uuid),
+    })
+    .map_err(|e| anyhow::anyhow!("routines: {e}"))?;
+    let routines = Arc::new(Mutex::new(routines));
+    let watchers = {
+        let settings = settings
+            .read()
+            .map_err(|_| anyhow::anyhow!("settings lock poisoned"))?;
+        start_fs_watchers(&settings, watcher_emit)
+    };
+
     let state = Arc::new(AppState {
         settings,
         log,
@@ -1542,11 +1929,41 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         registry,
         keys,
         endpoints_store: Arc::new(Mutex::new(endpoints_store)),
+        terminals: Terminals::new(),
+        routines: Arc::clone(&routines),
+        routine_feed,
+        _watchers: Mutex::new(watchers),
         dist_dir: options.dist_dir.clone(),
         headers,
     });
     if options.probe_endpoints {
         spawn_endpoint_probes(Arc::clone(&state));
+    }
+    // Feed the routine controller and tick its clock, both off the emitting
+    // thread. Everything ends when the state is dropped.
+    let feed_routines = Arc::clone(&routines);
+    tokio::spawn(async move {
+        while let Some(event) = routine_rx.recv().await {
+            if let Ok(mut r) = feed_routines.lock() {
+                r.on_event(&event);
+            }
+        }
+    });
+    let tick_routines = Arc::downgrade(&routines);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let Some(routines) = tick_routines.upgrade() else {
+                break;
+            };
+            let Ok(mut guard) = routines.lock() else {
+                break;
+            };
+            guard.poll();
+        }
+    });
+    if let Ok(mut r) = routines.lock() {
+        r.start();
     }
 
     let app = Router::new()

@@ -112,7 +112,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn uuid() -> String {
+pub(crate) fn uuid() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("the OS random source is available");
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
