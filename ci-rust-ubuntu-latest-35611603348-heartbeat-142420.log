@@ -1,0 +1,18 @@
+heartbeat 14:24:19 91s
+=== phase build 14:22:48
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1202       10468          48        4713       14787
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9003       00:00  100 264076 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name rustls --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b
+   2084       02:46  2.8 141560 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2031       02:48  2.3 139292 /tmp/provjobd2036778222
+      1       03:12  1.5 14364 /sbin/init
+   2063       02:47  0.7 97648 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.32 avg300=0.59 total=3435014 full avg10=0.00 avg60=0.26 avg300=0.47 total=2780958
+/proc/pressure/cpu: some avg10=0.00 avg60=1.37 avg300=1.70 total=8834423 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=0 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+ 1  0      0 10615468 105428 4721116    0    0     0     0 1207  267 25  1 75  0  0  0
+[   62.819551] MACsec IEEE 802.1AE
+[   62.903857] mlx5_core 6a1a:00:02.0 enP27162s1: Link up
+[   62.932653] hv_netvsc 00224821-ea95-0022-4821-ea9500224821 eth0: Data path switched to VF: enP27162s1
