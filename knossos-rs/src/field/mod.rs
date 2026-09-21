@@ -13,10 +13,12 @@
 //! vocabulary do not change.
 
 pub mod adapter;
+pub mod adapters;
 pub mod budget_ledger;
 pub mod campaign_projection;
 pub mod child_env;
 pub mod cities;
+pub mod claude_session;
 pub mod config;
 pub mod director;
 pub mod eventlog;
@@ -27,6 +29,7 @@ pub mod js;
 pub mod knossos_session;
 pub mod model;
 pub mod page;
+pub mod permission_bridge;
 pub mod policy;
 pub mod projection;
 pub mod registry;

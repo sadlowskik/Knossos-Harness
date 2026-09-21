@@ -7,12 +7,17 @@
 //! the order of events is the order the harness produced them.
 
 use super::adapter::{Adapter, EventSink};
+use super::adapters::{select_manifest, ACP, CLAUDE_CODE};
 use super::budget_ledger::BudgetLedger;
+use super::claude_session::{ClaudeOptions, ClaudeSession, PermissionBridge};
 use super::config::{compose_prompt, FieldSettings};
 use super::eventlog::{AppendOptions, Event, Source};
 use super::js::{get, get_arr, get_str, js_string, number, or_null, truthy};
-use super::knossos_session::{KnossosOptions, KnossosSession};
-use super::policy::{evaluate_permission_policy, parse_campaign_report, PolicyInput};
+use super::knossos_session::{resolve_knossos_binary, KnossosOptions, KnossosSession};
+use super::permission_bridge::{mcp_config, PERMISSION_TOOL};
+use super::policy::{
+    deny_list_for, evaluate_permission_policy, parse_campaign_report, PolicyInput,
+};
 use super::stores::KeyStore;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -31,8 +36,40 @@ pub type Emit = Arc<dyn Fn(&str, Value, AppendOptions) -> Option<Event> + Send +
 pub type CampaignPolicy = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
 pub type RegisterSecret = Arc<dyn Fn(&str) + Send + Sync>;
 pub type ReportHandler = Arc<dyn Fn(Value) -> Result<(), String> + Send + Sync>;
+/// What the selected adapter manifest is constructed with.
+pub enum AdapterOptions {
+    ClaudeCode(ClaudeOptions),
+    Knossos(KnossosOptions),
+    /// The `acp` manifest exists as data; no Rust adapter is ported yet.
+    Acp(KnossosOptions),
+}
+
+impl AdapterOptions {
+    pub fn manifest_id(&self) -> &'static str {
+        match self {
+            AdapterOptions::ClaudeCode(_) => CLAUDE_CODE,
+            AdapterOptions::Knossos(_) => super::adapters::KNOSSOS,
+            AdapterOptions::Acp(_) => ACP,
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        match self {
+            AdapterOptions::ClaudeCode(o) => &o.id,
+            AdapterOptions::Knossos(o) | AdapterOptions::Acp(o) => &o.id,
+        }
+    }
+
+    pub fn endpoint_id(&self) -> Option<&str> {
+        match self {
+            AdapterOptions::ClaudeCode(o) => o.endpoint_id.as_deref(),
+            AdapterOptions::Knossos(o) | AdapterOptions::Acp(o) => o.endpoint_id.as_deref(),
+        }
+    }
+}
+
 /// Builds the adapter for a session; tests substitute a fake.
-pub type AdapterBuilder = dyn Fn(KnossosOptions, EventSink) -> Arc<dyn Adapter> + Send + Sync;
+pub type AdapterBuilder = dyn Fn(AdapterOptions, EventSink) -> Arc<dyn Adapter> + Send + Sync;
 pub type AdapterFactory = Arc<AdapterBuilder>;
 
 /// Session-scoped internal capabilities, minted per session and revoked at exit.
@@ -143,12 +180,9 @@ pub struct Registry {
     pub settings: Arc<RwLock<FieldSettings>>,
     keys: Option<Arc<Mutex<KeyStore>>>,
     emit: Emit,
-    /// Handed to the direct Claude CLI adapter's permission bridge; unused
-    /// until that adapter is ported.
-    #[allow(dead_code)]
+    /// Where the direct Claude Code adapter's permission bridge posts to.
     api_base: String,
     capabilities: Option<Capabilities>,
-    #[allow(dead_code)]
     register_secret: Option<RegisterSecret>,
     pub campaign_policy: CampaignPolicy,
     pub budgets: BudgetLedger,
@@ -674,16 +708,21 @@ impl Registry {
             super::js::format_number(get(&settings.defaults, "max_delegation_depth").map(|v| number(Some(v))).unwrap_or(2.0))
         ));
 
-        // Every endpoint kind runs through the Knossos adapter with the
-        // matching engine; the direct Claude CLI adapter is the next port.
+        // Manifest-driven adapter selection, as `resolveAdapterManifest` in
+        // the Node registry: openai-compatible endpoints use the Knossos
+        // adapter, everything else (anthropic and any unknown kind) falls
+        // back to the default direct Claude Code adapter. An opt-in
+        // `harness`/`adapter` field on the endpoint additively overrides that
+        // with a specific harness (e.g. `acp`).
         let kind = ep
             .as_ref()
             .and_then(|e| get_str(e, "kind").map(str::to_string));
-        let engine = match kind.as_deref() {
-            Some("openai-compatible") | Some("cameo") => "cameo",
-            Some("ollama") => "ollama",
-            _ => "anthropic",
-        };
+        let explicit_harness = ep.as_ref().and_then(|e| {
+            get_str(e, "harness")
+                .or(get_str(e, "adapter"))
+                .map(str::to_string)
+        });
+        let manifest = select_manifest(kind.as_deref(), explicit_harness.as_deref());
         let credential_env: Vec<String> = ep
             .as_ref()
             .and_then(|e| e.get("credential_env"))
@@ -692,33 +731,100 @@ impl Registry {
                 other => vec![js_string(other)],
             })
             .unwrap_or_default();
-        let options = KnossosOptions {
-            id: id.clone(),
-            agent_id: Some(agent_id.clone()),
-            name: Some(get_str(&agent, "name").unwrap_or(&agent_id).to_string()),
-            role: role_id.clone(),
-            model: ep
+        let model = ep
+            .as_ref()
+            .and_then(|e| get_str(e, "model").map(str::to_string));
+        let cwd = PathBuf::from(get_str(&ws, "path").unwrap_or("."));
+        let name = get_str(&agent, "name").unwrap_or(&agent_id).to_string();
+        let options = if manifest.id == CLAUDE_CODE {
+            // The permission bridge needs a session-scoped capability; a
+            // Claude Code session without one must not launch.
+            let token = self
+                .capabilities
                 .as_ref()
-                .and_then(|e| get_str(e, "model").map(str::to_string)),
-            endpoint_id: Some(routed_id.clone()),
-            effort: Some(effort.clone()),
-            cwd: PathBuf::from(get_str(&ws, "path").unwrap_or(".")),
-            workspace_id: Some(ws_id.clone()),
-            system_prompt: system_prompt.clone(),
-            env: self.endpoint_env(ep.as_ref()),
-            engine: Some(engine.to_string()),
-            provider_kind: kind.clone(),
-            read_only: role
-                .as_ref()
-                .is_some_and(|r| r.get("read_only") == Some(&Value::Bool(true))),
-            environment_scope: environment_scope.clone(),
-            credential_env_keys: credential_env,
-            binary: None,
+                .and_then(|c| (c.mint)(&id))
+                .ok_or_else(|| {
+                    err("session-scoped permission capability service is unavailable")
+                })?;
+            if let Some(register) = &self.register_secret {
+                register(&token);
+            }
+            let bridge = self.capabilities.as_ref().map(|c| PermissionBridge {
+                api_base: self.api_base.clone(),
+                mint: Arc::clone(&c.mint),
+                register_secret: self.register_secret.clone(),
+            });
+            AdapterOptions::ClaudeCode(ClaudeOptions {
+                id: id.clone(),
+                agent_id: Some(agent_id.clone()),
+                name: Some(name),
+                role: role_id.clone(),
+                model,
+                endpoint_id: Some(routed_id.clone()),
+                effort: Some(effort.clone()),
+                cwd,
+                workspace_id: Some(ws_id.clone()),
+                system_prompt: Some(system_prompt.clone()),
+                add_dirs: Vec::new(),
+                allowed_tools: Some(effective_tools.clone()),
+                disallowed_tools: deny_list_for(role.as_ref(), Some(&agent)),
+                mcp_config: Some(mcp_config(
+                    &resolve_knossos_binary(),
+                    &self.api_base,
+                    &id,
+                    &token,
+                )),
+                permission_tool: Some(PERMISSION_TOOL.into()),
+                permission_mode: None,
+                workspaces: settings.workspaces.clone(),
+                env: self.endpoint_env(ep.as_ref()),
+                provider_kind: kind.clone(),
+                credential_env_keys: credential_env,
+                permission_bridge: bridge,
+                binary: None,
+                args_override: None,
+            })
+        } else {
+            let engine = match kind.as_deref() {
+                Some("openai-compatible") | Some("cameo") => "cameo",
+                Some("ollama") => "ollama",
+                _ => "anthropic",
+            };
+            let knossos = KnossosOptions {
+                id: id.clone(),
+                agent_id: Some(agent_id.clone()),
+                name: Some(name),
+                role: role_id.clone(),
+                model,
+                endpoint_id: Some(routed_id.clone()),
+                effort: Some(effort.clone()),
+                cwd,
+                workspace_id: Some(ws_id.clone()),
+                system_prompt: system_prompt.clone(),
+                env: self.endpoint_env(ep.as_ref()),
+                engine: Some(engine.to_string()),
+                provider_kind: kind.clone(),
+                read_only: role
+                    .as_ref()
+                    .is_some_and(|r| r.get("read_only") == Some(&Value::Bool(true))),
+                environment_scope: environment_scope.clone(),
+                credential_env_keys: credential_env,
+                binary: None,
+            };
+            if manifest.id == ACP {
+                AdapterOptions::Acp(knossos)
+            } else {
+                AdapterOptions::Knossos(knossos)
+            }
         };
         let sink = self.sink();
         let adapter: Arc<dyn Adapter> = match &self.factory {
             Some(factory) => factory(options, sink),
-            None => KnossosSession::new(options, sink),
+            None => match options {
+                AdapterOptions::ClaudeCode(options) => ClaudeSession::new(options, sink),
+                AdapterOptions::Knossos(options) => KnossosSession::new(options, sink),
+                AdapterOptions::Acp(_) => return Err(err("acp adapter not ported")),
+            },
         };
         self.sessions.insert(id.clone(), Arc::clone(&adapter));
         self.session_order.push(id.clone());

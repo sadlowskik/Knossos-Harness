@@ -5,8 +5,7 @@
 use knossos::field::adapter::{Adapter, BeforeStart, EventSink, SessionInfo};
 use knossos::field::config::FieldSettings;
 use knossos::field::eventlog::{AppendOptions, Event, Source};
-use knossos::field::knossos_session::KnossosOptions;
-use knossos::field::registry::{Meta, Registry, RegistryOptions};
+use knossos::field::registry::{AdapterOptions, Meta, Registry, RegistryOptions};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -436,10 +435,10 @@ async fn admission_reserves_campaign_budget_and_denied_work_never_starts() {
     let launches = Arc::new(AtomicUsize::new(0));
     let factory_launches = Arc::clone(&launches);
     let factory: knossos::field::registry::AdapterFactory =
-        Arc::new(move |opts: KnossosOptions, _sink: EventSink| {
+        Arc::new(move |opts: AdapterOptions, _sink: EventSink| {
             let f = Fake::new(
-                &opts.id,
-                opts.endpoint_id.as_deref().unwrap_or("local"),
+                opts.id(),
+                opts.endpoint_id().unwrap_or("local"),
                 false,
                 Arc::clone(&factory_launches),
             );

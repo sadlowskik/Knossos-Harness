@@ -360,6 +360,12 @@ enum Command {
         #[command(flatten)]
         opts: LoopArgs,
     },
+
+    /// Field's permission gate as a stdio MCP server: what a Field-launched
+    /// Claude Code's `--permission-prompt-tool` points at. Not meant to be
+    /// driven by hand; the Field registry writes its `--mcp-config` entry.
+    #[command(name = "field-permission-bridge", hide = true)]
+    FieldPermissionBridge,
 }
 
 #[tokio::main]
@@ -478,6 +484,9 @@ async fn main() -> Result<()> {
             ref opts,
             ref recovery,
         } => run_acp(&cfg, opts, recovery).await,
+        Command::FieldPermissionBridge => knossos::field::permission_bridge::run_stdio()
+            .await
+            .context("field permission bridge"),
         Command::Eval {
             ref cases,
             ref case_ids,
