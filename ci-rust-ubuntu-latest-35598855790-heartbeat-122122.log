@@ -1,0 +1,14 @@
+heartbeat 12:21:22 73s
+=== phase build 12:20:09
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1351       10421          48        4610       14637
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9847       00:00  129 244896 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered
+   1914       02:05  2.6 201580 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   1860       02:07  1.7 140124 /tmp/provjobd393468614
+      1       02:32  1.4 14424 /sbin/init
+   1895       02:06  0.7 98236 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+[   10.583923] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   13.907077] Adding 3145724k swap on /swapfile.  Priority:-2 extents:66 across:56459260k SS
+[   49.602561] hv_balloon: Max. dynamic memory size: 16384 MB
