@@ -493,11 +493,11 @@ async fn bootstrap_gates_api_static_and_logout() {
         true,
     )
     .await;
-    let event: Value = serde_json::from_str(&next_text(&mut socket).await).unwrap();
+    // The cancelled session from the spawn smoke may still be reporting its
+    // end; skip anything that is not the position event or the snapshot.
+    let event = next_frame(&mut socket, |v| v["event"]["kind"] == "ui.position").await;
     assert_eq!(event["type"], "event");
-    assert_eq!(event["event"]["kind"], "ui.position");
-    let coalesced: Value = serde_json::from_str(&next_text(&mut socket).await).unwrap();
-    assert_eq!(coalesced["type"], "snapshot");
+    let coalesced = next_frame(&mut socket, |v| v["type"] == "snapshot").await;
     assert_eq!(
         coalesced["state"]["positions"]["agent:b"],
         json!({ "x": 3, "y": 4 })
@@ -535,6 +535,19 @@ async fn bootstrap_gates_api_static_and_logout() {
         "position, capital, two assignments, position, then the session's life: {seq_before}"
     );
     f.running.stop().await;
+}
+
+/// The next frame `want` accepts, skipping unrelated ones.
+async fn next_frame<S>(socket: &mut S, want: impl Fn(&Value) -> bool) -> Value
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        let frame: Value = serde_json::from_str(&next_text(socket).await).unwrap();
+        if want(&frame) {
+            return frame;
+        }
+    }
 }
 
 async fn next_text<S>(socket: &mut S) -> String

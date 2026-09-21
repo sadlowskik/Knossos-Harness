@@ -160,8 +160,7 @@ jobs:
                 grep '=== phase' "$LOG" 2>/dev/null | tail -1
                 free -m 2>/dev/null
                 ps -eo pid,etime,pcpu,rss,args --sort=-pcpu 2>/dev/null | head -6 | cut -c1-200
-                for f in /proc/pressure/io /proc/pressure/cpu /proc/pressure/memory; do echo "$f: $(tr '
-' ' ' < $f 2>/dev/null)"; done
+                for f in /proc/pressure/io /proc/pressure/cpu /proc/pressure/memory; do echo "$f: $(paste -sd' ' $f 2>/dev/null)"; done
                 vmstat 1 2 2>/dev/null | tail -1
                 ps -eo stat,pid,args 2>/dev/null | awk '$1 ~ /^D/' | head -5 | cut -c1-120
                 sudo -n dmesg 2>/dev/null | tail -3
