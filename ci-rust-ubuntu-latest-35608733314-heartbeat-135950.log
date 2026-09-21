@@ -1,0 +1,18 @@
+heartbeat 13:59:49 179s
+=== phase test-codegen 13:59:34
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1708        9665          48        5011       14281
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  11214       00:09  100 843892 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-
+   2121       04:07  1.9 136528 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+  11047       00:15  1.3 83416 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   2058       07:11  0.6 138820 /tmp/provjobd3615054143
+      1       07:36  0.6 14400 /sbin/init
+/proc/pressure/io: some avg10=0.00 avg60=0.22 avg300=0.92 total=7717047 full avg10=0.00 avg60=0.20 avg300=0.84 total=7005293
+/proc/pressure/cpu: some avg10=0.00 avg60=0.93 avg300=1.80 total=11936322 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=1 full avg10=0.00 avg60=0.00 avg300=0.00 total=1
+ 1  0      0 9815868 106432 5038940    0    0     0     4 1485  655 25  1 75  0  0  0
+[   11.658011] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   12.377644] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   49.116021] hv_balloon: Max. dynamic memory size: 16384 MB
