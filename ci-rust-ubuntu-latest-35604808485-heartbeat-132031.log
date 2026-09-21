@@ -1,0 +1,14 @@
+heartbeat 13:20:31 19s
+=== phase build 13:20:12
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1152       11091          48        4140       14836
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   7084       00:00  100 127164 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name zmij --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b
+   2108       01:35  4.5 136820 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+      1       02:04  2.7 14364 /sbin/init
+   2050       01:38  2.5 137108 /tmp/provjobd3526760881
+   5743       00:19  2.0 81940 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo build --locked --bin knossos
+[   12.991931] Initializing XFRM netlink socket
+[   13.170619] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.518346] hv_balloon: Max. dynamic memory size: 16384 MB
