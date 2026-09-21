@@ -82,19 +82,16 @@ jobs:
         working-directory: knossos-rs
         shell: bash
         run: |
-          docker run --rm \
-            --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536 \
-            --security-opt seccomp=unconfined \
-            -v "$PWD:/work" -w /work \
-            -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0 \
-            -e CARGO_PROFILE_DEV_DEBUG=line-tables-only -e CARGO_TARGET_DIR=/work/target-container \
-            rust:1.98 bash -c '
+          # Tools baked into the image; the tests then run as the runner's
+          # own user, so the checkout, git and every spawned child see the
+          # same ownership they would on a plain machine.
+          docker build -q -t knossos-ci - <<'EOF'
+          FROM rust:1.98
+          RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python-is-python3 && rm -rf /var/lib/apt/lists/*
+          EOF
+          mkdir -p target-container/home target-container/cargo-home
+          docker run --rm             --user "$(id -u):$(id -g)"             --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536             --security-opt seccomp=unconfined             -v "$PWD:/work" -w /work             -e HOME=/work/target-container/home -e CARGO_HOME=/work/target-container/cargo-home             -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0             -e CARGO_PROFILE_DEV_DEBUG=line-tables-only -e CARGO_TARGET_DIR=/work/target-container             knossos-ci bash -c '
               set -e
-              # The tests shell out to `python` and to git inside a checkout the
-              # runner user owns, which git in the container (root) refuses as
-              # dubious without the safe.directory override.
-              apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python-is-python3 >/dev/null
-              git config --global --add safe.directory "*"
               git config --global user.name ci && git config --global user.email ci@knossos.invalid
               cargo test --all-targets --locked --no-fail-fast
             ' 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
