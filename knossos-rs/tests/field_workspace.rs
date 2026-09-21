@@ -153,7 +153,9 @@ async fn next_text<S>(socket: &mut S) -> String
 where
     S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Generous: a cold Windows runner can take well over ten seconds to
+    // start PowerShell for the first time.
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             match socket.next().await {
                 Some(Ok(Message::Text(text))) => return text.to_string(),
@@ -163,7 +165,7 @@ where
         }
     })
     .await
-    .expect("a text frame within ten seconds")
+    .expect("a text frame within sixty seconds")
 }
 
 /// Terminal frames for `id`, up to and including its exit frame.

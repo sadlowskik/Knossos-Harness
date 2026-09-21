@@ -157,8 +157,14 @@ fn normalize_relative(value: Option<&str>) -> Result<Vec<String>, WorkspaceError
         return Ok(Vec::new());
     };
     let path = Path::new(value);
+    // Windows shapes (`C:\x`, `C:x`, `\x`) are refused on every OS: a
+    // workspace-relative path never legitimately starts with a drive letter
+    // or a backslash, and a Unix host must not treat them as plain names.
+    let bytes = value.as_bytes();
+    let windows_shape = bytes.first() == Some(&b'\\')
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':');
     let prefixed = matches!(path.components().next(), Some(Component::Prefix(_)));
-    if value.contains('\0') || path.is_absolute() || path.has_root() || prefixed {
+    if value.contains('\0') || path.is_absolute() || path.has_root() || prefixed || windows_shape {
         return err("workspace paths must be relative");
     }
     let mut out: Vec<String> = Vec::new();
