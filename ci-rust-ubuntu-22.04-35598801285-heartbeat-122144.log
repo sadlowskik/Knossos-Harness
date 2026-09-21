@@ -1,0 +1,14 @@
+heartbeat 12:21:44 110s
+=== phase test-codegen 12:21:27
+               total        used        free      shared  buff/cache   available
+Mem:           15988        2293        8928          46        4766       13301
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10062       00:12  104 1136368 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered
+  10040       00:13  103 944908 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-
+   1836       03:02  2.1 134988 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   9877       00:16  1.4 84396 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   1778       05:08  1.0 126964 /tmp/provjobd3464302349
+[   21.524744] mlx5_core 2ae2:00:02.0 enP10978s1: Link up
+[   21.550252] hv_netvsc 6045bdc7-62b9-6045-bdc7-62b96045bdc7 eth0: Data path switched to VF: enP10978s1
+[   49.236046] hv_balloon: Max. dynamic memory size: 16384 MB
