@@ -2043,3 +2043,7 @@
   .atlas-card, .atlas-chip, .atlas-pill, .atlas-who, .segctl-item, .segctl-hint, .btn, .topstats .stat, .topbar-signout, .psrc-row, .psrc-close, .psrc-form input, .psrc-form select { transition: none; }
   .atlas-card.needs-you, .atlas-pill i, .atlas-chip i, .perm-flag i, .atlas-section-title i, .atlas-perm-label i, .topstats .stat i, .perm, .psrc-modal, .fatal-card { animation: none; }
 }
+
+/* Atlas: the one-time nudge when projects exist but no model does. */
+.atlas-nudge p { margin: 4px 0 10px; color: var(--text-2); max-width: 60ch; }
+.atlas-nudge .atlas-empty-actions { margin: 0; }

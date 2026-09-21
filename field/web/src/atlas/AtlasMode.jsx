@@ -84,6 +84,24 @@ export default function AtlasMode({ settings, setSettings }) {
             <PermissionRequests />
           </section>
         )}
+        {columns.length > 0 && endpoints.length === 0 && (
+          <section className="atlas-approvals atlas-nudge" aria-label="No model yet">
+            <h2 className="atlas-section-title"><i aria-hidden="true" />No model yet</h2>
+            <p>Agents cannot start until a model is set up: a Cameo box, Ollama on this machine, or a provider key.</p>
+            <div className="atlas-empty-actions">
+              <button type="button" className="btn" onClick={() => setModelsOpen(true)}>Set up a model</button>
+            </div>
+          </section>
+        )}
+        {columns.length > 0 && endpoints.length === 0 && (
+          <section className="atlas-approvals atlas-nudge" aria-label="No model yet">
+            <h2 className="atlas-section-title"><i aria-hidden="true" />No model yet</h2>
+            <p>Agents cannot start until a model is set up: a Cameo box, Ollama on this machine, or a provider key.</p>
+            <div className="atlas-empty-actions">
+              <button type="button" className="btn" onClick={() => setModelsOpen(true)}>Set up a model</button>
+            </div>
+          </section>
+        )}
         {columns.length ? (
           <div className="atlas-grid" role="list">
             {columns.map((column) => (

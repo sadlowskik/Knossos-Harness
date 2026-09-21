@@ -19,10 +19,16 @@ export default function PowerSources({ onClose }) {
   const [testing, setTesting] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [backend, setBackend] = useState('');
 
   async function load() {
-    try { const r = await api.endpoints(); setList(r.endpoints ?? []); } catch (e) { setError(e.message); }
+    try {
+      const r = await api.endpoints();
+      setList(r.endpoints ?? []);
+      setBackend(r.keyBackend ?? '');
+    } catch (e) { setError(e.message); }
   }
+  const keyHome = backend === 'keychain' ? 'your system keychain' : 'a private file on this machine';
   useEffect(() => { load(); const t = setInterval(load, 6000); return () => clearInterval(t); }, []);
 
   const patch = (p) => setForm((f) => ({ ...f, ...p }));
@@ -61,7 +67,7 @@ export default function PowerSources({ onClose }) {
             <Cpu aria-hidden="true" />
             <span>
               <b id="psrc-title">Models</b>
-              <small>The models your agents run on. Keys stay on this machine.</small>
+              <small>The models your agents run on. Keys go to {keyHome} and never leave it.</small>
             </span>
           </span>
           <button type="button" className="psrc-close" onClick={onClose} aria-label="Close models"><X /></button>
@@ -119,7 +125,7 @@ export default function PowerSources({ onClose }) {
             <label className="psrc-field">
               <span className="psrc-field-label">API key {needsUrl && <small>optional for local servers</small>}</span>
               <input type="password" value={form.key} onChange={(e) => patch({ key: e.target.value })} placeholder={needsUrl ? 'Leave empty for local' : 'sk-ant-…'} autoComplete="off" />
-              <span className="psrc-help">Stored on this machine only. Sent once, never shown again.</span>
+              <span className="psrc-help">Kept in {keyHome}. Sent once, never shown again.</span>
             </label>
             {error && <p className="cityhub-error psrc-msg" role="alert">{error}</p>}
             {note && <p className="cityhub-note psrc-msg" role="status">{note}</p>}
