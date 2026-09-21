@@ -105,6 +105,17 @@ jobs:
             cargo test --all-targets --locked > "$LOG" 2>&1 &
           fi
           pid=$!
+          # An independent heartbeat, so a stall in the main loop (a hung git
+          # push in the partial publish, say) can be told apart from a runner
+          # that died: heartbeats that stop mean the machine stopped.
+          (
+            while true; do
+              { echo "heartbeat $(date -u +%H:%M:%S) ${SECONDS}s"; free -m 2>/dev/null; } > ci-rust-heartbeat.log 2>&1 || true
+              timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat.log" >/dev/null 2>&1 || true
+              sleep 60
+            done
+          ) &
+          heartbeat=$!
           deadline=$((SECONDS + 1500))
           ticks=0
           # Every two minutes, publish what the log holds so far plus the
@@ -124,7 +135,7 @@ jobs:
                 df -h / /tmp 2>/dev/null || true
                 sudo -n dmesg 2>/dev/null | tail -30 || true
               } > ci-rust-partial.log 2>&1 || true
-              bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
+              timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               {
@@ -133,6 +144,7 @@ jobs:
                 free -m 2>/dev/null || true
                 echo "=== tests that never reported (compare against a green run)"
               } >> "$LOG"
+              kill "$heartbeat" 2>/dev/null || true
               kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
               pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
               cat "$LOG"
@@ -141,6 +153,7 @@ jobs:
             sleep 5
           done
           wait "$pid"; status=$?
+          kill "$heartbeat" 2>/dev/null || true
           cat "$LOG"
           exit "$status"
       - name: Release build

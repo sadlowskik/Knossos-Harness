@@ -9,6 +9,8 @@
 # run publish concurrently, and an orphan push from the last job used to delete
 # every other job's log. Retries on a non-fast-forward push.
 set -euo pipefail
+# Never wait on a prompt or an editor: this runs unattended inside a loop.
+export GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
 
 log="${1:?log file}"
 name="${2:?published name}"
