@@ -1,0 +1,14 @@
+heartbeat 12:10:36 75s
+=== phase test-codegen 12:10:29
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1583        9093          48        5312       14010
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9811       00:05 93.8 703364 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-
+   9819       00:05 89.6 704520 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name knossos --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-
+   1656       02:07  2.0 135556 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   9649       00:07  1.5 84840 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --all-targets --locked --no-run
+   1601       03:00  0.9 130760 /tmp/provjobd907791175
+[   11.473987] overlayfs: fs on '/home/runner/.local/share/containers/storage/overlay/metacopy-check3488792216/l1' does not support file handles, falling back to xino=off.
+[   11.495600] overlayfs: fs on '/home/runner/.local/share/containers/storage/overlay/opaque-bug-check3134758962/l2' does not support file handles, falling back to xino=off.
+[   49.412150] hv_balloon: Max. dynamic memory size: 16384 MB
