@@ -84,6 +84,7 @@ jobs:
           CARGO_INCREMENTAL: "0"
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '2' || '4' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # `live_engine` skips here -- there is no model server on a runner --
         # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
         # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
@@ -105,7 +106,22 @@ jobs:
           fi
           pid=$!
           deadline=$((SECONDS + 1500))
+          ticks=0
+          # Every five minutes, publish what the log holds so far plus the
+          # live process table and memory. A runner that stalls or dies
+          # then still leaves its last five minutes on the ci-logs branch,
+          # which no end-of-step publish ever managed (runs 19-36).
           while kill -0 "$pid" 2>/dev/null; do
+            ticks=$((ticks + 1))
+            if [ $((ticks % 60)) -eq 0 ]; then
+              {
+                cat "$LOG"
+                echo "=== progress at $(date -u +%H:%M:%S), ${SECONDS}s into the step"
+                ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss 2>/dev/null | head -40 || ps -ef || true
+                free -m 2>/dev/null || true
+              } > ci-rust-partial.log 2>&1 || true
+              bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
+            fi
             if [ "$SECONDS" -ge "$deadline" ]; then
               {
                 echo "=== cargo test still running after 25 minutes; processes alive:"
