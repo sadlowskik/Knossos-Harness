@@ -142,8 +142,13 @@ jobs:
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
-      - name: Publish failure log to ci-logs branch
-        if: failure()
+      # `always()` rather than `failure()`: a job the cap cancels never
+      # counts as failed, and the cancelled runs are exactly the ones whose
+      # log matters. The log file is written progressively, so a cancelled
+      # job still publishes everything cargo printed before the runner
+      # stalled.
+      - name: Publish Rust log to ci-logs branch
+        if: always()
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
