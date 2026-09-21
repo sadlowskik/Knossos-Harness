@@ -85,6 +85,44 @@ fn status_label(code: char) -> &'static str {
     }
 }
 
+/// `readCleanRevision`: the HEAD revision and branch of a workspace with no
+/// uncommitted changes; a dirty tree is an error naming a few of the files.
+pub fn read_clean_revision(cwd: &Path) -> Result<(String, Value), String> {
+    let status = read_status(cwd)?;
+    let files: Vec<String> = status
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| f.get("path").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !files.is_empty() {
+        let sample = files.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+        let remainder = if files.len() > 5 {
+            format!(" and {} more", files.len() - 5)
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "workspace has uncommitted changes ({sample}{remainder})"
+        ));
+    }
+    let revision = git(cwd, &["rev-parse", "--verify", "HEAD"])?
+        .trim()
+        .to_string();
+    if !(40..=64).contains(&revision.len()) || !revision.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("workspace HEAD is not a valid Git revision".into());
+    }
+    Ok((
+        revision,
+        status.get("branch").cloned().unwrap_or(Value::Null),
+    ))
+}
+
 /// `readStatus`: branch, ahead/behind, and the changed files, scoped to the
 /// workspace subtree and reported relative to it.
 pub fn read_status(cwd: &Path) -> Result<Value, String> {

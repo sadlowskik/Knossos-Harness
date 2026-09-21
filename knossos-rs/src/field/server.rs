@@ -11,7 +11,9 @@
 
 use super::cities::{active_city_session_ids, city_detail, list_cities, resolve_city_agent};
 use super::config::{load_config, update_frontmatter_file, FieldSettings};
+use super::director::CampaignDirector;
 use super::eventlog::{AppendOptions, Backend, EventLog};
+use super::git::read_clean_revision;
 use super::hub::{Hub, Outbound};
 use super::js::{get, get_arr, get_str, js_string};
 use super::model::DomainError;
@@ -92,6 +94,8 @@ pub struct AppState {
     pub endpoints_store: Arc<Mutex<EndpointsStore>>,
     /// Active operator terminals, by id.
     pub terminals: Arc<Terminals>,
+    /// Strategic command boundary for campaigns.
+    pub director: Arc<CampaignDirector>,
     /// Scheduled and filesystem-triggered work.
     pub routines: Arc<Mutex<Routines>>,
     /// Every appended event also reaches the routine controller, off the
@@ -510,6 +514,8 @@ fn api(
             out["subject"] = json!(subject);
             Ok(out)
         }
+        "POST /api/campaigns/create" => state.director.create(&body).map_err(Into::into),
+        "POST /api/campaigns/action" => campaign_action(state, body),
         "GET /api/campaigns" => {
             let projection = state
                 .projection
@@ -997,6 +1003,86 @@ fn api(
         }
         _ => Err(ApiError::not_ported(&key)),
     }
+}
+
+/// `POST /api/campaigns/action`: checkpoints and rollbacks need explicit
+/// operator confirmation, and a checkpoint records the clean HEAD of the
+/// campaign's mounted Git workspace.
+fn campaign_action(state: &Arc<AppState>, body: Value) -> Result<Value, ApiError> {
+    let kind = get_str(&body, "kind").unwrap_or("");
+    let confirmed = get(&body, "confirmRisk") == Some(&Value::Bool(true));
+    if kind == "checkpoint" {
+        if !confirmed {
+            return Err(DomainError::new(
+                "confirmation_required",
+                "recording a campaign checkpoint requires explicit operator confirmation",
+            )
+            .into());
+        }
+        let campaign_id = get(&body, "campaignId").map(js_string).unwrap_or_default();
+        let target = {
+            let projection = state
+                .projection
+                .lock()
+                .map_err(|_| ApiError::internal("projection lock poisoned"))?;
+            projection
+                .campaigns
+                .campaigns
+                .get(&campaign_id)
+                .map(|c| c.get("target").cloned().unwrap_or(Value::Null))
+        };
+        let Some(target) = target else {
+            return Err(DomainError::new("not_found", "campaign does not exist").into());
+        };
+        let workspace_id = get(&target, "workspaceId").map(js_string).or_else(|| {
+            (get_str(&target, "type") == Some("workspace"))
+                .then(|| get(&target, "id").map(js_string))
+                .flatten()
+        });
+        let workspace = {
+            let settings = settings_read(state)?;
+            workspace_id.as_deref().and_then(|id| {
+                settings
+                    .workspaces
+                    .iter()
+                    .find(|w| {
+                        get_str(w, "id") == Some(id)
+                            && get(w, "mounted").is_some_and(super::js::truthy)
+                            && get(w, "git") != Some(&Value::Bool(false))
+                    })
+                    .cloned()
+            })
+        };
+        let Some(workspace) = workspace else {
+            return Err(DomainError::new(
+                "checkpoint_unavailable",
+                "campaign target is not a mounted Git workspace",
+            )
+            .into());
+        };
+        let (revision, branch) = read_clean_revision(&workspace_dir(&workspace)).map_err(|e| {
+            ApiError::from(DomainError::new(
+                "dirty_workspace",
+                format!(
+                    "checkpoint refused: {e}. Commit or intentionally discard the changes first."
+                ),
+            ))
+        })?;
+        let mut input = body;
+        input["revision"] = json!(revision);
+        input["workspaceId"] = json!(workspace_id);
+        input["branch"] = branch;
+        input["checkpointMode"] = json!("record_only");
+        return state.director.action(&input).map_err(Into::into);
+    }
+    if kind == "rollback" && !confirmed {
+        return Err(DomainError::new(
+            "confirmation_required",
+            "recording a rollback requires explicit operator confirmation",
+        )
+        .into());
+    }
+    state.director.action(&body).map_err(Into::into)
 }
 
 const CITY_ORDER_MAX: usize = 8192;
@@ -1859,6 +1945,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         });
     let routine_emit = emit.clone();
     let watcher_emit = emit.clone();
+    let director_emit = emit.clone();
     let policy_projection = Arc::clone(&projection);
     let campaign_policy: super::registry::CampaignPolicy = Arc::new(move |id: &str| {
         let p = policy_projection.lock().ok()?;
@@ -1895,6 +1982,23 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         factory: None,
     });
 
+    // The director emits facts and asks the registry for real work; session
+    // reports come back to it through the registry's report handler.
+    let head_log = Arc::clone(&log);
+    let director = Arc::new(
+        CampaignDirector::new(
+            Arc::clone(&projection),
+            Arc::clone(&registry) as Arc<dyn super::director::Harness>,
+            director_emit,
+        )
+        .with_event_head(Arc::new(move || {
+            head_log.lock().map(|l| l.size()).unwrap_or(0)
+        })),
+    );
+    if let Ok(mut r) = registry.lock() {
+        r.set_campaign_report_handler(Some(director.report_handler()));
+    }
+
     // Routines validate their enabled records at boot, as the Node server did:
     // a misconfigured enabled routine is a startup error, a disabled one is inert.
     let routine_settings = Arc::clone(&settings);
@@ -1930,6 +2034,7 @@ pub async fn start(options: ServerOptions) -> anyhow::Result<Running> {
         keys,
         endpoints_store: Arc::new(Mutex::new(endpoints_store)),
         terminals: Terminals::new(),
+        director,
         routines: Arc::clone(&routines),
         routine_feed,
         _watchers: Mutex::new(watchers),

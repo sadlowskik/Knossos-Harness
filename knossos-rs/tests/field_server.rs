@@ -266,11 +266,26 @@ async fn bootstrap_gates_api_static_and_logout() {
     assert_eq!(trace["events"][0]["kind"], "world.capital_selected");
 
     // What is not ported yet says so, distinctly from a refusal.
-    let campaign = f.post("/api/campaigns/create", json!({}), true).await;
-    assert_eq!(campaign.status(), StatusCode::NOT_IMPLEMENTED);
+    let rehearsal = f.post("/api/simulations/run", json!({}), true).await;
+    assert_eq!(rehearsal.status(), StatusCode::NOT_IMPLEMENTED);
     assert_eq!(
-        campaign.json::<Value>().await.unwrap()["code"],
+        rehearsal.json::<Value>().await.unwrap()["code"],
         "not_ported"
+    );
+    // The director validates before it records anything.
+    let campaign = f.post("/api/campaigns/create", json!({}), true).await;
+    assert_eq!(campaign.status(), StatusCode::BAD_REQUEST);
+    let unconfirmed = f
+        .post(
+            "/api/campaigns/action",
+            json!({ "campaignId": "nope", "kind": "checkpoint" }),
+            true,
+        )
+        .await;
+    assert_eq!(unconfirmed.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        unconfirmed.json::<Value>().await.unwrap()["code"],
+        "confirmation_required"
     );
     let replay = f.get("/api/campaigns/replay?campaignId=nope").await;
     assert_eq!(replay.status(), StatusCode::NOT_FOUND);
