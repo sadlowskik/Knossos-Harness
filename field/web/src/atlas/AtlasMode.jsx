@@ -42,10 +42,13 @@ export default function AtlasMode({ settings, setSettings }) {
   const [modelsOpen, setModelsOpen] = useState(false);
   const [starter, setStarter] = useState(null); // { workspace, screen }
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
-  const startAgent = (workspace, e) => setStarter({
+  const startAgent = (workspace, e, pane = 'spawn') => setStarter({
     workspace,
+    pane,
     screen: { x: e?.clientX ?? window.innerWidth / 2 - 140, y: e?.clientY ?? 120 },
   });
+  // Defining an agent needs no project; it is anchored to the first one only for "Save and start".
+  const newAgent = (e) => startAgent(workspaces[0] ?? null, e, 'new-agent');
   const sessions = useMemo(
     () => [...st.snap.sessions].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
     [st.snap.sessions],
@@ -78,6 +81,7 @@ export default function AtlasMode({ settings, setSettings }) {
           {workspaces.length > 0 && (
             <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>
           )}
+          <button type="button" className="btn ghost" onClick={newAgent}>New agent</button>
           <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Models</button>
           <button type="button" className="btn ghost" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
             Rome map
@@ -133,10 +137,13 @@ export default function AtlasMode({ settings, setSettings }) {
       {starter && (
         <ContextMenu
           fixed
-          initialPane="spawn"
+          initialPane={starter.pane ?? 'spawn'}
           screen={starter.screen}
-          target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }}
+          target={starter.workspace
+            ? { type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }
+            : { type: 'empty', id: null, label: 'no project mounted' }}
           onClose={() => setStarter(null)}
+          onOpenModels={() => { setStarter(null); setModelsOpen(true); }}
         />
       )}
     </div>

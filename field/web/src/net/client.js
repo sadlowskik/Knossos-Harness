@@ -84,6 +84,10 @@ export const api = {
 
   spawn:         (body) => request('POST', '/api/sessions', body),
   updateAgent:   (body) => request('POST', '/api/agents/settings', body),
+  agents:        () => request('GET', '/api/agents'),
+  createAgent:   (body) => request('POST', '/api/agents', body),
+  saveAgent:     (body) => request('POST', '/api/agents/update', body),
+  deleteAgent:   (id) => request('POST', '/api/agents/delete', { id, confirmRisk: true }),
   assign:        (body) => request('POST', '/api/assign', body),
   cities:        () => request('GET', '/api/cities'),
   city:          (id) => request('GET', `/api/city?id=${encodeURIComponent(id)}`),

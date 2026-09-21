@@ -10,7 +10,10 @@
 //! client can tell "not here yet" from "refused".
 
 use super::cities::{active_city_session_ids, city_detail, list_cities, resolve_city_agent};
-use super::config::{load_config, update_frontmatter_file, FieldSettings};
+use super::config::{
+    agent_view, load_config, slug, update_frontmatter_file, write_agent_file, AgentDefinition,
+    FieldSettings,
+};
 use super::director::CampaignDirector;
 use super::eventlog::{AppendOptions, Backend, EventLog};
 use super::git::read_clean_revision;
@@ -727,6 +730,13 @@ fn api(
             Ok(json!({ "ok": ok }))
         }
         "POST /api/agents/settings" => agent_settings(state, &body),
+        "GET /api/agents" => {
+            let settings = settings_read(state)?;
+            Ok(json!({ "agents": settings.agents.iter().map(agent_view).collect::<Vec<_>>() }))
+        }
+        "POST /api/agents" => agent_create(state, &body),
+        "POST /api/agents/update" => agent_update(state, &body),
+        "POST /api/agents/delete" => agent_delete(state, &body),
         "GET /api/endpoints" => {
             let settings = state
                 .settings
@@ -1503,6 +1513,202 @@ fn agent_settings(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError
         AppendOptions::subject(agent_id.clone()),
     )?;
     Ok(json!({ "agent": Value::Object(stripped), "appliesTo": "future_sessions" }))
+}
+
+const THINKING_LEVELS: [&str; 3] = ["low", "medium", "high"];
+
+/// The operator-facing fields of an agent definition, validated against the
+/// roles and endpoints the field knows. `id` is filled in by the caller.
+fn agent_definition_from(
+    body: &Value,
+    settings: &FieldSettings,
+) -> Result<AgentDefinition, ApiError> {
+    let text = |key: &str, max: usize| -> Option<String> {
+        get(body, key)
+            .filter(|v| !v.is_null())
+            .map(js_string)
+            .map(|s| s.trim().chars().take(max).collect::<String>())
+            .filter(|s| !s.is_empty())
+    };
+    let name = text("name", 64).ok_or_else(|| ApiError::bad_request("name is required"))?;
+    let role = text("role", 64).ok_or_else(|| ApiError::bad_request("role is required"))?;
+    if !settings.has_role(&role) {
+        return Err(ApiError::bad_request(format!("unknown role: {role}")));
+    }
+    let endpoint =
+        text("endpoint", 64).ok_or_else(|| ApiError::bad_request("endpoint is required"))?;
+    if !settings.has_endpoint(&endpoint) {
+        return Err(ApiError::bad_request(format!(
+            "unknown endpoint: {endpoint}"
+        )));
+    }
+    let thinking = text("thinking", 16);
+    if let Some(level) = &thinking {
+        if !THINKING_LEVELS.contains(&level.as_str()) {
+            return Err(ApiError::bad_request(
+                "thinking must be \"low\", \"medium\" or \"high\"",
+            ));
+        }
+    }
+    Ok(AgentDefinition {
+        id: String::new(),
+        name,
+        role,
+        endpoint,
+        model: text("model", 128),
+        thinking,
+        orders: get(body, "orders")
+            .filter(|v| !v.is_null())
+            .map(js_string)
+            .unwrap_or_default()
+            .chars()
+            .take(20_000)
+            .collect(),
+    })
+}
+
+fn agent_event_data(def: &AgentDefinition) -> Value {
+    json!({
+        "agentId": def.id, "name": def.name, "role": def.role,
+        "endpoint": def.endpoint, "model": def.model, "thinking": def.thinking,
+    })
+}
+
+/// `POST /api/agents`: define an agent as `agents/<slug>.md`, with the id
+/// made unique against the records already loaded and the files on disk.
+fn agent_create(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let mut settings = state
+        .settings
+        .write()
+        .map_err(|_| ApiError::internal("settings lock poisoned"))?;
+    let mut def = agent_definition_from(body, &settings)?;
+    let base = slug(&def.name);
+    if base.is_empty() {
+        return Err(ApiError::bad_request(
+            "name must contain at least one letter or digit",
+        ));
+    }
+    let dir = settings.agents_dir();
+    let taken = |id: &str| settings.agent(id).is_some() || dir.join(format!("{id}.md")).exists();
+    let mut id = base.clone();
+    let mut n = 2;
+    while taken(&id) {
+        id = format!("{base}-{n}");
+        n += 1;
+    }
+    def.id = id;
+    let file = dir.join(format!("{}.md", def.id));
+    write_agent_file(&file, &def, None)
+        .map_err(|e| ApiError::internal(format!("cannot write {}: {e}", file.display())))?;
+    settings.reload_agents();
+    let record = settings.agent(&def.id).map(agent_view).ok_or_else(|| {
+        ApiError::internal(format!("{} was written but did not load", file.display()))
+    })?;
+    drop(settings);
+    state.emit(
+        "agent.defined",
+        agent_event_data(&def),
+        AppendOptions::subject(def.id.clone()),
+    )?;
+    Ok(json!({ "agent": record }))
+}
+
+/// `POST /api/agents/update`: rewrite an agent's definition in place. The id
+/// and any frontmatter this form does not own stay as they were.
+fn agent_update(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let id = get_str(body, "id").unwrap_or("").trim().to_string();
+    let mut settings = state
+        .settings
+        .write()
+        .map_err(|_| ApiError::internal("settings lock poisoned"))?;
+    let Some(existing) = settings.agent(&id).cloned() else {
+        return Err(DomainError::new("not_found", agent_missing(&id)).into());
+    };
+    let mut def = agent_definition_from(body, &settings)?;
+    def.id = id.clone();
+    let file = get_str(&existing, "file")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| settings.agents_dir().join(format!("{id}.md")));
+    write_agent_file(&file, &def, Some(&existing))
+        .map_err(|e| ApiError::internal(format!("cannot write {}: {e}", file.display())))?;
+    settings.reload_agents();
+    let record = settings.agent(&id).map(agent_view).ok_or_else(|| {
+        ApiError::internal(format!("{} was written but did not load", file.display()))
+    })?;
+    drop(settings);
+    state.emit(
+        "agent.updated",
+        agent_event_data(&def),
+        AppendOptions::subject(id),
+    )?;
+    Ok(json!({ "agent": record }))
+}
+
+/// `POST /api/agents/delete`: remove the definition file. Refused while a
+/// session is still running under it, and without `confirmRisk: true`.
+fn agent_delete(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {
+    let id = get_str(body, "id").unwrap_or("").trim().to_string();
+    if get(body, "confirmRisk") != Some(&Value::Bool(true)) {
+        return Err(DomainError::new(
+            "confirmation_required",
+            "deleting an agent requires explicit operator confirmation",
+        )
+        .into());
+    }
+    let live: Vec<String> = state
+        .registry
+        .lock()
+        .map_err(|_| ApiError::internal("registry lock poisoned"))?
+        .sessions
+        .values()
+        .filter(|s| s.is_running())
+        .map(|s| s.info())
+        .filter(|info| info.agent_id.as_deref() == Some(id.as_str()))
+        .map(|info| info.id)
+        .collect();
+    if !live.is_empty() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            code: "agent_in_use".into(),
+            error: format!(
+                "agent {id} is running {} live session{}; cancel or wait first",
+                live.len(),
+                if live.len() == 1 { "" } else { "s" }
+            ),
+            detail: json!({ "sessionIds": live }),
+        });
+    }
+    let mut settings = state
+        .settings
+        .write()
+        .map_err(|_| ApiError::internal("settings lock poisoned"))?;
+    let Some(existing) = settings.agent(&id).cloned() else {
+        return Err(DomainError::new("not_found", agent_missing(&id)).into());
+    };
+    if let Some(file) = get_str(&existing, "file") {
+        match std::fs::remove_file(file) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(ApiError::internal(format!("cannot remove {file}: {e}"))),
+        }
+    }
+    settings.reload_agents();
+    settings.agents.retain(|a| get_str(a, "id") != Some(&id));
+    drop(settings);
+    state.emit(
+        "agent.deleted",
+        json!({ "agentId": id }),
+        AppendOptions::subject(id.clone()),
+    )?;
+    Ok(json!({ "ok": true, "id": id }))
+}
+
+fn agent_missing(id: &str) -> String {
+    if id.is_empty() {
+        "agent (empty) does not exist".to_string()
+    } else {
+        format!("agent {id} does not exist")
+    }
 }
 
 fn add_endpoint(state: &Arc<AppState>, body: &Value) -> Result<Value, ApiError> {

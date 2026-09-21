@@ -72,6 +72,8 @@ export async function bootstrap() {
     const sid = evt.data?.sessionId ?? (evt.subject || null);
     const stamps = sid ? { ...state.lastEventBySession, [sid]: evt.ts } : state.lastEventBySession;
     setState({ events: tail, lastEventBySession: stamps });
+    // Agent definitions live in config, not the snapshot: re-read them when one changes.
+    if (typeof evt.kind === 'string' && evt.kind.startsWith('agent.')) refreshConfig();
   });
 
   connect();
@@ -82,6 +84,13 @@ export async function bootstrap() {
   } catch (e) {
     setState({ error: e.message });
   }
+}
+
+/** Re-read `/api/config` (roles, agents, endpoints); resolves to the new config. */
+export async function refreshConfig() {
+  const config = await api.config();
+  setState({ config });
+  return config;
 }
 
 // ---------------------------------------------------------------- selection

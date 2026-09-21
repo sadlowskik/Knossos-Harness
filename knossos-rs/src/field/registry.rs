@@ -736,9 +736,17 @@ impl Registry {
                 other => vec![js_string(other)],
             })
             .unwrap_or_default();
-        let model = ep
-            .as_ref()
-            .and_then(|e| get_str(e, "model").map(str::to_string));
+        // An agent's personality is the model it runs on: its own `model`
+        // overrides the endpoint's default.
+        let model = get_str(&agent, "model")
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                ep.as_ref()
+                    .and_then(|e| get_str(e, "model").map(str::to_string))
+            });
+        let spawned_model = model.clone();
         let cwd = PathBuf::from(get_str(&ws, "path").unwrap_or("."));
         let name = get_str(&agent, "name").unwrap_or(&agent_id).to_string();
         let options = if manifest.id == CLAUDE_CODE {
@@ -932,7 +940,7 @@ impl Registry {
             "session.spawned",
             json!({
                 "sessionId": id, "agentId": agent_id, "name": get_str(&agent, "name").unwrap_or(&agent_id),
-                "role": role_id, "model": ep.as_ref().and_then(|e| e.get("model").cloned()).unwrap_or(Value::Null),
+                "role": role_id, "model": spawned_model,
                 "endpointId": routed_id, "routeReason": routed.get("reason"),
                 "thinking": effort, "thinkingReason": effort_reason,
                 "cwd": ws.get("path"), "workspaceId": ws_id,

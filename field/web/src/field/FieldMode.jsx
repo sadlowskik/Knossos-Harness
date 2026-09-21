@@ -503,6 +503,7 @@ export default function FieldMode() {
           target={menu.target}
           initialPane={menu.pane ?? null}
           onClose={() => setMenu(null)}
+          onOpenModels={() => { setMenu(null); setModelsOpen(true); }}
         />
       )}
       {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}

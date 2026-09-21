@@ -486,6 +486,24 @@
 .fld textarea { font-family: var(--sans); line-height: 1.4; }
 .fld select:focus, .fld textarea:focus, .fld input:focus { border-color: rgba(255, 122, 26, 0.5); }
 
+/* the "new agent" pane: a wider form with a picker row, hints and a confirm strip */
+.ctx.ctx-wide { width: 360px; }
+.ctx-wide .ctx-form { max-height: calc(100vh - 96px); overflow-y: auto; }
+.fld-row { display: flex; align-items: center; gap: 6px; }
+.fld-row select { flex: 1 1 auto; min-width: 0; }
+.fld-row .btn { flex: none; white-space: nowrap; }
+.fld-row .dot { width: 8px; height: 8px; margin-left: 2px; }
+.fld-hint { font-size: 10.5px; line-height: 1.4; color: var(--ghost); overflow-wrap: anywhere; }
+.fld .label small { font-weight: 400; text-transform: none; letter-spacing: 0; opacity: .7; }
+.btn.icon { padding: 0 5px; }
+.btn.icon svg { width: 13px; height: 13px; }
+.ctx-spacer { flex: 1 1 auto; }
+.ctx-actions.ctx-confirm { align-items: center; flex-wrap: wrap; }
+.ctx-actions.ctx-confirm .ctx-note { flex: 1 1 100%; padding: 0 0 4px; color: var(--st-failed); }
+.ctx-note.warn code { font: 10.5px var(--font-mono); }
+.ctx-note.warn .btn { margin-top: 6px; }
+.ctx-note.warn div + div { margin-top: 6px; }
+
 .seg { display: flex; gap: 2px; }
 .seg button {
   flex: 1 1 0; background: var(--inset); border: 1px solid var(--line-2);

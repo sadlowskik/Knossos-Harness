@@ -280,6 +280,132 @@ impl FieldSettings {
             .iter()
             .find(|w| get_str(w, "id") == Some(id))
     }
+
+    pub fn agents_dir(&self) -> PathBuf {
+        self.field_dir.join("agents")
+    }
+
+    /// Re-read `field/agents/*.md` so a record written a moment ago is what
+    /// the next spawn sees, without a restart.
+    pub fn reload_agents(&mut self) {
+        self.agents = read_dir(&self.agents_dir(), ".md");
+    }
+
+    pub fn agent(&self, id: &str) -> Option<&Value> {
+        self.agents.iter().find(|a| get_str(a, "id") == Some(id))
+    }
+
+    pub fn has_role(&self, id: &str) -> bool {
+        self.roles.iter().any(|r| get_str(r, "id") == Some(id))
+    }
+
+    pub fn has_endpoint(&self, id: &str) -> bool {
+        self.endpoints.iter().any(|e| get_str(e, "id") == Some(id))
+    }
+}
+
+/// An agent as `GET /api/agents` reports it: the operator-facing fields and
+/// the standing orders (the markdown body), never the raw frontmatter.
+pub fn agent_view(agent: &Value) -> Value {
+    let id = get_str(agent, "id").unwrap_or("");
+    let text = |key: &str| {
+        get(agent, key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    json!({
+        "id": id,
+        "name": text("name").unwrap_or(id),
+        "role": text("role"),
+        "endpoint": text("endpoint"),
+        "model": text("model"),
+        "thinking": text("thinking"),
+        "orders": get_str(agent, "body").unwrap_or("").trim(),
+        "file": agent.get("file"),
+    })
+}
+
+/// A file-safe id from a display name: lowercase ASCII letters and digits
+/// with single dashes between words. Empty when the name has neither.
+pub fn slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+/// The fields an agent definition carries, in the order they are written.
+#[derive(Debug, Clone, Default)]
+pub struct AgentDefinition {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub endpoint: String,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
+    pub orders: String,
+}
+
+/// Write `agents/<id>.md`: `id, name, role, endpoint, model?, thinking?` on
+/// top of any other frontmatter the file already had (tool allowances, a
+/// constitution), then the orders as the body.
+pub fn write_agent_file(
+    file: &Path,
+    def: &AgentDefinition,
+    existing: Option<&Value>,
+) -> Result<(), ConfigError> {
+    let mut keep: Obj = existing
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for key in [
+        "id", "name", "role", "endpoint", "model", "thinking", "body", "file",
+    ] {
+        keep.remove(key);
+    }
+    let mut head: Vec<(&str, Value)> = vec![
+        ("id", json!(def.id)),
+        ("name", json!(def.name)),
+        ("role", json!(def.role)),
+        ("endpoint", json!(def.endpoint)),
+    ];
+    if let Some(model) = &def.model {
+        head.push(("model", json!(model)));
+    }
+    if let Some(thinking) = &def.thinking {
+        head.push(("thinking", json!(thinking)));
+    }
+    let mut yaml = String::new();
+    for (key, value) in head {
+        let line = serde_yaml_ng::to_string(&json!({ key: value })).map_err(ConfigError::Yaml)?;
+        yaml.push_str(line.trim_end());
+        yaml.push('\n');
+    }
+    if !keep.is_empty() {
+        let rest = serde_yaml_ng::to_string(&Value::Object(keep)).map_err(ConfigError::Yaml)?;
+        yaml.push_str(rest.trim_end());
+        yaml.push('\n');
+    }
+    let orders = def.orders.trim();
+    let body = if orders.is_empty() {
+        String::new()
+    } else {
+        format!("{orders}\n")
+    };
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(file, format!("---\n{yaml}---\n{body}"))?;
+    Ok(())
 }
 
 /// Update frontmatter fields while preserving the record body verbatim.
@@ -371,6 +497,50 @@ mod tests {
         let (data, body) = frontmatter("plain text");
         assert_eq!(data, json!({}));
         assert_eq!(body, "plain text");
+    }
+
+    #[test]
+    fn slug_is_lowercase_dashed_ascii() {
+        assert_eq!(slug("Rhea Coder"), "rhea-coder");
+        assert_eq!(slug("  Qwen: 7B / fast!  "), "qwen-7b-fast");
+        assert_eq!(slug("---"), "");
+        assert_eq!(slug("Ünïcode Náme"), "n-code-n-me");
+    }
+
+    #[test]
+    fn write_agent_file_keeps_field_order_and_foreign_frontmatter() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents").join("rhea.md");
+        let def = AgentDefinition {
+            id: "rhea".into(),
+            name: "Rhea: Coder".into(),
+            role: "builder".into(),
+            endpoint: "local".into(),
+            model: Some("Qwen/Qwen2.5-Coder-7B-Instruct".into()),
+            thinking: None,
+            orders: "  Keep diffs small.\n".into(),
+        };
+        write_agent_file(&file, &def, None).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            text,
+            "---\nid: rhea\nname: 'Rhea: Coder'\nrole: builder\nendpoint: local\nmodel: Qwen/Qwen2.5-Coder-7B-Instruct\n---\nKeep diffs small.\n"
+        );
+        let existing = json!({ "id": "rhea", "tools_allow": ["Read"], "body": "old", "file": "x" });
+        let mut next = def.clone();
+        next.model = None;
+        next.thinking = Some("high".into());
+        next.orders = String::new();
+        write_agent_file(&file, &next, Some(&existing)).unwrap();
+        let (data, body) = frontmatter(&std::fs::read_to_string(&file).unwrap());
+        assert_eq!(data["thinking"], "high");
+        assert!(data.get("model").is_none());
+        assert_eq!(data["tools_allow"], json!(["Read"]));
+        assert_eq!(body, "");
+        assert_eq!(
+            agent_view(&json!({ "id": "x", "body": " hi \n" }))["orders"],
+            "hi"
+        );
     }
 
     #[test]

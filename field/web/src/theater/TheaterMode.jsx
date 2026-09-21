@@ -570,7 +570,7 @@ export default function TheaterMode() {
     {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} />}
     {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
     {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} />}
-    {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} />}
+    {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} onOpenModels={() => { setStarter(null); setPowerOpen(true); }} />}
     {choosingCapital && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} theme={settings.theme} />}
   </div>;
 }
