@@ -38,21 +38,7 @@ impl KeyStore {
             std::fs::create_dir_all(dir)?;
         }
         let text = serde_json::to_string(&self.map).unwrap_or_else(|_| "{}".into());
-        #[cfg(unix)]
-        {
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&self.file)?;
-            f.write_all(text.as_bytes())?;
-            return Ok(());
-        }
-        #[cfg(not(unix))]
-        std::fs::write(&self.file, text)
+        write_private(&self.file, &text)
     }
 
     pub fn set(&mut self, id: &str, value: &str) -> std::io::Result<()> {
@@ -79,6 +65,25 @@ impl KeyStore {
     pub fn values(&self) -> Vec<String> {
         self.map.values().cloned().collect()
     }
+}
+
+/// Writes a file the owner alone can read (0600 on Unix; Windows relies on
+/// the per-user profile ACL of the state directory).
+fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(file)?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    std::fs::write(file, text)
 }
 
 #[derive(Debug)]
