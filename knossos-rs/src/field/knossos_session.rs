@@ -24,16 +24,22 @@ pub fn resolve_knossos_binary() -> PathBuf {
     if let Some(explicit) = std::env::var_os("FIELD_KNOSSOS_BIN").filter(|v| !v.is_empty()) {
         return PathBuf::from(explicit);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if exe.file_stem().and_then(|s| s.to_str()) == Some("knossos") {
-            return exe;
-        }
-    }
     let exe_name = if cfg!(windows) {
         "knossos.exe"
     } else {
         "knossos"
     };
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.file_stem().and_then(|s| s.to_str()) == Some("knossos") {
+            return exe;
+        }
+        // The desktop app ships the harness beside itself as a sidecar.
+        if let Some(sibling) = exe.parent().map(|dir| dir.join(exe_name)) {
+            if sibling.is_file() {
+                return sibling;
+            }
+        }
+    }
     let legacy = if cfg!(windows) {
         "daedalus.exe"
     } else {

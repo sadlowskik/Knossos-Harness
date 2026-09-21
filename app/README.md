@@ -1,10 +1,21 @@
 # Knossos desktop
 
-The Field operator surface as a desktop app, on the Rust harness. One
-process: the app links the `knossos` crate, starts the Field server
-in-process on a loopback port the OS picks, and opens its window on the
-one-time bootstrap link, which mints the session cookie exactly as a
-browser would. No sidecar, no Node.
+The Field operator surface as a desktop app, on the Rust harness. The app
+links the `knossos` crate, starts the Field server in-process on a
+loopback port the OS picks, and opens its window on the one-time
+bootstrap link, which mints the session cookie exactly as a browser
+would. No Node anywhere.
+
+Each agent session is a `knossos serve` child process, so the harness
+binary must be reachable: the app looks at `FIELD_KNOSSOS_BIN`, then for
+`knossos` (or `knossos.exe`) beside its own executable, then in a sibling
+checkout's `target/` directory, then on `PATH`. Installers stage the
+harness beside the app as a sidecar.
+
+Endpoint keys added through the Models screen go to the macOS Keychain
+or the Windows Credential Manager; Linux keeps a 0600 `keys.json` in the
+state directory until the Secret Service backend lands. Set
+`FIELD_KEYCHAIN=off` to keep the file everywhere (portable installs).
 
 Atlas is the default face: projects, agents, models, approvals, in plain
 words. Rome, the RTS map with its Roman vocabulary, is the operator mode
