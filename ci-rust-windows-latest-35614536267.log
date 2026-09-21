@@ -1,71 +1,71 @@
-=== phase build 14:48:12
-[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (/Users/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs)
-[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 38.37s
-=== phase test-codegen 14:48:50
-[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (/Users/runner/work/Knossos-Harness/Knossos-Harness/knossos-rs)
-[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 44.57s
-[1m[92m  Executable[0m unittests src/lib.rs (target/debug/deps/knossos-bb752a1483e72efd)
-[1m[92m  Executable[0m unittests src/main.rs (target/debug/deps/knossos-90c5a6ded4942656)
-[1m[92m  Executable[0m tests/conversation_recovery.rs (target/debug/deps/conversation_recovery-30638d205724aac4)
-[1m[92m  Executable[0m tests/field_acp.rs (target/debug/deps/field_acp-5124c434c16ba470)
-[1m[92m  Executable[0m tests/field_claude.rs (target/debug/deps/field_claude-935942e8ce2d6e91)
-[1m[92m  Executable[0m tests/field_eventlog.rs (target/debug/deps/field_eventlog-aec442a3764f346e)
-[1m[92m  Executable[0m tests/field_projection.rs (target/debug/deps/field_projection-f8faf4f8ada05a27)
-[1m[92m  Executable[0m tests/field_registry.rs (target/debug/deps/field_registry-4057d7c3e0f48d76)
-[1m[92m  Executable[0m tests/field_server.rs (target/debug/deps/field_server-cfbc71897845a0ea)
-[1m[92m  Executable[0m tests/field_workspace.rs (target/debug/deps/field_workspace-358634a8631aa88d)
-[1m[92m  Executable[0m tests/harness_loop.rs (target/debug/deps/harness_loop-f10ffcbdb6506a29)
-[1m[92m  Executable[0m tests/jail.rs (target/debug/deps/jail-9c545c125d75ad02)
-[1m[92m  Executable[0m tests/live_engine.rs (target/debug/deps/live_engine-c9272f775df5e579)
-[1m[92m  Executable[0m tests/openai_compat.rs (target/debug/deps/openai_compat-d492bfb5cd755fed)
-[1m[92m  Executable[0m tests/sandbox_env.rs (target/debug/deps/sandbox_env-343d759e96f98e0c)
-[1m[92m  Executable[0m tests/serve_loop.rs (target/debug/deps/serve_loop-101fa6510665c40a)
-=== phase run 14:49:35
-[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.95s
-[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/knossos-bb752a1483e72efd)
+=== phase build 14:50:01
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (D:\a\Knossos-Harness\Knossos-Harness\knossos-rs)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 33.71s
+=== phase test-codegen 14:50:35
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (D:\a\Knossos-Harness\Knossos-Harness\knossos-rs)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 35.65s
+[1m[92m  Executable[0m unittests src\lib.rs (target\debug\deps\knossos-62e4d07523abc7e3.exe)
+[1m[92m  Executable[0m unittests src\main.rs (target\debug\deps\knossos-5eeadb525c7bb84a.exe)
+[1m[92m  Executable[0m tests\conversation_recovery.rs (target\debug\deps\conversation_recovery-af0d1d82cfea59a5.exe)
+[1m[92m  Executable[0m tests\field_acp.rs (target\debug\deps\field_acp-6bf0973d05c11427.exe)
+[1m[92m  Executable[0m tests\field_claude.rs (target\debug\deps\field_claude-9fa0f0c12a038a46.exe)
+[1m[92m  Executable[0m tests\field_eventlog.rs (target\debug\deps\field_eventlog-7125e306fd6e8d0e.exe)
+[1m[92m  Executable[0m tests\field_projection.rs (target\debug\deps\field_projection-9ac89d4b95e08faf.exe)
+[1m[92m  Executable[0m tests\field_registry.rs (target\debug\deps\field_registry-9d4f0903fe830fe5.exe)
+[1m[92m  Executable[0m tests\field_server.rs (target\debug\deps\field_server-71539bb66a349ba4.exe)
+[1m[92m  Executable[0m tests\field_workspace.rs (target\debug\deps\field_workspace-3590cd548a04f0dd.exe)
+[1m[92m  Executable[0m tests\harness_loop.rs (target\debug\deps\harness_loop-b14d220e5fb6479c.exe)
+[1m[92m  Executable[0m tests\jail.rs (target\debug\deps\jail-95ed25b2f36a440f.exe)
+[1m[92m  Executable[0m tests\live_engine.rs (target\debug\deps\live_engine-730defff6b55fe06.exe)
+[1m[92m  Executable[0m tests\openai_compat.rs (target\debug\deps\openai_compat-3a6392c450376fcf.exe)
+[1m[92m  Executable[0m tests\sandbox_env.rs (target\debug\deps\sandbox_env-2780ad2a28796db8.exe)
+[1m[92m  Executable[0m tests\serve_loop.rs (target\debug\deps\serve_loop-aaa35d0e10bceb76.exe)
+=== phase run 14:51:11
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+[1m[92m     Running[0m unittests src\lib.rs (target\debug\deps\knossos-62e4d07523abc7e3.exe)
 
-running 576 tests
+running 578 tests
 test acp::tests::a_halt_becomes_the_protocols_own_word_for_it ... ok
-test acp::tests::a_delegation_is_titled_by_its_task ... ok
 test acp::tests::a_prompt_keeps_text_and_names_what_it_cannot_read ... ok
-test acp::tests::a_prompt_of_no_text_is_refused ... ok
+test acp::tests::a_delegation_is_titled_by_its_task ... ok
 test acp::tests::a_session_needs_an_absolute_cwd ... ok
+test acp::tests::a_prompt_of_no_text_is_refused ... ok
 test acp::tests::an_unknown_session_is_an_error_rather_than_a_panic ... ok
-test acp::tests::an_unsupported_method_is_answered_not_ignored ... ok
 test acp::tests::cancel_is_on_the_fast_path ... ok
-test acp::tests::context_limits_are_clamped_and_change_only_between_turns ... ok
+test acp::tests::an_unsupported_method_is_answered_not_ignored ... ok
 test acp::tests::initialize_states_a_version_and_claims_no_capability_it_lacks ... ok
-test acp::tests::lineage_verbs_exist_and_refuse_without_a_handoff ... ok
+test acp::tests::context_limits_are_clamped_and_change_only_between_turns ... ok
 test acp::tests::list_and_close_sessions ... ok
-test acp::tests::a_prompt_runs_a_turn_and_reports_why_it_stopped ... ok
-test acp::tests::load_replays_history_without_doubling_it ... ok
+test acp::tests::lineage_verbs_exist_and_refuse_without_a_handoff ... ok
 test acp::tests::set_mode_preview_stages_writes ... ok
-test acp::tests::tool_kinds_match_what_an_editor_draws ... ok
+test acp::tests::load_replays_history_without_doubling_it ... ok
+test acp::tests::a_prompt_runs_a_turn_and_reports_why_it_stopped ... ok
 test acp::tests::two_calls_to_one_tool_are_two_rows ... ok
-test argus::tests::a_broken_file_is_still_lexically_searchable ... ok
+test acp::tests::tool_kinds_match_what_an_editor_draws ... ok
+test acp::tests::the_editor_is_told_what_the_model_said ... ok
 test argus::tests::a_definition_outranks_a_mention ... ok
-test argus::tests::a_deleted_file_leaves_the_index ... ok
 test argus::tests::a_file_named_latest_is_not_mistaken_for_a_test ... ok
-test argus::tests::a_method_carries_its_impl_as_its_qualified_name ... ok
-test argus::tests::a_missing_index_is_a_false_not_an_error ... ok
+test argus::tests::a_deleted_file_leaves_the_index ... ok
+test argus::tests::a_broken_file_is_still_lexically_searchable ... ok
 test argus::tests::a_module_path_names_the_directory_for_mod_rs_and_nothing_for_a_crate_root ... ok
+test argus::tests::a_missing_index_is_a_false_not_an_error ... ok
+test argus::tests::a_method_carries_its_impl_as_its_qualified_name ... ok
 test argus::tests::a_rare_term_beats_a_repeated_common_one ... ok
 test argus::tests::a_rendered_context_names_the_source_of_every_slice ... ok
-test argus::tests::a_rescan_reparses_only_what_changed ... ok
 test argus::tests::an_empty_query_ranks_nothing_rather_than_everything ... ok
-test argus::tests::an_index_from_an_older_schema_is_refused ... ok
+test argus::tests::a_rescan_reparses_only_what_changed ... ok
 test argus::tests::declarations_inside_strings_and_comments_are_not_symbols ... ok
+test argus::tests::an_index_from_an_older_schema_is_refused ... ok
 test argus::tests::every_slice_carries_provenance ... ok
 test argus::tests::importers_are_found ... ok
 test argus::tests::prose_files_are_searchable_without_symbols ... ok
-test argus::tests::retrieval_prefers_an_exact_symbol_match ... ok
-test argus::tests::retrieval_respects_its_budget ... ok
 test argus::tests::test_functions_do_not_count_as_definitions ... ok
-test argus::tests::the_index_survives_a_save_load_round_trip ... ok
+test argus::tests::retrieval_prefers_an_exact_symbol_match ... ok
 test argus::tests::tokenizing_drops_stop_words_and_keeps_both_halves_of_a_name ... ok
-test argus::tests::two_files_defining_the_same_name_both_survive ... ok
+test argus::tests::retrieval_respects_its_budget ... ok
 test ariadne::tests::a_failed_verdict_does_not_end_the_run ... ok
 test ariadne::tests::early_pressure_does_not_forbid_changing_approach ... ok
+test argus::tests::two_files_defining_the_same_name_both_survive ... ok
 test ariadne::tests::no_pressure_before_the_target ... ok
 test ariadne::tests::noop_detection_is_about_evidence_not_opinion ... ok
 test ariadne::tests::oracle_passing_ends_the_run ... ok
@@ -75,36 +75,36 @@ test ariadne::tests::productive_steps_continue ... ok
 test ariadne::tests::repeated_noops_are_stuck ... ok
 test ariadne::tests::success_on_the_final_step_reports_done_not_exhausted ... ok
 test ariadne::tests::target_cannot_exceed_the_ceiling ... ok
-test ariadne::tests::the_ceiling_forces_a_halt ... ok
 test ariadne::tests::the_old_ceiling_still_bands_where_it_used_to ... ok
+test ariadne::tests::the_ceiling_forces_a_halt ... ok
 test client_io::tests::empty_object_means_supported ... ok
 test client_io::tests::missing_caps_are_off ... ok
+test client_io::tests::verbatim_windows_paths_are_normalized_for_editors ... ok
 test config::tests::a_bare_address_gains_a_scheme_and_the_default_port ... ok
 test config::tests::a_blank_variable_is_not_a_host ... ok
 test config::tests::a_full_url_is_left_alone_but_for_a_trailing_slash ... ok
 test config::tests::an_address_with_a_port_keeps_it ... ok
+test argus::tests::the_index_survives_a_save_load_round_trip ... ok
 test confine::tests::a_missing_path_is_dropped_rather_than_failing_the_jail ... ok
-test confine::tests::an_operator_path_lands_in_the_list_it_asked_for ... ok
 test confine::tests::env_only_is_never_confined_and_says_why ... ok
 test confine::tests::off_yields_an_unconfined_command_without_touching_the_disk ... ok
 test confine::tests::policy_parses_its_three_words_and_nothing_else ... ok
 test confine::tests::the_jail_admits_the_workspace_and_a_temp_directory_it_created ... ok
-test confine::tests::the_seatbelt_profile_never_emits_an_unfiltered_allow ... ok
+test confine::tests::an_operator_path_lands_in_the_list_it_asked_for ... ok
 test context::tests::a_small_agent_window_still_has_prompt_room ... ok
 test context::tests::compact_override_is_clamped_to_real_input_room ... ok
 test context::tests::derives_safe_window_and_reserves_output ... ok
 test context::tests::explicit_agent_window_cannot_exceed_server_safety_ceiling ... ok
-test acp::tests::a_new_editor_process_can_restore_and_continue_a_checkpointed_mission ... ok
-test delegate::tests::a_child_gets_half_the_parents_budget ... ok
+test confine::tests::require_refuses_where_the_platform_cannot_confine ... ok
 test delegate::tests::a_child_that_somehow_has_the_tool_is_still_refused ... ok
-test acp::tests::the_editor_is_told_what_the_model_said ... ok
+test acp::tests::a_new_editor_process_can_restore_and_continue_a_checkpointed_mission ... ok
+test delegate::tests::a_childs_edits_reach_the_parents_change_set ... ok
 test delegate::tests::a_child_reports_back_only_a_summary ... ok
+test delegate::tests::a_child_gets_half_the_parents_budget ... ok
 test delegate::tests::an_empty_task_is_refused_before_a_child_is_built ... ok
-test delegate::tests::an_unknown_role_names_the_ones_that_exist ... ok
 test delegate::tests::delegating_is_consequential ... ok
+test delegate::tests::an_unknown_role_names_the_ones_that_exist ... ok
 test delegate::tests::depth_one_is_the_limit ... ok
-test delegate::tests::the_schema_advertises_every_role ... ok
-test delegate::tests::unverified_work_comes_back_as_an_error ... ok
 test diff::tests::a_file_without_a_trailing_newline_keeps_that_shape ... ok
 test diff::tests::a_new_file_is_a_single_hunk_of_pure_additions ... ok
 test diff::tests::a_new_file_reads_as_all_additions ... ok
@@ -129,100 +129,100 @@ test engine::budget::tests::token_reservation_prevents_overshoot ... ok
 test engine::cameo::tests::cameo_does_not_claim_native_tools_until_discovery_says_so ... ok
 test engine::cameo::tests::engines_body_parses_models ... ok
 test engine::cameo::tests::ensure_fails_closed_when_cold_and_no_operator ... ok
-test delegate::tests::a_role_is_passed_through_to_the_child ... ok
+test delegate::tests::the_schema_advertises_every_role ... ok
 test engine::cameo::tests::ensure_posts_servers_with_console_key ... ok
 test engine::cameo::tests::listed_matches_gguf_stem ... ok
 test engine::cameo::tests::ensure_reuses_a_resident_model ... ok
 test engine::cameo::tests::origin_strips_v1_and_trailing_slash ... ok
-test engine::cameo::tests::malformed_v1_discovery_never_starts_a_model_or_falls_back ... ok
 test engine::cameo::tests::parse_http_reads_status_and_body ... ok
+test engine::cameo::tests::malformed_v1_discovery_never_starts_a_model_or_falls_back ... ok
 test engine::error::tests::a_rate_limit_and_a_server_fault_are_worth_retrying ... ok
+test engine::cameo::tests::versioned_contract_is_validated_and_legacy_is_still_readable ... ok
 test engine::error::tests::a_rejected_request_is_not_worth_retrying ... ok
 test engine::error::tests::a_request_that_never_arrived_is_always_worth_retrying ... ok
 test engine::error::tests::an_unrecognised_status_defaults_to_retryable ... ok
-test engine::cameo::tests::versioned_contract_is_validated_and_legacy_is_still_readable ... ok
 test engine::error::tests::the_message_still_reads_the_way_it_used_to ... ok
 test engine::mock::tests::from_script_extracts_a_fenced_call_with_legacy_args ... ok
 test engine::ollama::tests::a_reply_that_is_only_thinking_is_not_an_empty_turn ... ok
 test engine::ollama::tests::a_request_states_its_context_window ... ok
 test engine::ollama::tests::assistant_tool_calls_are_flattened_into_one_message ... ok
-test engine::mock::tests::a_collected_trace_replays_exchange_responses ... ok
 test engine::ollama::tests::reasoning_is_only_mentioned_when_a_caller_asked ... ok
-test engine::ollama::tests::thinking_is_dropped_when_the_model_called_a_tool ... ok
 test engine::ollama::tests::the_default_engine_asks_for_more_than_ollamas_4k ... ok
+test engine::ollama::tests::thinking_is_dropped_when_the_model_called_a_tool ... ok
 test engine::ollama::tests::thinking_is_dropped_when_there_is_a_real_answer ... ok
 test engine::ollama::tests::tool_results_become_separate_tool_messages ... ok
+test engine::openai::tests::a_per_model_reply_cap_is_clamped_not_reported ... ok
 test engine::openai::tests::a_prompt_that_does_not_fit_binds_the_window_and_does_not_shrink ... ok
 test engine::openai::tests::a_rate_limit_is_never_read_as_a_reply_cap ... ok
+test engine::mock::tests::a_collected_trace_replays_exchange_responses ... ok
 test engine::openai::tests::a_reply_cap_we_are_already_under_is_not_a_shrink ... ok
-test engine::openai::tests::a_per_model_reply_cap_is_clamped_not_reported ... ok
 test engine::openai::tests::a_sampling_refusal_beats_a_generic_unknown_field ... ok
-test engine::openai::tests::a_token_limit_shrinks_the_reply_allowance ... ok
 test engine::openai::tests::a_system_role_refusal_folds ... ok
-test delegate::tests::a_childs_edits_reach_the_parents_change_set ... ok
+test engine::openai::tests::a_token_limit_shrinks_the_reply_allowance ... ok
 test engine::openai::tests::a_tool_schema_400_is_left_to_the_native_history_path ... ok
 test engine::openai::tests::every_named_provider_is_in_the_table ... ok
 test engine::openai::tests::flatten_renders_tool_calls_as_fenced_json ... ok
 test engine::openai::tests::fold_merges_system_into_the_first_user_turn ... ok
 test engine::openai::tests::parse_response_reads_tool_calls_and_usage ... ok
+test engine::openai::tests::restore_limits_undoes_a_transient_shrink_but_not_a_hard_cap ... ok
 test engine::prompt_fallback::tests::a_legacy_args_key_is_still_accepted ... ok
 test engine::prompt_fallback::tests::augmented_system_names_every_tool ... ok
-test engine::openai::tests::restore_limits_undoes_a_transient_shrink_but_not_a_hard_cap ... ok
 test engine::prompt_fallback::tests::extracts_a_fenced_tool_call ... ok
 test engine::prompt_fallback::tests::extracts_several_calls ... ok
 test engine::prompt_fallback::tests::leaves_plain_json_blocks_as_prose ... ok
 test engine::sse::tests::reasoning_is_a_thought_not_the_answer ... ok
 test engine::sse::tests::text_deltas_join_into_the_final_response ... ok
-test engine::openai::tests::a_tool_history_refusal_requires_tool_shaped_messages ... ok
 test engine::sse::tests::tool_calls_assemble_only_at_the_end ... ok
+test engine::openai::tests::a_tool_history_refusal_requires_tool_shaped_messages ... ok
 test environment::tests::drift_detects_instruction_or_lockfile_changes_without_running_tools ... ok
-test environment::tests::rust_workspace_has_explicit_nonexecuting_recipe ... ok
 test environment::tests::export_is_json_and_never_overwrites ... ok
-test episode::tests::attempt_lineage_is_in_the_brief ... ok
+test environment::tests::a_common_sized_lockfile_is_stream_hashed_and_manifest_drift_is_detected ... ok
+test environment::tests::rust_workspace_has_explicit_nonexecuting_recipe ... ok
 test episode::tests::a_record_survives_reopen ... ok
+test episode::tests::attempt_lineage_is_in_the_brief ... ok
 test episode::tests::opening_does_not_create_the_directory ... ok
 test episode::tests::render_brief_is_empty_when_there_is_nothing_to_say ... ok
 test episode::tests::render_brief_names_the_failed_call ... ok
-test eval::tests::a_fix_that_breaks_the_suite_is_not_a_pass ... ok
 test episode::tests::recall_prefers_the_matching_task ... ok
+test eval::tests::a_fix_that_breaks_the_suite_is_not_a_pass ... ok
 test eval::tests::a_green_starting_tree_does_not_rescue_a_stuck_agent ... ok
 test eval::tests::action_contracts_reward_restraint_and_questions ... ok
 test eval::tests::action_violation_has_a_distinct_failure_kind ... ok
-test eval::tests::all_three_sets_must_hold ... ok
 test eval::tests::added_source_files_count_as_changes ... ok
+test eval::tests::all_three_sets_must_hold ... ok
 test eval::tests::load_cases_rejects_an_empty_list ... ok
-test eval::tests::load_cases_rejects_held_out_clobbering_visible_files ... ok
 test eval::tests::held_out_files_are_not_on_disk_until_revealed ... ok
-test eval::tests::restore_tests_removes_added_test_files ... ok
+test eval::tests::load_cases_rejects_held_out_clobbering_visible_files ... ok
 test eval::tests::restore_tests_overwrites_tampering ... ok
+test eval::tests::restore_tests_removes_added_test_files ... ok
 test field::acp_session::tests::contract_and_capabilities ... ok
 test field::acp_session::tests::errors_time_outs_and_cancel_settle_the_turn ... ok
-test eval_checkpoint::tests::round_trip_is_bound_to_suite_and_arm ... ok
-test field::acp_session::tests::launch_spec_resolves_endpoint_then_operator_env_then_default ... ok
 test field::acp_session::tests::handshake_prompt_round_trip_translates_every_update ... ok
+test field::acp_session::tests::launch_spec_resolves_endpoint_then_operator_env_then_default ... ok
 test field::acp_session::tests::pause_stops_the_agent_and_resume_requeues_the_prompt_prefix ... ok
-test field::acp_session::tests::read_only_roles_ask_for_the_ask_mode_before_ready ... ok
 test field::acp_session::tests::permission_handshake_answers_the_agents_request ... ok
+test eval_checkpoint::tests::round_trip_is_bound_to_suite_and_arm ... ok
+test field::acp_session::tests::read_only_roles_ask_for_the_ask_mode_before_ready ... ok
 test field::acp_session::tests::unsupported_inbound_requests_are_answered_not_ignored ... ok
+test field::acp_session::tests::usage_is_folded_when_an_agent_reports_it ... ok
 test field::adapters::tests::manifest_selection_reproduces_the_historical_ternary ... ok
 test field::adapters::tests::manifests_are_well_formed ... ok
 test field::child_env::tests::base_allowlist_provider_isolation_explicit_credentials_and_canary_scrubbing ... ok
 test field::cities::tests::feed_text_matches_the_node_wording ... ok
-test field::acp_session::tests::usage_is_folded_when_an_agent_reports_it ... ok
-test field::cities::tests::ranks_follow_maturity_tiers ... ok
 test field::claude_session::tests::build_args_matches_session_js ... ok
+test field::cities::tests::ranks_follow_maturity_tiers ... ok
 test field::claude_session::tests::contract_capabilities_and_stamp ... ok
 test field::claude_session::tests::restart_re_mints_the_permission_capability ... ok
+test field::claude_session::tests::describe_tool_covers_the_tools_js_cases ... ok
 test field::claude_session::tests::session_usage_cumulative_totals_and_non_duplicated_result_accounting ... ok
 test field::claude_session::tests::stream_json_translates_into_canonical_events ... ok
 test field::config::tests::a_missing_workspace_is_unmounted_not_invented ... ok
 test field::config::tests::frontmatter_splits_data_from_body_and_tolerates_its_absence ... ok
-test field::claude_session::tests::describe_tool_covers_the_tools_js_cases ... ok
 test field::config::tests::load_config_reads_records_and_seeds_the_projection ... ok
-test field::director::tests::pause_gates_actions_and_resume_reaches_live_members ... ok
-test field::director::tests::session_reports_become_campaign_actions_with_team_gates ... ok
-test field::git::tests::log_lines_split_on_the_unit_separator ... ok
 test field::director::tests::full_red_blue_referee_vertical_slice ... ok
+test field::director::tests::pause_gates_actions_and_resume_reaches_live_members ... ok
+test field::git::tests::log_lines_split_on_the_unit_separator ... ok
+test field::director::tests::session_reports_become_campaign_actions_with_team_gates ... ok
 test field::git::tests::status_lines_map_to_labels_and_staging ... ok
 test field::git::tests::status_scopes_paths_to_the_workspace_prefix ... ok
 test field::js::tests::number_coercion_follows_javascript ... ok
@@ -253,22 +253,22 @@ test field::routines::tests::replace_cancels_the_active_run_and_parallel_admits_
 test field::routines::tests::schedule_watermark_survives_restart_and_interrupted_runs_fail ... ok
 test field::routines::tests::validation_matches_the_node_port ... ok
 test field::sanitize::tests::a_long_string_is_cut_and_marked ... ok
-test field::sanitize::tests::credential_shaped_keys_are_redacted_and_counters_are_not ... ok
+test delegate::tests::a_role_is_passed_through_to_the_child ... ok
 test field::sanitize::tests::depth_beyond_the_limit_is_truncated ... ok
-test field::sanitize::tests::registered_secrets_and_token_shapes_are_scrubbed_from_strings ... ok
+test field::sanitize::tests::credential_shaped_keys_are_redacted_and_counters_are_not ... ok
 test field::sanitize::tests::too_many_items_truncate_rather_than_grow ... ok
-test field::security::tests::a_dev_ui_origin_is_trusted_only_when_exact ... ok
+test field::sanitize::tests::registered_secrets_and_token_shapes_are_scrubbed_from_strings ... ok
 test field::security::tests::an_expired_bootstrap_and_a_restarted_server_both_refuse ... ok
-test field::security::tests::bootstrap_split_authority_loopback_host_origin_cookie_and_websocket_gates ... ok
+test field::security::tests::a_dev_ui_origin_is_trusted_only_when_exact ... ok
 test field::security::tests::the_headers_pin_the_page_to_its_own_origin ... ok
+test field::security::tests::bootstrap_split_authority_loopback_host_origin_cookie_and_websocket_gates ... ok
 test field::security::tests::tokens_and_loopback_helpers ... ok
-test field::git::tests::not_a_repository_is_reported_the_node_way ... ok
 test field::simulation::tests::the_operations_timeline_is_safe_ordered_and_scaled ... ok
 test field::stores::tests::a_v1_key_file_is_read_and_rewritten_as_v2 ... ok
 test field::stores::tests::keys_and_endpoints_survive_a_reopen_and_never_mix ... ok
 test field::terminal::tests::frames_carry_the_node_shape ... ok
+test field::git::tests::not_a_repository_is_reported_the_node_way ... ok
 test field::terminal::tests::validation_redaction_and_budgets ... ok
-test environment::tests::a_common_sized_lockfile_is_stream_hashed_and_manifest_drift_is_detected ... ok
 test field::workspace::tests::gitignore_rules_follow_git_semantics ... ok
 test field::workspace::tests::posix_join_normalises ... ok
 test field::workspace::tests::relative_normalisation_rejects_absolute_and_escaping_paths ... ok
@@ -315,11 +315,11 @@ test jsonrpc::tests::a_multiline_payload_is_still_written_as_one_line ... ok
 test jsonrpc::tests::a_panicking_handler_answers_with_an_error_and_keeps_serving ... ok
 test jsonrpc::tests::a_reply_is_returned_to_the_caller ... ok
 test jsonrpc::tests::a_reply_without_a_result_resolves_to_null ... ok
+test delegate::tests::unverified_work_comes_back_as_an_error ... ok
 test jsonrpc::tests::a_fast_path_notification_overtakes_a_busy_worker ... ok
 test jsonrpc::tests::abort_releases_an_untimed_wait ... ok
-test jsonrpc::tests::a_timeout_still_expires ... ok
 test jsonrpc::tests::an_error_carries_its_data_through_the_wire ... ok
-test jsonrpc::tests::an_untimed_wait_survives_a_slow_answer ... ok
+test jsonrpc::tests::a_timeout_still_expires ... ok
 test jsonrpc::tests::many_notifications_do_not_wedge_the_writer ... ok
 test jsonrpc::tests::one_malformed_message_does_not_kill_the_connection ... ok
 test jsonrpc::tests::the_standard_error_codes_are_the_ones_the_spec_names ... ok
@@ -343,7 +343,7 @@ test lsp::tests::a_location_reports_a_one_based_reference ... ok
 test lsp::tests::a_location_without_a_range_is_rejected ... ok
 test lsp::tests::a_missing_server_returns_none_rather_than_failing ... ok
 test lsp::tests::a_null_result_is_empty_not_an_error ... ok
-test jsonrpc::tests::an_aborted_request_stops_tracking_its_id ... ok
+test lsp::tests::a_request_made_after_the_server_died_fails_immediately ... ok
 test lsp::tests::a_space_is_escaped_on_the_way_out ... ok
 test lsp::tests::a_uri_with_spaces_is_decoded ... ok
 test lsp::tests::an_unsupported_method_does_not_propagate_as_a_failure ... ok
@@ -354,6 +354,7 @@ test lsp::tests::definition_accepts_a_single_object_not_just_a_list ... ok
 test lsp::tests::queries_on_a_stopped_client_return_empty ... ok
 test lsp::tests::references_span_files ... ok
 test lsp::tests::uris_round_trip ... ok
+test lsp::tests::windows_drive_letters_lose_the_leading_slash ... ok
 test lsp::tests::workspace_symbols_are_returned ... ok
 test mcp::tests::a_bare_list_needs_no_wrapper_key ... ok
 test mcp::tests::a_broken_config_says_which_file_it_was ... ok
@@ -397,29 +398,29 @@ test metis::tests::prose_parser_handles_both_numbering_styles ... ok
 test metis::tests::the_planner_prompt_carries_the_constitution ... ok
 test metis::tests::trivial_tasks_skip_the_planning_turn ... ok
 test metis::tests::uses_the_submitted_plan_when_the_tool_is_called ... ok
-test lsp::tests::a_request_made_after_the_server_died_fails_immediately ... ok
 test mission::tests::a_successful_command_without_changed_paths_advances_the_revision ... ok
 test mission::tests::a_torn_tail_is_ignored_but_tampering_is_rejected ... ok
 test mission::tests::a_write_invalidates_old_proof_and_blocks_handoff ... ok
-test mission::tests::an_interrupted_action_is_reconciled_by_observation_not_refused ... ok
+test jsonrpc::tests::an_untimed_wait_survives_a_slow_answer ... ok
+test jsonrpc::tests::an_aborted_request_stops_tracking_its_id ... ok
 test mission::tests::accept_revise_and_revert_are_explicit_revision_bound_decisions ... ok
 test mission::tests::an_unfinished_intent_survives_replay_as_uncertain_work ... ok
 test mission::tests::historical_state_vectors_rotate_without_losing_recent_evidence ... ok
+test mission::tests::an_interrupted_action_is_reconciled_by_observation_not_refused ... ok
 test mission::tests::decisions_fail_closed_without_proof_or_a_known_restore_point ... ok
 test mission::tests::legacy_mission_without_environment_evidence_cannot_resume ... ok
-test mission::tests::journal_replays_and_snapshots_without_provider_messages ... ok
 test mission::tests::reconciliation_never_reads_outside_the_workspace ... ok
-test mission::tests::only_current_complete_proof_allows_verified_handoff ... ok
-test mission::tests::unknown_created_state_schema_is_refused_even_with_a_valid_hash ... ok
 test mission::tests::restart_refuses_a_persisted_mission_when_its_instruction_drifted ... ok
+test mission::tests::only_current_complete_proof_allows_verified_handoff ... ok
+test mission::tests::journal_replays_and_snapshots_without_provider_messages ... ok
 test mnemosyne::tests::an_empty_workspace_searches_without_panicking ... ok
 test mnemosyne::tests::an_unrelated_query_returns_nothing_rather_than_noise ... ok
+test mission::tests::unknown_created_state_schema_is_refused_even_with_a_valid_hash ... ok
 test mnemosyne::tests::answers_a_question_about_where_something_lives ... ok
 test mission::tests::v1_journal_migrates_in_memory_and_new_events_use_sha256 ... ok
 test mnemosyne::tests::chunks_carry_their_symbol_and_line_span ... ok
-test mnemosyne::tests::finds_the_right_function_for_a_lexical_query ... ok
 test mnemosyne::tests::indexes_chunks_from_every_file ... ok
-test mnemosyne::tests::ranking_prefers_the_more_relevant_chunk ... ok
+test mnemosyne::tests::finds_the_right_function_for_a_lexical_query ... ok
 test mnemosyne::tests::single_characters_are_dropped ... ok
 test mnemosyne::tests::tokenizer_splits_camel_case_including_acronyms ... ok
 test mnemosyne::tests::tokenizer_splits_snake_case_and_keeps_the_whole_identifier ... ok
@@ -431,12 +432,12 @@ test oracle::diagnostics::tests::non_json_progress_lines_do_not_break_parsing ..
 test oracle::diagnostics::tests::summary_leads_with_errors_and_counts_warnings ... ok
 test oracle::diagnostics::tests::summary_respects_the_byte_cap ... ok
 test oracle::tests::a_complaint_is_forgiven_however_far_the_edit_moved_it ... ok
-test mnemosyne::tests::oversized_declarations_are_split ... ok
+test mnemosyne::tests::ranking_prefers_the_more_relevant_chunk ... ok
 test oracle::tests::a_forgiven_tier_neither_fails_the_verdict_nor_proves_anything ... ok
 test oracle::tests::a_ladder_that_really_ran_still_reaches_the_judge ... ok
+test mnemosyne::tests::oversized_declarations_are_split ... ok
 test oracle::tests::a_missing_program_is_skipped_not_failed ... ok
 test oracle::tests::a_passing_dry_run_still_blocks_tier_four_and_says_why ... ok
-test field::watch::tests::a_written_file_becomes_one_fs_changed_event ... ok
 test oracle::tests::a_real_failure_still_outranks_a_skip ... ok
 test oracle::tests::a_scopable_tier_with_no_matching_change_is_skipped ... ok
 test oracle::tests::a_skipped_tier_is_never_the_failure ... ok
@@ -445,9 +446,9 @@ test oracle::tests::a_whole_test_file_going_missing_is_a_deletion ... ok
 test oracle::tests::adding_tests_passes ... ok
 test oracle::tests::an_absent_required_program_fails_closed_as_unverifiable ... ok
 test oracle::tests::an_entirely_skipped_ladder_does_not_reach_the_judge ... ok
-test oracle::tests::a_failing_tier_stops_the_ladder ... ok
+test field::watch::tests::a_written_file_becomes_one_fs_changed_event ... ok
 test oracle::tests::deleting_a_test_fails_the_suite_and_names_the_file ... ok
-test oracle::tests::an_error_the_agent_added_is_still_its_own ... ok
+test oracle::tests::a_failing_tier_stops_the_ladder ... ok
 test oracle::tests::forgiveness_is_counted_so_the_fourth_of_three_is_still_news ... ok
 test oracle::tests::moving_a_test_between_files_is_not_a_deletion ... ok
 test oracle::tests::quick_is_syntax_only ... ok
@@ -458,8 +459,8 @@ test oracle::tests::targets_drop_paths_outside_the_root ... ok
 test oracle::tests::the_counter_counts_pytest_functions_in_test_files ... ok
 test oracle::tests::the_counter_recognises_the_attributes_and_ignores_cfg_test ... ok
 test oracle::tests::tier0_catches_a_syntax_error_without_spawning_cargo ... ok
+test oracle::tests::an_error_the_agent_added_is_still_its_own ... ok
 test oracle::tests::deleting_a_test_fails_verification ... ok
-test oracle::tests::a_pre_existing_error_is_not_attributed_to_the_agent ... ok
 test repl::routing::a_command_typed_at_the_permission_prompt_answers_it_and_denies ... ok
 test repl::routing::a_line_typed_while_the_agent_works_becomes_an_interjection ... ok
 test repl::routing::a_waiting_approval_takes_the_next_line_before_anything_else ... ok
@@ -482,7 +483,7 @@ test resilience::tests::a_wrong_api_key_is_not_retried ... ok
 test resilience::tests::an_error_this_module_cannot_read_is_retried_not_assumed_permanent ... ok
 test resilience::tests::retry_after_is_honoured_capped_and_never_below_backoff ... ok
 test resilience::tests::retrying_is_bounded_by_max_attempts ... ok
-test resilience::tests::the_breaker_lets_one_call_through_after_the_cooldown ... ok
+test oracle::tests::a_pre_existing_error_is_not_attributed_to_the_agent ... ok
 test resilience::tests::the_wrapper_is_transparent_about_what_it_wraps ... ok
 test sandbox::tests::a_command_that_finishes_reports_its_output_and_code ... ok
 test oracle::tests::tier0_passes_valid_syntax_and_escalates ... ok
@@ -501,24 +502,25 @@ test sandbox::tests::unrecognized_variables_are_dropped_rather_than_passed ... o
 test scribe::detect::tests::a_cargo_project_gets_the_rust_ladder ... ok
 test scribe::detect::tests::a_go_module_gets_the_go_ladder ... ok
 test scribe::detect::tests::a_node_project_gets_the_node_ladder ... ok
+test resilience::tests::the_breaker_lets_one_call_through_after_the_cooldown ... ok
 test oracle::tests::without_a_baseline_nothing_is_compared ... ok
-test scribe::detect::tests::an_unmarked_tree_still_gets_the_python_ladder ... ok
-test scribe::detect::tests::a_polyglot_repository_gets_every_applicable_ladder ... ok
 test scribe::detect::tests::an_unmarked_tree_still_indexes_rust_files ... ok
 test scribe::detect::tests::labels_stay_distinct_when_several_languages_have_a_test_tier ... ok
 test scribe::detect::tests::ladders_interleave_cheapest_first_across_languages ... ok
-test scribe::go::tests::detects_go_mod ... ok
 test scribe::detect::tests::tier_numbers_stay_unique_and_dense ... ok
+test scribe::go::tests::detects_go_mod ... ok
 test scribe::go::tests::ladder_is_build_then_vet_then_test ... ok
 test scribe::go::tests::symbols_include_methods ... ok
-test scribe::node::tests::ladder_labels_match_the_python_side ... ok
 test scribe::node::tests::detects_package_json ... ok
+test scribe::node::tests::ladder_labels_match_the_python_side ... ok
 test scribe::node::tests::the_ladder_never_reaches_for_npx ... ok
-test scribe::python::tests::parses_cleanly_distinguishes_valid_from_broken ... ok
 test scribe::python::tests::detects_by_marker_not_by_source_files ... ok
+test scribe::python::tests::parses_cleanly_distinguishes_valid_from_broken ... ok
+test sandbox::tests::a_command_that_outstays_its_limit_is_reported_as_timed_out ... ok
 test scribe::python::tests::symbols_survive_a_syntax_error ... ok
 test scribe::python::tests::selected_interpreter_is_an_existing_executable_when_python_is_available ... ok
 test scribe::python::tests::verify_chain_never_uses_bare_ruff ... ok
+test scribe::detect::tests::an_unmarked_tree_still_gets_the_python_ladder ... ok
 test scribe::rust::tests::handles_only_rust_files ... ok
 test scribe::rust::tests::parses_cleanly_distinguishes_valid_from_broken ... ok
 test scribe::rust::tests::extracts_every_declaration_kind ... ok
@@ -526,57 +528,56 @@ test scribe::rust::tests::records_visibility_and_line_numbers ... ok
 test scribe::rust::tests::signature_excludes_the_body ... ok
 test scribe::rust::tests::verify_chain_is_ordered_cheapest_first ... ok
 test scribe::rust::tests::still_extracts_symbols_from_a_file_with_a_syntax_error ... ok
+test scribe::detect::tests::a_polyglot_repository_gets_every_applicable_ladder ... ok
+test scribe::tests::render_does_not_repeat_the_declaration_keyword ... ok
 test scribe::tests::lookup_returns_the_exact_declaration ... ok
 test scribe::tests::indexes_every_rust_file_in_the_tree ... ok
-test scribe::tests::render_does_not_repeat_the_declaration_keyword ... ok
-test scribe::tests::refresh_picks_up_an_edit_to_one_file ... ok
-test scribe::tests::render_groups_by_file_and_omits_imports ... ok
 test serve::tests::an_unknown_command_is_a_parse_error_not_a_panic ... ok
-test scribe::tests::render_truncates_on_whole_files_never_mid_signature ... ok
+test scribe::tests::refresh_picks_up_an_edit_to_one_file ... ok
 test serve::tests::diff_payload_carries_full_content_for_the_editor ... ok
 test serve::tests::events_serialize_with_a_discriminating_tag ... ok
-test session::tests::a_session_without_a_trace_path_is_silent ... ok
 test serve::tests::parses_every_command_shape ... ok
+test session::tests::a_session_without_a_trace_path_is_silent ... ok
 test session::tests::a_sink_is_spared_the_exchange_event ... ok
-test session::tests::a_sink_receives_events_with_no_trace_file ... ok
 test session::tests::a_sink_does_not_displace_the_trace_file ... ok
+test session::tests::a_sink_receives_events_with_no_trace_file ... ok
+test scribe::tests::render_groups_by_file_and_omits_imports ... ok
 test themis::tests::a_workspace_constitution_overrides_the_default ... ok
-test session::tests::events_are_appended_one_json_object_per_line ... ok
+test scribe::tests::render_truncates_on_whole_files_never_mid_signature ... ok
 test themis::tests::every_role_carries_the_constitution ... ok
+test session::tests::events_are_appended_one_json_object_per_line ... ok
 test themis::tests::falls_back_to_the_builtin_constitution ... ok
-test themis::tests::an_empty_index_adds_no_symbol_section ... ok
 test tools::fs::tests::a_dry_run_write_never_touches_disk ... ok
-test themis::tests::symbol_index_is_included_verbatim ... ok
+test themis::tests::an_empty_index_adds_no_symbol_section ... ok
 test tools::fs::tests::a_file_deleted_after_being_read_is_reported_as_such ... ok
 test tools::fs::tests::a_whole_file_write_after_an_external_edit_is_refused ... ok
+test themis::tests::symbol_index_is_included_verbatim ... ok
 test tools::fs::tests::accepting_every_hunk_clears_the_file_from_staging ... ok
 test tools::fs::tests::accepting_the_current_state_clears_a_conflict ... ok
-test tools::fs::tests::an_edit_elsewhere_in_an_externally_changed_file_still_applies ... ok
 test tools::fs::tests::an_edit_whose_region_changed_externally_fails_on_the_match ... ok
-test tools::fs::tests::applying_staged_changes_writes_them_all ... ok
 test tools::fs::tests::applying_selected_hunks_writes_only_those ... ok
+test tools::fs::tests::an_edit_elsewhere_in_an_externally_changed_file_still_applies ... ok
+test tools::fs::tests::applying_staged_changes_writes_them_all ... ok
+test tools::fs::tests::discarding_staged_changes_leaves_nothing_behind ... ok
 test tools::fs::tests::creating_a_file_the_agent_has_never_read_is_not_a_conflict ... ok
 test tools::fs::tests::consecutive_writes_by_the_agent_do_not_conflict ... ok
-test tools::fs::tests::discarding_staged_changes_leaves_nothing_behind ... ok
-test tools::fs::tests::dry_run_diffs_describe_the_proposed_change ... ok
 test tools::fs::tests::edit_applies_a_unique_match ... ok
+test tools::fs::tests::dry_run_diffs_describe_the_proposed_change ... ok
 test tools::fs::tests::edit_refuses_ambiguous_matches ... ok
-test tools::fs::tests::the_path_jail_still_applies_in_dry_run ... ok
 test tools::fs::tests::staged_content_is_visible_to_later_reads_and_edits ... ok
+test tools::fs::tests::the_path_jail_still_applies_in_dry_run ... ok
 test tools::fs::tests::writing_outside_the_jail_is_refused ... ok
 test tools::fs::tests::write_then_read_round_trips ... ok
 test tools::search::tests::code_search_says_so_when_nothing_matches ... ok
-test tools::search::tests::code_search_finds_the_relevant_region ... ok
 test tools::search::tests::finds_matches_and_reports_line_numbers ... ok
-test tools::search::tests::glob_restricts_the_file_set ... ok
-test tools::search::tests::invalid_regex_is_reported_not_panicked ... ok
+test tools::search::tests::code_search_finds_the_relevant_region ... ok
 test tools::shell::tests::allowlist_rejects_arbitrary_programs ... ok
 test tools::shell::tests::cargo_publish_is_denied ... ok
 test tools::shell::tests::git_is_limited_to_readonly_subcommands ... ok
+test tools::search::tests::invalid_regex_is_reported_not_panicked ... ok
 test tools::shell::tests::non_python_commands_are_unchanged ... ok
 test tools::shell::tests::disallowed_command_returns_an_error_output ... ok
-test tools::shell::tests::pytest_alias_is_rewritten_as_a_python_module ... ok
-test tools::shell::tests::python_alias_runs_inside_the_scrubbed_sandbox ... ok
+test tools::search::tests::glob_restricts_the_file_set ... ok
 test tools::shell::tests::shell_operators_are_not_interpreted ... ok
 test tools::shell::tests::tokenizer_keeps_quoted_arguments_together ... ok
 test tools::tests::a_checkpoint_only_rewinds_what_came_after_it ... ok
@@ -599,37 +600,38 @@ test tools::tests::several_writes_to_one_path_rewind_to_the_oldest_state ... ok
 test tools::tests::the_standard_registry_refuses_to_write_into_dot_git ... ok
 test tools::tests::the_standard_registry_refuses_to_write_into_dot_knossos ... ok
 test tools::tests::unknown_tool_is_an_error_output_not_a_panic ... ok
+test tools::shell::tests::python_alias_runs_inside_the_scrubbed_sandbox ... ok
+test tools::shell::tests::pytest_alias_is_rewritten_as_a_python_module ... ok
 test tools::shell::tests::python_aliases_use_the_verified_interpreter ... ok
-test sandbox::tests::a_command_that_outstays_its_limit_is_reported_as_timed_out ... ok
 
-test result: ok. 576 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.18s
+test result: ok. 578 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.19s
 
-[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/knossos-90c5a6ded4942656)
+[1m[92m     Running[0m unittests src\main.rs (target\debug\deps\knossos-5eeadb525c7bb84a.exe)
 
 running 3 tests
-test field_tests::explicit_field_root_requires_the_product_marker_and_entry_point ... ok
 test field_tests::field_subcommand_accepts_an_explicit_bundle ... ok
+test field_tests::explicit_field_root_requires_the_product_marker_and_entry_point ... ok
 test field_tests::durable_recovery_flags_are_available_on_every_interactive_interface ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-[1m[92m     Running[0m tests/conversation_recovery.rs (target/debug/deps/conversation_recovery-30638d205724aac4)
+[1m[92m     Running[0m tests\conversation_recovery.rs (target\debug\deps\conversation_recovery-af0d1d82cfea59a5.exe)
 
 running 1 test
 test cli_continuation_preserves_conversation_authority_and_quota_across_processes ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.77s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.42s
 
-[1m[92m     Running[0m tests/field_acp.rs (target/debug/deps/field_acp-5124c434c16ba470)
+[1m[92m     Running[0m tests\field_acp.rs (target\debug\deps\field_acp-6bf0973d05c11427.exe)
 
 running 3 tests
 test a_missing_agent_binary_ends_the_session_with_an_error ... ok
 test drives_the_knossos_binary_as_an_acp_agent_end_to_end ... ok
 test pause_and_resume_re_handshake_with_a_fresh_agent_process ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
 
-[1m[92m     Running[0m tests/field_claude.rs (target/debug/deps/field_claude-935942e8ce2d6e91)
+[1m[92m     Running[0m tests\field_claude.rs (target\debug\deps\field_claude-9fa0f0c12a038a46.exe)
 
 running 2 tests
 test permission_bridge_forwards_tools_call_to_the_field_api ... ok
@@ -637,189 +639,179 @@ test process_generation_preserves_replacement_ownership ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
 
-[1m[92m     Running[0m tests/field_eventlog.rs (target/debug/deps/field_eventlog-aec442a3764f346e)
+[1m[92m     Running[0m tests\field_eventlog.rs (target\debug\deps\field_eventlog-7125e306fd6e8d0e.exe)
 
 running 6 tests
 test a_gap_in_committed_jsonl_history_is_fatal ... ok
+test unbounded_paging_and_exact_historical_ceilings ... ok
 test a_newer_schema_refuses_to_open ... ok
+test versioned_durability_redaction_integrity_and_tail_recovery ... ok
 test a_schema_one_database_is_migrated_in_place ... ok
 test bounded_event_and_subject_windows_preserve_cursor_order ... ok
-test versioned_durability_redaction_integrity_and_tail_recovery ... ok
-test unbounded_paging_and_exact_historical_ceilings ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
 
-[1m[92m     Running[0m tests/field_projection.rs (target/debug/deps/field_projection-f8faf4f8ada05a27)
+[1m[92m     Running[0m tests\field_projection.rs (target\debug\deps\field_projection-9ac89d4b95e08faf.exe)
 
 running 7 tests
 test concurrent_reservation_unknown_and_zero_cost_monotonic_usage_and_replay ... ok
-test campaign_state_machine_evidence_gates_and_projection_assertions ... ok
 test every_legal_transition_passes_and_an_illegal_one_per_phase_is_refused ... ok
+test campaign_state_machine_evidence_gates_and_projection_assertions ... ok
 test durable_territory_synthetic_partition_and_evidence_derived_maturity ... ok
 test typed_topology_lifecycle_hysteresis_and_contest_edges ... ok
 test tool_use_path_sets_focus_path_additively_and_absence_leaves_it_undefined ... ok
 test a_hundred_thousand_events_fold_deterministically_within_bounds ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.79s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.28s
 
-[1m[92m     Running[0m tests/field_registry.rs (target/debug/deps/field_registry-4057d7c3e0f48d76)
+[1m[92m     Running[0m tests\field_registry.rs (target\debug\deps\field_registry-9d4f0903fe830fe5.exe)
 
 running 3 tests
 test capacity_limits_count_owned_processes ... ok
 test admission_reserves_campaign_budget_and_denied_work_never_starts ... ok
 test endpoint_failover_budget_pause_and_exactly_once_settlement ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-[1m[92m     Running[0m tests/field_server.rs (target/debug/deps/field_server-cfbc71897845a0ea)
+[1m[92m     Running[0m tests\field_server.rs (target\debug\deps\field_server-71539bb66a349ba4.exe)
 
 running 1 test
 test bootstrap_gates_api_static_and_logout ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.79s
 
-[1m[92m     Running[0m tests/field_workspace.rs (target/debug/deps/field_workspace-358634a8631aa88d)
+[1m[92m     Running[0m tests\field_workspace.rs (target\debug\deps\field_workspace-3590cd548a04f0dd.exe)
 
 running 3 tests
 test tree_file_write_and_containment ... ok
-test terminal_runs_streams_logs_and_kills ... ok
 test git_status_log_and_diff ... ok
+test terminal_runs_streams_logs_and_kills ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 56.01s
 
-[1m[92m     Running[0m tests/harness_loop.rs (target/debug/deps/harness_loop-f10ffcbdb6506a29)
+[1m[92m     Running[0m tests\harness_loop.rs (target\debug\deps\harness_loop-b14d220e5fb6479c.exe)
 
 running 59 tests
 test a_cancelled_turn_stops_at_the_next_step_boundary ... ok
-test a_broken_edit_fails_verification_and_the_loop_keeps_going ... ok
 test a_dry_run_proposes_changes_without_writing_them ... ok
-test a_broken_plan_step_is_rewound ... ok
+test a_broken_edit_fails_verification_and_the_loop_keeps_going ... ok
 test a_collected_trace_carries_the_prompt_and_the_completion ... ok
-test a_failed_hypothesis_survives_process_restart ... ok
+test a_broken_plan_step_is_rewound ... ok
 test a_full_verify_is_reused_as_the_closing_verification ... ok
+test a_failed_hypothesis_survives_process_restart ... ok
 test a_general_question_is_not_given_repository_context ... ok
-test a_quick_verify_cannot_stand_in_for_the_closing_verification ... ok
 test a_multi_step_plan_is_driven_stepwise ... ok
+test a_quick_verify_cannot_stand_in_for_the_closing_verification ... ok
 test a_repeated_call_is_told_it_is_repeating ... ok
-test a_resumed_turn_is_gated_on_its_own_instruction ... ok
-test a_passing_verdict_cannot_end_a_run_that_did_nothing ... ok
-test a_refused_call_does_not_count_as_work_done ... ok
 test a_second_stuck_still_halts ... ok
+test a_passing_verdict_cannot_end_a_run_that_did_nothing ... ok
+test a_resumed_turn_is_gated_on_its_own_instruction ... ok
+test a_refused_call_does_not_count_as_work_done ... ok
 test a_short_budget_flattens_a_long_plan ... ok
-test a_task_naming_repository_code_is_given_it_unasked ... ok
 test a_three_step_ritual_that_achieves_nothing_is_stuck ... ok
+test a_task_naming_repository_code_is_given_it_unasked ... ok
 test a_task_that_changes_no_file_can_still_succeed ... ok
 test a_wall_clock_deadline_halts_the_run_at_the_next_step ... ok
 test a_trace_carries_no_prompts_unless_asked ... ok
 test a_verified_change_halts_done ... ok
 test an_empty_reply_is_not_a_claim_of_completion ... ok
 test an_empty_reply_is_not_recorded_as_a_message ... ok
-test an_engine_alternating_between_two_failing_calls_is_stuck ... ok
 test an_engine_repeating_one_failing_call_is_stuck ... ok
-test applying_a_dry_run_writes_the_staged_content ... ok
-test cancelling_is_not_reported_as_a_failure ... ok
+test an_engine_alternating_between_two_failing_calls_is_stuck ... ok
 test a_word_from_the_user_reaches_the_next_step_without_ending_the_run ... ok
+test cancelling_is_not_reported_as_a_failure ... ok
 test an_approver_is_asked_only_about_consequential_calls ... ok
+test applying_a_dry_run_writes_the_staged_content ... ok
 test cancelling_one_turn_does_not_poison_the_next ... ok
 test compaction_is_visible_in_the_trace ... ok
+test compaction_still_carries_a_failed_hypothesis ... ok
 test dry_run_verify_uses_staged_contents ... ok
 test forbidden_signatures_are_in_the_redirect_prompt ... ok
-test no_sequence_of_real_work_is_ever_called_stuck ... ok
-test compaction_still_carries_a_failed_hypothesis ... ok
-test plan_redirect_asks_metis_for_a_new_tail ... ok
 test disallowed_shell_commands_are_refused ... ok
+test no_sequence_of_real_work_is_ever_called_stuck ... ok
+test plan_redirect_asks_metis_for_a_new_tail ... ok
 test real_work_between_repeats_restarts_the_window ... ok
 test repeated_empty_steps_are_reported_as_stuck ... ok
 test reading_a_file_is_not_doing_the_task ... ok
 test resume_on_a_fresh_talos_behaves_like_a_first_task ... ok
+test scribe_tracks_edits_made_during_the_run ... ok
 test retrieval_left_unattached_changes_nothing ... ok
 test resume_continues_the_same_conversation ... ok
-test scribe_tracks_edits_made_during_the_run ... ok
 test the_conversation_is_bounded_across_a_run ... ok
 test the_live_loop_hands_off_only_current_hashed_mission_evidence ... ok
 test the_first_stuck_redirects_instead_of_halting ... ok
-test the_loop_matches_the_specified_rule_on_every_alternation ... ok
-test the_result_carries_residual_risk_and_recovery ... ok
-test the_step_ceiling_forces_a_halt ... ok
 test the_path_jail_survives_a_hostile_tool_call ... ok
-test the_loop_matches_the_specified_rule_on_every_short_sequence ... ok
-test tier_zero_catches_a_syntax_error_before_cargo_runs ... ok
+test the_step_ceiling_forces_a_halt ... ok
+test the_result_carries_residual_risk_and_recovery ... ok
 test the_trace_records_the_whole_trajectory ... ok
+test tier_zero_catches_a_syntax_error_before_cargo_runs ... ok
 test the_trace_records_what_the_model_said ... ok
 test verify_mid_loop_does_not_complete_the_run ... ok
 test verify_report_reaches_the_engine ... ok
 test without_an_approver_a_run_is_unattended ... ok
+test the_loop_matches_the_specified_rule_on_every_alternation ... ok
+test the_loop_matches_the_specified_rule_on_every_short_sequence ... ok
 
-test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.95s
+test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 58.49s
 
-[1m[92m     Running[0m tests/jail.rs (target/debug/deps/jail-9c545c125d75ad02)
+[1m[92m     Running[0m tests\jail.rs (target\debug\deps\jail-95ed25b2f36a440f.exe)
 
-running 11 tests
-test a_sibling_of_the_workspace_is_not ... ok
-test a_symlink_out_of_the_workspace_does_not_reach_home ... ok
-test a_child_runs_confined_when_confinement_is_required ... ok
-test off_runs_environment_only_and_the_result_says_so ... ok
-test the_home_directory_is_closed_for_reading ... ok
-test the_home_directory_is_closed_for_writing ... ok
-test the_per_run_temp_directory_is_the_one_the_child_sees ... ok
-test the_system_stays_readable ... ok
-test the_workspace_is_writable ... ok
-test tcp_is_open_by_default_and_closed_on_request ... ok
-test cargo_test_passes_inside_the_jail ... ok
+running 0 tests
 
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-[1m[92m     Running[0m tests/live_engine.rs (target/debug/deps/live_engine-c9272f775df5e579)
+[1m[92m     Running[0m tests\live_engine.rs (target\debug\deps\live_engine-730defff6b55fe06.exe)
 
 running 2 tests
-test a_real_engine_can_be_given_the_tool_schema ... ok
 test a_real_engine_answers_a_plain_question ... ok
+test a_real_engine_can_be_given_the_tool_schema ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-[1m[92m     Running[0m tests/openai_compat.rs (target/debug/deps/openai_compat-d492bfb5cd755fed)
+[1m[92m     Running[0m tests\openai_compat.rs (target\debug\deps\openai_compat-3a6392c450376fcf.exe)
 
 running 8 tests
-test a_stream_rate_limit_is_not_doubled_by_fallback ... ok
 test a_non_stream_round_trip_carries_auth_and_usage ... ok
+test a_stream_rate_limit_is_not_doubled_by_fallback ... ok
 test a_stream_shape_refusal_falls_back_once_and_sticks ... ok
 test malformed_success_is_reported_without_an_unchanged_retry ... ok
-test a_context_limit_shrinks_output_before_the_retry ... ok
 test streamed_text_and_tool_arguments_are_reassembled ... ok
+test a_context_limit_shrinks_output_before_the_retry ... ok
 test resilience_retries_one_rate_limit_then_succeeds ... ok
 test an_unresponsive_provider_hits_the_total_deadline ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
 
-[1m[92m     Running[0m tests/sandbox_env.rs (target/debug/deps/sandbox_env-343d759e96f98e0c)
+[1m[92m     Running[0m tests\sandbox_env.rs (target\debug\deps\sandbox_env-2780ad2a28796db8.exe)
 
-running 2 tests
+running 3 tests
 test a_real_crate_still_compiles_under_the_sandbox ... ok
 test a_test_binary_cannot_read_the_harnesss_api_key ... ok
+test a_grandchild_does_not_outlive_the_process_that_was_killed ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.77s
 
-[1m[92m     Running[0m tests/serve_loop.rs (target/debug/deps/serve_loop-101fa6510665c40a)
+[1m[92m     Running[0m tests\serve_loop.rs (target\debug\deps\serve_loop-aaa35d0e10bceb76.exe)
 
 running 18 tests
 test a_bad_command_is_reported_and_the_loop_survives ... ok
-test a_consequential_call_asks_before_it_writes ... ok
-test a_fresh_server_process_can_restore_and_continue_a_checkpointed_mission ... ok
 test a_front_end_that_never_declares_is_not_gated ... ok
+test a_consequential_call_asks_before_it_writes ... ok
 test a_reply_to_an_unknown_request_is_ignored ... ok
+test a_fresh_server_process_can_restore_and_continue_a_checkpointed_mission ... ok
 test a_disconnected_front_end_denies_rather_than_hanging ... ok
-test a_read_is_never_put_to_the_user ... ok
 test an_interjection_that_cannot_be_queued_is_reported_not_swallowed ... ok
 test context_policy_is_visible_and_mutable_between_server_turns ... ok
+test a_read_is_never_put_to_the_user ... ok
 test a_turns_work_can_be_put_back_after_it_has_been_written ... ok
-test a_word_typed_during_a_task_reaches_the_run_without_stopping_it ... ok
 test declaring_permissions_false_is_the_same_as_not_declaring ... ok
+test a_word_typed_during_a_task_reaches_the_run_without_stopping_it ... ok
 test shutdown_ends_the_loop ... ok
 test the_loop_answers_a_command_and_returns_to_idle ... ok
-test every_dispatched_command_ends_with_exactly_one_idle ... ok
 test undoing_before_any_turn_is_an_error_not_a_crash ... ok
+test every_dispatched_command_ends_with_exactly_one_idle ... ok
 test the_loop_keeps_reading_while_a_permission_is_outstanding ... ok
 test refusing_a_call_prevents_it_and_the_run_continues ... ok
 
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.33s
 
