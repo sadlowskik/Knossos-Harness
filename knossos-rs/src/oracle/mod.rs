@@ -785,6 +785,33 @@ impl Oracle {
 
         let (passed, forgiven, detail) = if cmd.structured {
             let all = diagnostics::parse_cargo_json(stdout);
+            // Exited non-zero without a single compiler message: the tool
+            // did not run (a missing rustup component, a broken manifest).
+            // The advisory bit below forgives a linter that exits 1 on
+            // warnings; it must not turn "cargo-clippy is not installed"
+            // into a pass. Same shape as an absent program.
+            if !finished.success() && all.is_empty() {
+                return Ok(TierResult {
+                    tier: cmd.tier,
+                    label: cmd.label.to_string(),
+                    passed: !cmd.required,
+                    skipped: !cmd.required,
+                    forgiven: false,
+                    detail: if cmd.required {
+                        format!(
+                            "UNVERIFIABLE: required verifier `{}` ran but reported nothing: {}",
+                            cmd.label,
+                            cap(stderr.to_string())
+                        )
+                    } else {
+                        format!(
+                            "skipped: `{}` ran but reported nothing: {}",
+                            cmd.label,
+                            cap(stderr.to_string())
+                        )
+                    },
+                });
+            }
             // Only complaints beyond what the tree already made are this
             // change's problem. With no baseline this is the identity.
             let fresh = match &self.baseline {

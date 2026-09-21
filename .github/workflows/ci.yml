@@ -88,6 +88,7 @@ jobs:
           docker build -q -t knossos-ci - <<'EOF'
           FROM rust:1.98
           RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python-is-python3 && rm -rf /var/lib/apt/lists/*
+          RUN rustup component add clippy
           EOF
           mkdir -p target-container/home target-container/cargo-home
           docker run --rm             --user "$(id -u):$(id -g)"             --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536             --security-opt seccomp=unconfined             -v "$PWD:/work" -w /work             -e HOME=/work/target-container/home -e CARGO_HOME=/work/target-container/cargo-home             -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0 -e CARGO_PROFILE_DEV_DEBUG=line-tables-only             knossos-ci bash -c '
