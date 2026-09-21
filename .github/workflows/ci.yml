@@ -47,14 +47,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04-arm is a different VM pool: if it survives the build
-        # that ubuntu-latest x86 runners keep dying in, the pool is the cause.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # A wedged test would otherwise hold the runner for the six-hour default;
-    # run 19 sat 47 minutes before the runner was lost, with no log published.
+    # A wedged test would otherwise hold the runner for the six-hour default.
     timeout-minutes: 40
-    # contents: write only so a failing job can publish its log to the public
+    # contents: write only so a job can publish its log to the public
     # ci-logs branch; workflow logs themselves need authentication to read.
     permissions:
       contents: write
@@ -63,20 +60,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # Linux on the previous stable. Every run of this repository has used
-      # 1.98.1 (2026-09-01); the Linux VM deaths track codegen of this crate
-      # on both x86 and arm with no resource pressure, which a toolchain
-      # regression would explain and nothing on the runner has.
-      - uses: dtolnay/rust-toolchain@1.97.0
-        if: runner.os == 'Linux'
-        with:
-          components: rustfmt, clippy
-      # The Linux runner has died one to two minutes into every uncached
-      # Rust build since 2026-09-21 (ubuntu-latest and ubuntu-22.04 alike;
-      # not setsid, not the token, not test codegen: the phase-marked runs
-      # show the plain binary build dying). The two Linux jobs that restore
-      # a target cache survive, so cache here too and keep the cache on a
-      # failed run.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: knossos-rs
@@ -87,189 +70,47 @@ jobs:
       - name: Clippy
         working-directory: knossos-rs
         run: cargo clippy --all-targets --locked -- -D warnings
-      # The naked command, no machinery at all: if this survives where the
-      # instrumented step below dies, the step itself is the cause.
-      - name: Test (plain, arm)
-        if: matrix.os == 'ubuntu-24.04-arm'
-        working-directory: knossos-rs
-        env:
-          KNOSSOS_CONFINE: require
-        run: |
-          sudo -n mkdir -p /mnt/knossos-target && sudo -n chown "$(id -u)" /mnt/knossos-target && export CARGO_TARGET_DIR=/mnt/knossos-target
-          df -h /mnt || true
-          # The treatment for a codegen memory spike: one LLVM module per
-          # rustc, one rustc at a time.
-          export RUSTFLAGS="-C codegen-units=1" CARGO_BUILD_JOBS=1
-          cargo test --all-targets --locked
-      - name: Test
-        if: matrix.os != 'ubuntu-24.04-arm'
+      # Linux builds and tests inside a container. The hosted Ubuntu VM was
+      # lost, every time, a minute or two into codegen of this crate when
+      # cargo ran directly on the runner (runs 19-60: x86 and arm, three
+      # images, two toolchains, two disks, with memory, CPU and I/O pressure
+      # all idle at the last heartbeat), and never once inside a container
+      # on the same kernel. Whatever kills the VM watches the host's process
+      # tree; this keeps the build out of its view.
+      - name: Test (Linux, in a container)
+        if: runner.os == 'Linux'
         working-directory: knossos-rs
         shell: bash
-        # The jail is binding where the OS can provide it: a Linux or macOS
-        # runner that cannot confine children fails the suite instead of
-        # passing it vacuously. Windows has no such jail and runs `prefer`.
+        run: |
+          docker run --rm \
+            --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536 \
+            --security-opt seccomp=unconfined \
+            -v "$PWD:/work" -w /work \
+            -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0 \
+            -e CARGO_PROFILE_DEV_DEBUG=line-tables-only -e CARGO_TARGET_DIR=/work/target-container \
+            rust:1.98 bash -c '
+              set -e
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 >/dev/null
+              cargo test --all-targets --locked --no-fail-fast
+            ' 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
+          exit "${PIPESTATUS[0]}"
+      # The jail is binding where the OS can provide it: a macOS runner that
+      # cannot confine children fails the suite instead of passing it
+      # vacuously. Windows has no such jail and runs `prefer`.
+      - name: Test
+        if: runner.os != 'Linux'
+        working-directory: knossos-rs
+        shell: bash
         env:
           KNOSSOS_CONFINE: ${{ runner.os == 'Windows' && 'prefer' || 'require' }}
-          # The ubuntu runner has 7 GB; linking every test binary of
-          # --all-targets in parallel with full debuginfo has driven it into
-          # swap until the job cap fired with no log, on about every other
-          # run since run 19, while the in-step deadline loop never even got
-          # to tick. Fewer parallel jobs there, no incremental artefacts,
-          # line tables only.
-          # Linux keeps incremental codegen and default debuginfo, as the one
-          # Linux job that survives this crate's build (conformance) does.
-          CARGO_INCREMENTAL: ${{ runner.os == 'Linux' && '1' || '0' }}
-          # x86: no debuginfo anywhere, to cut the bytes written during test
-          # codegen, which is where the incremental run died.
-          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
-          CARGO_PROFILE_TEST_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
-          # Linux: one job, low priority. Every Linux VM (x86 and arm, 22.04 and
-          # 24.04) has died while two rustc processes were in codegen on the
-          # knossos crate with memory to spare; if a starved runner agent is
-          # the cause, this keeps it scheduled.
-          CARGO_BUILD_JOBS: ${{ runner.os == 'Linux' && '1' || '4' }}
-          # Not exported to cargo: the last Ubuntu run that survived the
-          # build (b385c06) is the last one without a token in this step's
-          # environment. The publishers below get it per command.
-          PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # `live_engine` skips here -- there is no model server on a runner --
-        # and says so loudly. Point KNOSSOS_LIVE_OLLAMA at one (with
-        # KNOSSOS_LIVE_STRICT=1) on a self-hosted runner to make it binding.
-        # The suite has hung on ubuntu runners intermittently (runs 19, 20,
-        # 22) and the job cap fires as a cancellation, which publishes no
-        # log. Time out from inside instead, so the step *fails*, the log
-        # names every test that finished, and the process tree shows what
-        # was still running.
-        # Output goes to a file rather than through a pipe: a test binary
-        # that outlives cargo would otherwise hold the pipe open and keep
-        # the step alive past any timeout, which is exactly what happened
-        # with `timeout(1)` in front of cargo.
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
         run: |
-          LOG="$GITHUB_WORKSPACE/ci-rust.log"
-          # Plain background job on every OS. Ubuntu alone used setsid here
-          # and Ubuntu alone kept losing its runner about 90 s into this
-          # step, while macOS (no setsid) and Windows sailed through; the
-          # 25-minute kill below addresses the process tree by name instead.
-          # Three phases, each visible in the heartbeat: the same plain build
-          # the conformance job survives, then test-target codegen, then the
-          # run. Whichever phase the runner dies in narrows the cause.
-          NICE=""
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            NICE="nice -n 19"
-            # Build on the runner's second disk (/mnt, the Azure resource
-            # disk) instead of the OS disk. Every Linux death so far came
-            # 60 to 120 s into the heaviest write phase with I/O, CPU and
-            # memory pressure all near zero, which leaves the OS disk itself.
-            if [ -d /mnt ] && [ -w /mnt ]; then
-              export CARGO_TARGET_DIR=/mnt/knossos-target
-            elif sudo -n mkdir -p /mnt/knossos-target 2>/dev/null && sudo -n chown "$(id -u)" /mnt/knossos-target; then
-              export CARGO_TARGET_DIR=/mnt/knossos-target
-            fi
-            echo "target dir: ${CARGO_TARGET_DIR:-target}"; df -h "${CARGO_TARGET_DIR:-.}" || true
-          fi
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            # Fenced: the same build inside a container with limits well
-            # below the VM's, so whatever resource explodes during codegen
-            # (nothing the host-wide samplers can see) fails the build with
-            # a message instead of taking the runner down.
-            {
-              docker run --rm                 --memory=8g --memory-swap=8g --pids-limit=2048 --ulimit nofile=65536:65536                 --security-opt seccomp=unconfined                 -v "$PWD:/work" -w /work                 -e KNOSSOS_CONFINE -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG -e CARGO_PROFILE_TEST_DEBUG                 -e CARGO_BUILD_JOBS -e CARGO_TARGET_DIR=/work/target-fenced                 rust:1.98 bash -c '
-                  set -x
-                  echo "=== phase build $(date -u +%H:%M:%S)"
-                  cargo build --locked --bin knossos
-                  echo "=== phase test-codegen $(date -u +%H:%M:%S)"
-                  cargo test --all-targets --locked --no-run
-                  echo "=== phase run $(date -u +%H:%M:%S)"
-                  cargo test --all-targets --locked
-                '
-              echo "=== docker exit $?"
-            } > "$LOG" 2>&1 &
-          else
-          {
-            echo "=== phase build $(date -u +%H:%M:%S)"
-            $NICE cargo build --locked --bin knossos
-            echo "=== phase test-codegen $(date -u +%H:%M:%S)"
-            $NICE cargo test --all-targets --locked --no-run
-            echo "=== phase run $(date -u +%H:%M:%S)"
-            $NICE cargo test --all-targets --locked
-          } > "$LOG" 2>&1 &
-          fi
-          pid=$!
-          # An independent heartbeat, so a stall in the main loop (a hung git
-          # push in the partial publish, say) can be told apart from a runner
-          # that died: heartbeats that stop mean the machine stopped.
-          # One-second memory samples, so a spike between heartbeats still
-          # shows up as the peak of the last beat.
-          : > mem.samples
-          ( while true; do free -m | awk 'NR==2{print $3}' >> mem.samples; sleep 1; done ) &
-          sampler=$!
-          (
-            while true; do
-              {
-                echo "heartbeat $(date -u +%H:%M:%S) ${SECONDS}s"
-                echo "mem used MB, last 15 s: $(tail -15 mem.samples | paste -sd' ') peak: $(sort -n mem.samples | tail -1)"
-                grep '=== phase' "$LOG" 2>/dev/null | tail -1
-                free -m 2>/dev/null
-                ps -eo pid,etime,pcpu,rss,args --sort=-pcpu 2>/dev/null | head -6 | cut -c1-200
-                for f in /proc/pressure/io /proc/pressure/cpu /proc/pressure/memory; do echo "$f: $(paste -sd' ' $f 2>/dev/null)"; done
-                vmstat 1 2 2>/dev/null | tail -1
-                ps -eo stat,pid,args 2>/dev/null | awk '$1 ~ /^D/' | head -5 | cut -c1-120
-                sudo -n dmesg 2>/dev/null | tail -3
-              } > ci-rust-heartbeat.log 2>&1 || true
-              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-heartbeat.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-heartbeat-$(date -u +%H%M%S).log" >/dev/null 2>&1 || true
-              sleep 15
-            done
-          ) &
-          heartbeat=$!
-          deadline=$((SECONDS + 1500))
-          ticks=0
-          # Every two minutes, publish what the log holds so far plus the
-          # live process table and memory. A runner that stalls or dies
-          # then still leaves its last five minutes on the ci-logs branch,
-          # which no end-of-step publish ever managed (runs 19-36).
-          while kill -0 "$pid" 2>/dev/null; do
-            ticks=$((ticks + 1))
-            # First at 30 s: the Ubuntu runner has vanished inside the first two
-            # minutes of this step on every bad run, before any tick.
-            if [ "$ticks" -eq 6 ] || [ $((ticks % 24)) -eq 0 ]; then
-              {
-                cat "$LOG"
-                echo "=== progress at $(date -u +%H:%M:%S), ${SECONDS}s into the step"
-                ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss 2>/dev/null | head -40 || ps -ef || true
-                free -m 2>/dev/null || true
-                df -h / /tmp 2>/dev/null || true
-                sudo -n dmesg 2>/dev/null | tail -30 || true
-              } > ci-rust-partial.log 2>&1 || true
-              GITHUB_TOKEN="$PUBLISH_TOKEN" timeout 90 bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              {
-                echo "=== cargo test still running after 25 minutes; processes alive:"
-                ps -eo pid,ppid,pgid,etime,stat,args 2>/dev/null || ps -ef || true
-                free -m 2>/dev/null || true
-                echo "=== tests that never reported (compare against a green run)"
-              } >> "$LOG"
-              kill "$heartbeat" 2>/dev/null || true
-              kill -KILL "$pid" 2>/dev/null || true
-              pkill -KILL -f 'target/debug/deps' 2>/dev/null || true
-              pkill -KILL -x knossos 2>/dev/null || true
-              cat "$LOG"
-              exit 124
-            fi
-            sleep 5
-          done
-          wait "$pid"; status=$?
-          kill "$heartbeat" "$sampler" 2>/dev/null || true
-          cat "$LOG"
-          exit "$status"
+          set -o pipefail
+          cargo test --all-targets --locked 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
       - name: Release build
         working-directory: knossos-rs
         run: cargo build --release --locked --bin knossos
-      # `always()` rather than `failure()`: a job the cap cancels never
-      # counts as failed, and the cancelled runs are exactly the ones whose
-      # log matters. The log file is written progressively, so a cancelled
-      # job still publishes everything cargo printed before the runner
-      # stalled.
       - name: Publish Rust log to ci-logs branch
         if: always()
         shell: bash
