@@ -1,0 +1,15 @@
+=== phase build 13:31:40
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (D:\a\Knossos-Harness\Knossos-Harness\knossos-rs)
+=== progress at 13:32:05, 25s into the step
+     UID     PID    PPID  TTY        STIME COMMAND
+runnerad     627     626 ?        13:31:40 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\e1424afb-dffe-4a9a-925e-cc2f29d8e5ff.sh 
+runnerad     626       1 ?        13:31:40 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\e1424afb-dffe-4a9a-925e-cc2f29d8e5ff.sh 
+runnerad     677     676 ?        13:32:00 bash D:\a\Knossos-Harness\Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-windows-latest-35606054853-heartbeat-133200.log 
+runnerad     676     628 ?        13:32:00 timeout 90 bash D:\a\Knossos-Harness\Knossos-Harness/scripts/ci/publish-log.sh ci-rust-heartbeat.log ci-rust-windows-latest-35606054853-heartbeat-133200.log 
+runnerad     692     677 ?        13:32:03 "C:\Program Files\Git\mingw64\bin\git.exe" push -q https://x-access-token:ghs_15368_eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRobmQiLCJjdHgiOiIyUUZwTEpMSTl0THhaREhHQUEtLXRPUWlKd2tjY253MVprMDBsSTdoVmc2RzdzWFJqVEN3aTRjIiwiZXhwIjoxNzkwMDAxMDMxLCJpYXQiOjE3ODk5OTc0MzEsImlzcyI6ImdpdGh1YiIsImp0aSI6ImU3ZGQ0NzUxLTZhNTYtNDM0OS1iMDgzLTRjMDczZWJmMTNjZSIsInZlciI6M30.krV9gdtnMHbqlB9va-k4Nka_0UbaVOqr7geEZRf7CxQj37Tw1PvDAqvFK6hdUptzHWRTb719L0ShYTmEFB4cmg@github.com/sadlowskik/Knossos-Harness ci-logs 
+runnerad     698     626 ?        13:32:05 ps -ef 
+runnerad     628     626 ?        13:31:40 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\e1424afb-dffe-4a9a-925e-cc2f29d8e5ff.sh 
+runnerad     633     627 ?        13:31:40 C:\Users\runneradmin\.cargo\bin\cargo.exe build --locked --bin knossos e¡ 
+Filesystem            Size  Used Avail Use% Mounted on
+C:/Program Files/Git  150G  121G   29G  81% /
+C:                    150G  121G   29G  81% /c
