@@ -1,0 +1,14 @@
+heartbeat 13:22:55 131s
+=== phase build 13:20:44
+               total        used        free      shared  buff/cache   available
+Mem:           15993        1283       10621          48        4484       14710
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+  10068       00:01  100 365724 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name axum --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b
+   2069       03:27  2.1 139172 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+      1       05:09  1.0 14376 /sbin/init
+   1989       04:42  0.9 139408 /tmp/provjobd1054997655
+   2048       03:29  0.6 97372 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+[   25.800457] hv_netvsc 000d3af9-454a-000d-3af9-454a000d3af9 eth0: Data path switched to VF: enP372s1
+[   25.800774] mlx5_core 0174:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.156331] hv_balloon: Max. dynamic memory size: 16384 MB
