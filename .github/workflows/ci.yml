@@ -113,12 +113,16 @@ jobs:
           # which no end-of-step publish ever managed (runs 19-36).
           while kill -0 "$pid" 2>/dev/null; do
             ticks=$((ticks + 1))
-            if [ $((ticks % 24)) -eq 0 ]; then
+            # First at 30 s: the Ubuntu runner has vanished inside the first two
+            # minutes of this step on every bad run, before any tick.
+            if [ "$ticks" -eq 6 ] || [ $((ticks % 24)) -eq 0 ]; then
               {
                 cat "$LOG"
                 echo "=== progress at $(date -u +%H:%M:%S), ${SECONDS}s into the step"
                 ps -eo pid,ppid,pgid,etime,stat,rss,args --sort=-rss 2>/dev/null | head -40 || ps -ef || true
                 free -m 2>/dev/null || true
+                df -h / /tmp 2>/dev/null || true
+                sudo -n dmesg 2>/dev/null | tail -30 || true
               } > ci-rust-partial.log 2>&1 || true
               bash "$GITHUB_WORKSPACE/scripts/ci/publish-log.sh" ci-rust-partial.log "ci-rust-${{ matrix.os }}-${{ github.run_id }}-partial.log" >/dev/null 2>&1 || true
             fi
