@@ -1,0 +1,19 @@
+heartbeat 14:38:00 97s
+mem used MB, last 15 s: 1390 1238 1344 1431 1178 1231 1299 1139 1291 1362 1442 1147 1155 1205 1126 peak: 1469
+=== phase build 14:36:23
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1244       10439          49        4701       14745
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   9299       00:00  100 308664 /home/runner/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name rustls --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b
+   2087       03:01  3.1 141640 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2030       03:05  3.0 137872 /tmp/provjobd354528372
+      1       03:30  1.5 14408 /sbin/init
+   2066       03:04  0.9 98908 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+/proc/pressure/io: some avg10=0.00 avg60=0.29 avg300=0.73 total=4446583 full avg10=0.00 avg60=0.25 avg300=0.63 total=3937883
+/proc/pressure/cpu: some avg10=0.00 avg60=1.41 avg300=1.93 total=10379356 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=3 full avg10=0.00 avg60=0.00 avg300=0.00 total=3
+ 1  0      0 10606192 105224 4709320    0    0     0  1280 1375  330 25  1 75  0  0  0
+[   31.248660] hv_netvsc 7ced8d6e-ac2b-7ced-8d6e-ac2b7ced8d6e eth0: Data path switched to VF: enP62784s1
+[   31.248898] mlx5_core f540:00:02.0 mlx5_0: Port: 1 Link ACTIVE
+[   49.232587] hv_balloon: Max. dynamic memory size: 16384 MB
