@@ -1,0 +1,18 @@
+heartbeat 13:58:07 77s
+=== phase build 13:56:50
+               total        used        free      shared  buff/cache   available
+Mem:           15989        1236       10964          48        4183       14753
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8322       00:00  100 287464 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name regex_syntax --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949
+   2121       02:25  3.1 136084 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+   2102       02:26  0.8 97052 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+      1       05:54  0.8 14400 /sbin/init
+   2058       05:29  0.8 133736 /tmp/provjobd3615054143
+/proc/pressure/io: some avg10=0.00 avg60=1.26 avg300=1.33 total=7634857 full avg10=0.00 avg60=1.17 avg300=1.21 total=6925704
+/proc/pressure/cpu: some avg10=1.11 avg60=5.14 avg300=2.58 total=11732001 full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+/proc/pressure/memory: some avg10=0.00 avg60=0.00 avg300=0.00 total=1 full avg10=0.00 avg60=0.00 avg300=0.00 total=1
+ 1  0      0 11264936 105024 4192540    0    0     0     4 1977  848 23  2 75  0  0  0
+[   11.658011] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   12.377644] Adding 3145724k swap on /swapfile.  Priority:-2 extents:110 across:54919164k 
+[   49.116021] hv_balloon: Max. dynamic memory size: 16384 MB
