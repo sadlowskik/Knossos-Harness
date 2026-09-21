@@ -1,0 +1,13 @@
+=== phase build 14:50:01
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (D:\a\Knossos-Harness\Knossos-Harness\knossos-rs)
+=== progress at 14:50:26, 26s into the step
+     UID     PID    PPID  TTY        STIME COMMAND
+runnerad    1464    1394 ?        14:50:27 ps -ef 
+runnerad    1394       1 ?        14:50:01 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\b06cc455-beee-4475-862f-f41ad5ba0c94.sh 
+runnerad    1457    1398 ?        14:50:12 sleep 15 
+runnerad    1404    1395 ?        14:50:01 C:\Users\runneradmin\.cargo\bin\cargo.exe build --locked --bin knossos e¡ 
+runnerad    1398    1394 ?        14:50:01 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\b06cc455-beee-4475-862f-f41ad5ba0c94.sh 
+runnerad    1395    1394 ?        14:50:01 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\b06cc455-beee-4475-862f-f41ad5ba0c94.sh 
+Filesystem            Size  Used Avail Use% Mounted on
+C:/Program Files/Git  150G  118G   32G  79% /
+C:                    150G  118G   32G  79% /c
