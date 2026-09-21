@@ -88,12 +88,101 @@
 [1m[92m   Compiling[0m windows_x86_64_msvc v0.53.1
 [1m[92m   Compiling[0m hyper v1.11.0
 [1m[92m   Compiling[0m thiserror v2.0.19
-=== progress at 07:44:52, 26s into the step
+[1m[92m   Compiling[0m crossbeam-utils v0.8.22
+[1m[92m   Compiling[0m windows-registry v0.6.1
+[1m[92m   Compiling[0m idna_adapter v1.2.2
+[1m[92m   Compiling[0m rand_chacha v0.9.0
+[1m[92m   Compiling[0m winapi-util v0.1.11
+[1m[92m   Compiling[0m once_cell_polyfill v1.70.2
+[1m[92m   Compiling[0m anstyle v1.0.14
+[1m[92m   Compiling[0m base64 v0.22.1
+[1m[92m   Compiling[0m ipnet v2.12.0
+[1m[92m   Compiling[0m utf8parse v0.2.2
+[1m[92m   Compiling[0m anstyle-parse v1.0.0
+[1m[92m   Compiling[0m hyper-util v0.1.20
+[1m[92m   Compiling[0m anstyle-wincon v3.0.11
+[1m[92m   Compiling[0m libsqlite3-sys v0.38.2
+[1m[92m   Compiling[0m crossbeam-epoch v0.9.20
+[1m[92m   Compiling[0m serde_json v1.0.151
+[1m[92m   Compiling[0m rand v0.9.5
+[1m[92m   Compiling[0m same-file v1.0.6
+[1m[92m   Compiling[0m idna v1.1.0
+[1m[92m   Compiling[0m sha1 v0.10.7
+[1m[92m   Compiling[0m tower v0.5.3
+[1m[92m   Compiling[0m http-body-util v0.1.4
+[1m[92m   Compiling[0m anstyle-query v1.1.5
+[1m[92m   Compiling[0m data-encoding v2.11.1
+[1m[92m   Compiling[0m colorchoice v1.0.5
+[1m[92m   Compiling[0m ryu v1.0.23
+[1m[92m   Compiling[0m mime v0.3.17
+[1m[92m   Compiling[0m is_terminal_polyfill v1.70.2
+[1m[92m   Compiling[0m anstream v1.0.0
+[1m[92m   Compiling[0m tungstenite v0.29.0
+[1m[92m   Compiling[0m winapi v0.3.9
+[1m[92m   Compiling[0m crossbeam-deque v0.8.7
+[1m[92m   Compiling[0m windows-targets v0.53.5
+[1m[92m   Compiling[0m url v2.5.8
+[1m[92m   Compiling[0m tree-sitter v0.26.11
+[1m[92m   Compiling[0m walkdir v2.5.0
+[1m[92m   Compiling[0m num-traits v0.2.19
+[1m[92m   Compiling[0m regex v1.13.1
+[1m[92m   Compiling[0m tree-sitter-rust v0.24.2
+[1m[92m   Compiling[0m bstr v1.13.0
+[1m[92m   Compiling[0m clap_lex v1.1.0
+[1m[92m   Compiling[0m lazy_static v1.5.0
+[1m[92m   Compiling[0m strsim v0.11.1
+[1m[92m   Compiling[0m sharded-slab v0.1.7
+[1m[92m   Compiling[0m clap_builder v4.6.2
+[1m[92m   Compiling[0m anyhow v1.0.104
+[1m[92m   Compiling[0m globset v0.4.19
+[1m[92m   Compiling[0m tower-http v0.6.11
+[1m[92m   Compiling[0m tokio-tungstenite v0.29.0
+[1m[92m   Compiling[0m windows-sys v0.60.2
+[1m[92m   Compiling[0m axum-core v0.5.6
+[1m[92m   Compiling[0m serde_urlencoded v0.7.1
+[1m[92m   Compiling[0m notify-types v2.1.0
+[1m[92m   Compiling[0m matchers v0.2.0
+[1m[92m   Compiling[0m serde_path_to_error v0.1.20
+[1m[92m   Compiling[0m nu-ansi-term v0.50.3
+[1m[92m   Compiling[0m hashlink v0.12.2
+[1m[92m   Compiling[0m tracing-log v0.2.0
+[1m[92m   Compiling[0m keyring-core v1.0.0
+[1m[92m   Compiling[0m thread_local v1.1.10
+[1m[92m   Compiling[0m encoding_rs v0.8.35
+[1m[92m   Compiling[0m unsafe-libyaml v0.2.11
+[1m[92m   Compiling[0m streaming-iterator v0.1.9
+[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
+[1m[92m   Compiling[0m matchit v0.8.4
+[1m[92m   Compiling[0m fallible-iterator v0.3.0
+[1m[92m   Compiling[0m byteorder v1.5.0
+[1m[92m   Compiling[0m rusqlite v0.40.2
+[1m[92m   Compiling[0m windows-native-keyring-store v1.1.0
+[1m[92m   Compiling[0m serde_yaml_ng v0.10.0
+[1m[92m   Compiling[0m axum v0.8.9
+[1m[92m   Compiling[0m tracing-subscriber v0.3.23
+[1m[92m   Compiling[0m notify v8.2.0
+[1m[92m   Compiling[0m fs2 v0.4.3
+[1m[92m   Compiling[0m ignore v0.4.31
+[1m[92m   Compiling[0m clap v4.6.4
+[1m[92m   Compiling[0m chrono v0.4.45
+[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[92m   Compiling[0m similar v3.1.1
+[1m[92m   Compiling[0m fastrand v2.5.0
+[1m[92m   Compiling[0m tempfile v3.27.0
+[1m[92m   Compiling[0m aws-lc-rs v1.17.3
+[1m[92m   Compiling[0m rustls v0.23.42
+[1m[92m   Compiling[0m rustls-webpki v0.103.13
+[1m[92m   Compiling[0m tokio-rustls v0.26.4
+[1m[92m   Compiling[0m rustls-platform-verifier v0.7.0
+[1m[92m   Compiling[0m hyper-rustls v0.27.9
+[1m[92m   Compiling[0m reqwest v0.13.4
+[1m[92m   Compiling[0m knossos v0.2.0-beta.2 (D:\a\Knossos-Harness\Knossos-Harness\knossos-rs)
+=== progress at 07:46:29, 123s into the step
      UID     PID    PPID  TTY        STIME COMMAND
-runnerad     854     820 ?        07:44:52 ps -ef 
+runnerad     921     820 ?        07:46:29 ps -ef 
+runnerad     907     822 ?        07:45:39 sleep 60 
 runnerad     821     820 ?        07:44:26 C:\Users\runneradmin\.cargo\bin\cargo.exe test --all-targets --locked 
 runnerad     822     820 ?        07:44:26 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\cf134de2-36fa-45b5-b24d-77e4200dc901.sh 
-runnerad     846     822 ?        07:44:34 sleep 60 
 runnerad     820       1 ?        07:44:26 /usr/bin/bash --noprofile --norc -e -o pipefail D:\a\_temp\cf134de2-36fa-45b5-b24d-77e4200dc901.sh 
 Filesystem            Size  Used Avail Use% Mounted on
 C:/Program Files/Git  150G  121G   29G  81% /
