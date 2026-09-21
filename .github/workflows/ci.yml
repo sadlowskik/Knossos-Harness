@@ -86,7 +86,10 @@ jobs:
         working-directory: knossos-rs
         env:
           KNOSSOS_CONFINE: require
-        run: cargo test --all-targets --locked
+        run: |
+          sudo -n mkdir -p /mnt/knossos-target && sudo -n chown "$(id -u)" /mnt/knossos-target && export CARGO_TARGET_DIR=/mnt/knossos-target
+          df -h /mnt || true
+          cargo test --all-targets --locked
       - name: Test
         if: matrix.os != 'ubuntu-24.04-arm'
         working-directory: knossos-rs
@@ -140,7 +143,19 @@ jobs:
           # the conformance job survives, then test-target codegen, then the
           # run. Whichever phase the runner dies in narrows the cause.
           NICE=""
-          if [ "$RUNNER_OS" = "Linux" ]; then NICE="nice -n 19"; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            NICE="nice -n 19"
+            # Build on the runner's second disk (/mnt, the Azure resource
+            # disk) instead of the OS disk. Every Linux death so far came
+            # 60 to 120 s into the heaviest write phase with I/O, CPU and
+            # memory pressure all near zero, which leaves the OS disk itself.
+            if [ -d /mnt ] && [ -w /mnt ]; then
+              export CARGO_TARGET_DIR=/mnt/knossos-target
+            elif sudo -n mkdir -p /mnt/knossos-target 2>/dev/null && sudo -n chown "$(id -u)" /mnt/knossos-target; then
+              export CARGO_TARGET_DIR=/mnt/knossos-target
+            fi
+            echo "target dir: ${CARGO_TARGET_DIR:-target}"; df -h "${CARGO_TARGET_DIR:-.}" || true
+          fi
           {
             echo "=== phase build $(date -u +%H:%M:%S)"
             $NICE cargo build --locked --bin knossos
