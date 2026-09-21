@@ -14,8 +14,10 @@
 
 pub mod budget_ledger;
 pub mod campaign_projection;
+pub mod config;
 pub mod eventlog;
 pub mod graph_projection;
+pub mod hub;
 pub mod js;
 pub mod model;
 pub mod page;
@@ -23,9 +25,11 @@ pub mod projection;
 pub mod replay;
 pub mod sanitize;
 pub mod security;
+pub mod server;
 
 pub use eventlog::{Event, EventLog, Health, Source, EVENT_LOG_SCHEMA_VERSION};
 pub use page::{page_result, parse_event_page, EventPage, PageResult, PaginationError};
 pub use projection::{FieldConfig, Projection};
 pub use replay::{read_event_range, replay_into, ApplyEvent, Range, ReadEvents, Replayed};
 pub use security::{Authority, Bootstrap, ControlSecurity, Denied, RequestFacts, SecurityOptions};
+pub use server::{Running, ServerOptions};
