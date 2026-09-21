@@ -1,0 +1,14 @@
+heartbeat 13:33:35 112s
+=== phase build 13:31:43
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1224       10633          49        4526       14764
+Swap:           3071           0        3071
+    PID     ELAPSED %CPU   RSS COMMAND
+   8734       00:00 93.7 209184 /home/runner/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name tree_sitter --edition=2021 /home/runner/.cargo/registry/src/index.crates.io-1949c
+   1891       03:03  1.9 202912 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Worker spawnclient 142 145
+      1       03:42  0.9 14320 /sbin/init
+   1840       03:07  0.6 138392 /tmp/provjobd3396317487
+   1872       03:05  0.5 100264 /home/runner/actions-runner/cached/2.337.0/bin/Runner.Listener run
+[   15.939412] Initializing XFRM netlink socket
+[   16.217540] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+[   49.681017] hv_balloon: Max. dynamic memory size: 16384 MB
