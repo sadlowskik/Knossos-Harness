@@ -90,10 +90,13 @@ jobs:
           RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python-is-python3 && rm -rf /var/lib/apt/lists/*
           EOF
           mkdir -p target-container/home target-container/cargo-home
-          docker run --rm             --user "$(id -u):$(id -g)"             --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536             --security-opt seccomp=unconfined             -v "$PWD:/work" -w /work             -e HOME=/work/target-container/home -e CARGO_HOME=/work/target-container/cargo-home             -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0             -e CARGO_PROFILE_DEV_DEBUG=line-tables-only -e CARGO_TARGET_DIR=/work/target-container             knossos-ci bash -c '
+          docker run --rm             --user "$(id -u):$(id -g)"             --memory=12g --memory-swap=12g --pids-limit=4096 --ulimit nofile=65536:65536             --security-opt seccomp=unconfined             -v "$PWD:/work" -w /work             -e HOME=/work/target-container/home -e CARGO_HOME=/work/target-container/cargo-home             -e KNOSSOS_CONFINE=require -e CARGO_INCREMENTAL=0 -e CARGO_PROFILE_DEV_DEBUG=line-tables-only             knossos-ci bash -c '
               set -e
               git config --global user.name ci && git config --global user.email ci@knossos.invalid
-              cargo test --all-targets --locked --no-fail-fast
+              # --target-dir on the command line, not CARGO_TARGET_DIR: the tests
+              # spawn cargo as a jailed child, which must not inherit a target
+              # directory outside its own workspace.
+              cargo test --all-targets --locked --no-fail-fast --target-dir /work/target-container
             ' 2>&1 | tee "$GITHUB_WORKSPACE/ci-rust.log"
           exit "${PIPESTATUS[0]}"
       # The jail is binding where the OS can provide it: a macOS runner that
