@@ -79,7 +79,16 @@ jobs:
       - name: Clippy
         working-directory: knossos-rs
         run: cargo clippy --all-targets --locked -- -D warnings
+      # The naked command, no machinery at all: if this survives where the
+      # instrumented step below dies, the step itself is the cause.
+      - name: Test (plain, arm)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        working-directory: knossos-rs
+        env:
+          KNOSSOS_CONFINE: require
+        run: cargo test --all-targets --locked
       - name: Test
+        if: matrix.os != 'ubuntu-24.04-arm'
         working-directory: knossos-rs
         shell: bash
         # The jail is binding where the OS can provide it: a Linux or macOS
@@ -93,8 +102,10 @@ jobs:
           # run since run 19, while the in-step deadline loop never even got
           # to tick. Fewer parallel jobs there, no incremental artefacts,
           # line tables only.
-          CARGO_INCREMENTAL: "0"
-          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '0' || 'line-tables-only' }}
+          # Linux keeps incremental codegen and default debuginfo, as the one
+          # Linux job that survives this crate's build (conformance) does.
+          CARGO_INCREMENTAL: ${{ runner.os == 'Linux' && '1' || '0' }}
+          CARGO_PROFILE_DEV_DEBUG: ${{ runner.os == 'Linux' && '2' || 'line-tables-only' }}
           # Linux: one job, low priority. Every Linux VM (x86 and arm, 22.04 and
           # 24.04) has died while two rustc processes were in codegen on the
           # knossos crate with memory to spare; if a starved runner agent is
