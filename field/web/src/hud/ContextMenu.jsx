@@ -20,8 +20,13 @@ function emptyDraft(config) {
 }
 
 /* `initialAgentId` preselects the agent definition: the Board's "start another one like
-   this" on a finished conversation opens the same agent on the same project. */
-export default function ContextMenu({ screen, target, onClose, initialPane = null, initialAgentId = null, fixed = false, onOpenModels = null }) {
+   this" on a finished conversation opens the same agent on the same project.
+
+   `scopeNote` is a line carried at the top of the orders, the way the Board's file strip
+   prepends "Files in scope:" to a message. Rome uses it to say which folder an agent is
+   being deployed into, so the scope travels in the orders the operator can read rather
+   than in an invented server field. */
+export default function ContextMenu({ screen, target, onClose, initialPane = null, initialAgentId = null, fixed = false, onOpenModels = null, scopeNote = '' }) {
   const st = useField();
   const ref = useRef(null);
   const [pane, setPane] = useState(initialPane);      // null | 'assign' | 'spawn' | 'new-agent'
@@ -70,6 +75,12 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
 
   const isAssignable = ['folder', 'workspace', 'website', 'file', 'mission'].includes(target.type);
   const targetLabel = target.label ?? target.id ?? '—';
+  // The scope line leads the orders; what the operator types follows it, unchanged.
+  const composedOrders = () => {
+    const body = orders.trim();
+    const note = scopeNote.trim();
+    return [note, body].filter(Boolean).join('\n\n') || undefined;
+  };
 
   async function run(fn) {
     setBusy(true); setErr(null);
@@ -88,7 +99,7 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
         workspaceId: target.workspaceId ?? null,
         url: target.url ?? null,
       },
-      orders,
+      orders: composedOrders() ?? '',
       endpointId: endpoint,
       thinking,
     });
@@ -119,7 +130,7 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
       workspaceId: wsId,
       endpointId: endpoint === 'auto' ? undefined : endpoint,
       thinking,
-      orders: orders || undefined,
+      orders: composedOrders(),
       target: spawnTarget(),
     });
     selectOnly([r.sessionId]);
@@ -169,7 +180,12 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
       setAgentId(id);
       if (start) {
         if (!wsId) throw new Error('Saved. No project is mounted to start it on.');
-        const r = await api.spawn({ agentId: id, workspaceId: wsId, orders: task.trim() || undefined, target: spawnTarget() });
+        const r = await api.spawn({
+          agentId: id,
+          workspaceId: wsId,
+          orders: [scopeNote.trim(), task.trim()].filter(Boolean).join('\n\n') || undefined,
+          target: spawnTarget(),
+        });
         selectOnly([r.sessionId]);
         onClose();
       } else {
@@ -352,6 +368,12 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
               }
               onChange={(e) => setOrders(e.target.value)}
             />
+            {scopeNote.trim() && (
+              <span className="fld-hint">
+                These orders open with <code>{scopeNote.trim().replace(/\s*\n\s*/g, ' ')}</code>, so the agent
+                starts inside that folder.
+              </span>
+            )}
           </label>
 
           {pane === 'spawn' && noEndpoints && (

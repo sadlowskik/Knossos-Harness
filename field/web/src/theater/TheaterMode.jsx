@@ -1,54 +1,59 @@
+/* Rome — the operations map, folder by folder.
+
+   The Board is every conversation at once, ordered by time. This is territory, ordered by
+   space, and it answers one question: where is the work happening? Each mounted project is
+   a city; the folders inside it are the districts around it, sized by real weight — how
+   many files they hold and how much changed there — and toned by how recently anyone
+   touched them, so the untouched corners stay visible. An agent stands in the folder that
+   holds the file it is on, and moves as that changes; three markers in one district and
+   none in the next is the thing this screen can show that a list cannot.
+
+   Clicking a district opens the folder, and the folder is its conversations. What used to
+   be here instead — the city command hub, the senate roster, the region maturity card and
+   the agent inspector — each showed one slice of that, so all four are gone. */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen, Box, Container, Database, GitBranch, Globe2,
   Landmark, Network, Plus, RadioTower, Settings, ShieldCheck,
-  UserRound, Wrench, X,
+  UserRound, Wrench,
 } from 'lucide-react';
 import { api } from '../net/client.js';
-import { clearActiveAgent, openCity, openSenate, selectAgent, useField } from '../state/store.js';
+import { clearActiveAgent, selectAgent, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
-import CityPanel from '../city/CityPanel.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
-import AgentControls from '../hud/AgentControls.jsx';
 import FieldSettings from './FieldSettings.jsx';
-import {
-  identityFor,
-  identityHue,
-  initials,
-  verifiedContribution,
-} from './fieldPreferences.js';
+import FolderDetail from './FolderDetail.jsx';
+import { sessionsInScope, TERMINAL_STATES } from '../ui/Conversation.jsx';
+import { identityFor, identityHue, initials, verifiedContribution } from './fieldPreferences.js';
 import useFieldSettings from './useFieldSettings.js';
+import {
+  districtsAt, folderRollup, markerRing, normalizeDir, parentOf,
+  ringLayout, staleness, standingPlaces, weightLabel,
+} from './districts.js';
 
-const TERMINAL_STATES = new Set(['done', 'cancelled', 'interrupted', 'error']);
 const ATTENTION_STATES = new Set(['blocked', 'error', 'waiting_permission']);
+// A conversation that ended stays in a folder this long, as on the Board.
+const RECENTLY_FINISHED_MS = 30 * 60 * 1000;
+const MAX_DISTRICTS = 7;
+const MAX_MARKERS = 8;
+
 const PROJECT_SLOTS = [
   { x: 35, y: 18, w: 17, h: 22 },
   { x: 13, y: 25, w: 17, h: 21 }, { x: 66, y: 32, w: 17, h: 21 },
   { x: 20, y: 63, w: 17, h: 20 }, { x: 62, y: 62, w: 17, h: 20 },
 ];
-const FRONT_OFFSETS = [
-  { dx: -27, dy: -18, w: 22, h: 24 }, { dx: 24, dy: -17, w: 22, h: 24 },
-  { dx: -27, dy: 24, w: 22, h: 24 }, { dx: 24, dy: 24, w: 22, h: 24 },
-  { dx: 0, dy: -29, w: 22, h: 22 }, { dx: 0, dy: 34, w: 22, h: 22 },
-];
-const OUTPOST_SLOTS = [
-  { x: 2, y: 38, w: 12, h: 16 }, { x: 86, y: 38, w: 12, h: 16 },
-  { x: 27, y: 3, w: 13, h: 15 }, { x: 61, y: 3, w: 13, h: 15 },
-  { x: 28, y: 79, w: 13, h: 15 }, { x: 60, y: 79, w: 13, h: 15 },
-];
-const CITY_SLOTS = [[28, 58], [68, 57], [48, 72], [61, 31]];
-const AGENT_SLOTS = [
-  [17, 30], [34, 20], [52, 18], [70, 24], [82, 38], [84, 58],
-  [71, 73], [53, 79], [34, 76], [18, 64], [14, 47], [50, 49],
-];
-const GATEWAY_SLOTS = [[5, 22], [93, 23], [94, 75], [50, 92], [4, 76]];
 const LANDMARK_KIND = {
   model: 'model', runtime: 'runtime', knowledge: 'archive', verification: 'verification',
   interface: 'interface', storage: 'storage', core: 'core', general: 'project',
 };
-const KIND_ICON = { project: Landmark, workfront: GitBranch, gateway: RadioTower, service: Container, model: BookOpen, runtime: Wrench, archive: Database, verification: ShieldCheck, interface: Globe2, storage: Box, core: Network };
+const KIND_ICON = {
+  project: Landmark, workfront: GitBranch, gateway: RadioTower, service: Container,
+  model: BookOpen, runtime: Wrench, archive: Database, verification: ShieldCheck,
+  interface: Globe2, storage: Box, core: Network,
+};
 const SETTLEMENT_MODULES = [
   { id: 'forum', src: '/assets/living-rome/modules/forum.webp', label: 'civic forum' },
   { id: 'works', src: '/assets/living-rome/modules/works.webp', label: 'engineering works' },
@@ -88,6 +93,8 @@ function settlementPlan(name, isCapital, tier) {
   };
 }
 
+/* A folder's name still says what kind of place it is; the icon follows the name, as the
+   landmarks always did. */
 function classify(value = '') {
   const text = String(value).toLowerCase();
   if (/(model|inference|llm|weights|adapter|lora)/.test(text)) return 'model';
@@ -99,184 +106,23 @@ function classify(value = '') {
   if (/(api|server|core|src|engine|orchestrat|harness)/.test(text)) return 'core';
   return 'general';
 }
-function basename(value = '') { return String(value).replaceAll('\\', '/').split('/').filter(Boolean).at(-1) || 'root'; }
+
 function stateLabel(value = 'unknown') { return String(value).replaceAll('_', ' '); }
-function clipLabel(value = '', length = 42) { const text = String(value).trim().replace(/\s+/g, ' '); return text.length > length ? `${text.slice(0, length - 1).trim()}…` : text; }
 
-function frontKeyFor(session) {
-  if (session.objectiveId) return `objective:${session.objectiveId}`;
-  if (session.campaignId) return `campaign:${session.campaignId}`;
-  if (session.assignmentId) return `assignment:${session.assignmentId}`;
-  return null;
-}
+const treeKey = (workspaceId, dir) => JSON.stringify([workspaceId, dir]);
+const entriesOf = (trees, workspaceId, dir) => {
+  const value = trees[treeKey(workspaceId, dir)];
+  return Array.isArray(value) ? value : null;
+};
 
-function objectiveLabel(assignment, sessions, campaigns, workspaceById) {
-  const first = sessions[0];
-  if (first?.objectiveId) {
-    for (const campaign of campaigns) {
-      const objective = campaign.objectives?.find((item) => item.id === first.objectiveId);
-      if (objective?.statement) return clipLabel(objective.statement);
-    }
-  }
-  if (first?.campaignId) {
-    const campaign = campaigns.find((item) => item.id === first.campaignId);
-    if (campaign?.name) return clipLabel(campaign.name);
-  }
-  if (assignment?.targetType === 'mission' && assignment.targetLabel) return clipLabel(assignment.targetLabel);
-  const paragraphs = String(assignment?.orders ?? '').split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
-  if (paragraphs.length > 1) return clipLabel(paragraphs.at(-1).split(/(?<=[.!?])\s/)[0]);
-  return 'Active objective';
-}
-
-function activityMetrics(activity = 0) {
+function spokeStyle(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
   return {
-    score: 0, tier: 0, activity: Math.max(0, Math.min(100, activity)),
-    complete: 0, verified: 0, persisted: 0, reliability: 0, evidence: [],
+    left: `${from.x}%`, top: `${from.y}%`,
+    width: `${Math.hypot(dx, dy)}%`,
+    transform: `rotate(${(Math.atan2(dy, dx) * 180) / Math.PI}deg)`,
   };
-}
-
-function infrastructureClusters(snap, capitalWorkspaceId) {
-  const workspaceById = new Map(snap.workspaces.map((item) => [item.id, item]));
-  const sessionById = new Map(snap.sessions.map((item) => [item.id, item]));
-  const liveSessions = snap.sessions.filter((session) => !TERMINAL_STATES.has(session.state));
-  const liveSessionIds = new Set(liveSessions.map((session) => session.id));
-  const foldersByWorkspace = new Map();
-  for (const folder of snap.folders) {
-    if (!workspaceById.has(folder.workspaceId)) continue;
-    const rows = foldersByWorkspace.get(folder.workspaceId) ?? [];
-    rows.push(folder);
-    foldersByWorkspace.set(folder.workspaceId, rows);
-  }
-
-  const projects = snap.workspaces.filter((item) => item.mounted).map((workspace) => {
-    const history = snap.sessions.filter((item) => item.workspaceId === workspace.id);
-    const folders = [...(foldersByWorkspace.get(workspace.id) ?? [])].sort((a, b) => (b.hits ?? 0) - (a.hits ?? 0));
-    const resources = folders.slice(0, 4).map((folder) => {
-      const occupants = (folder.agents ?? []).map((id) => sessionById.get(id)).filter(Boolean);
-      const state = folder.agents?.some((id) => liveSessionIds.has(id))
-        ? 'running'
-        : occupants.some((item) => item.verified === 'verified')
-          ? 'verified'
-          : occupants.some((item) => item.state === 'done')
-            ? 'completed'
-          : folder.hits ? 'active' : 'discovered';
-      return { id: folder.key, label: basename(folder.dir), kind: LANDMARK_KIND[classify(folder.dir)], state };
-    });
-    const failures = history.filter((item) => ['error', 'blocked'].includes(item.state)).length;
-    return {
-      clusterKey: `workspace:${workspace.id}`, label: workspace.name, displayLabel: workspace.name,
-      kind: 'project', workspaceId: workspace.id, parentKey: null,
-      activity: (workspace.changeCount ?? 0) + 20 + folders.reduce((sum, item) => sum + (item.hits ?? 0), 0),
-      resources, metrics: workspace.maturity ?? activityMetrics(),
-      damaged: failures > 0, failureCount: failures,
-      stateLabel: workspace.id === capitalWorkspaceId ? 'capital project' : 'project settlement',
-    };
-  }).sort((a, b) => Number(b.workspaceId === capitalWorkspaceId) - Number(a.workspaceId === capitalWorkspaceId));
-
-  const assignmentById = new Map((snap.assignments ?? []).map((item) => [item.id, item]));
-  const frontsByKey = new Map();
-  for (const session of liveSessions) {
-    const key = frontKeyFor(session);
-    if (!key) continue;
-    const front = frontsByKey.get(key) ?? { key, sessions: [], workspaceId: session.workspaceId };
-    front.sessions.push(session);
-    front.workspaceId ||= session.workspaceId;
-    frontsByKey.set(key, front);
-  }
-  const fronts = [...frontsByKey.values()].map((front) => {
-    const assignment = assignmentById.get(front.sessions[0]?.assignmentId);
-    const resources = new Map();
-    for (const session of front.sessions) {
-      const path = session.focusDir ?? session.target?.id;
-      if (!path) continue;
-      const id = `${front.workspaceId}:${path}`;
-      resources.set(id, { id, label: basename(path), kind: LANDMARK_KIND[classify(path)], state: 'running' });
-    }
-    const damaged = front.sessions.some((item) => ATTENTION_STATES.has(item.state));
-    const verifying = front.sessions.some((item) => item.role === 'verifier');
-    const label = objectiveLabel(assignment, front.sessions, snap.campaigns ?? [], workspaceById);
-    const resourceList = [...resources.values()].slice(0, 2);
-    return {
-      clusterKey: front.key, label, displayLabel: label, kind: `workfront${damaged ? ' damaged' : ''}`, baseKind: 'workfront', workspaceId: front.workspaceId,
-      parentKey: `workspace:${front.workspaceId || capitalWorkspaceId}`,
-      activity: front.sessions.length * 18, resources: resourceList,
-      metrics: activityMetrics(Math.min(100, front.sessions.length * 20)), damaged,
-      stateLabel: damaged ? 'needs you' : verifying ? 'being verified' : `${front.sessions.length} agent${front.sessions.length === 1 ? '' : 's'} working`,
-    };
-  }).sort((a, b) => b.activity - a.activity);
-
-  const frontForSession = new Map();
-  for (const front of frontsByKey.values()) for (const session of front.sessions) frontForSession.set(session.id, front.key);
-  const gateways = (snap.websites ?? []).flatMap((site) => {
-    const activeVisitors = (site.sessions ?? []).filter((id) => liveSessionIds.has(id));
-    if (!activeVisitors.length) return [];
-    const first = sessionById.get(activeVisitors[0]);
-    return [{
-      clusterKey: `gateway:${site.domain}`, label: site.label || site.domain, displayLabel: site.label || site.domain,
-      kind: 'gateway', workspaceId: first?.workspaceId ?? null,
-      parentKey: frontForSession.get(activeVisitors[0]) ?? `workspace:${first?.workspaceId || capitalWorkspaceId}`,
-      activity: activeVisitors.length * 9, resources: [{ id: site.domain, label: site.domain, kind: 'gateway', state: 'running' }],
-      metrics: activityMetrics(Math.min(100, activeVisitors.length * 25)),
-      stateLabel: 'observed external site',
-    }];
-  });
-  const services = (snap.endpoints ?? []).flatMap((endpoint) => {
-    const operators = liveSessions.filter((item) => item.endpointId === endpoint.id);
-    if (!operators.length || endpoint.status === 'down') return [];
-    const first = operators[0];
-    return [{
-      clusterKey: `service:${endpoint.id}`, label: endpoint.name || endpoint.model || endpoint.id,
-      displayLabel: endpoint.name || endpoint.model || endpoint.id, kind: 'service', workspaceId: first.workspaceId,
-      parentKey: frontForSession.get(first.id) ?? `workspace:${first.workspaceId || capitalWorkspaceId}`,
-      activity: operators.length * 7, resources: [{ id: endpoint.id, label: endpoint.model || 'model endpoint', kind: 'service', state: 'running' }],
-      metrics: activityMetrics(Math.min(100, operators.length * 25)), stateLabel: 'serving active agents',
-    }];
-  });
-
-  return [...projects, ...fronts, ...gateways, ...services].slice(0, 16);
-}
-
-function livingWorldPositions(clusters, capitalWorkspaceId) {
-  const projects = clusters.filter((item) => item.kind === 'project');
-  const capitalKey = `workspace:${capitalWorkspaceId}`;
-  projects.sort((a, b) => Number(b.clusterKey === capitalKey) - Number(a.clusterKey === capitalKey));
-  const positions = [];
-  const projectPosition = new Map();
-  const occupiedProjectSlots = new Set();
-  projects.forEach((cluster, index) => {
-    const preferred = settlementSeed(cluster.displayLabel || cluster.label).value % PROJECT_SLOTS.length;
-    let slotIndex = preferred;
-    while (occupiedProjectSlots.has(slotIndex) && occupiedProjectSlots.size < PROJECT_SLOTS.length) slotIndex = (slotIndex + 1) % PROJECT_SLOTS.length;
-    occupiedProjectSlots.add(slotIndex);
-    const slot = PROJECT_SLOTS[slotIndex] ?? PROJECT_SLOTS[Math.min(index, PROJECT_SLOTS.length - 1)];
-    const position = { ...slot, id: cluster.clusterKey, clusterKey: cluster.clusterKey };
-    positions.push(position); projectPosition.set(cluster.clusterKey, position);
-  });
-  const frontCounts = new Map();
-  for (const cluster of clusters.filter((item) => (item.baseKind ?? item.kind) === 'workfront')) {
-    const parent = projectPosition.get(cluster.parentKey) ?? projectPosition.get(capitalKey) ?? positions[0];
-    if (!parent) continue;
-    const count = frontCounts.get(cluster.parentKey) ?? 0;
-    const offset = FRONT_OFFSETS[count % FRONT_OFFSETS.length];
-    frontCounts.set(cluster.parentKey, count + 1);
-    positions.push({
-      id: cluster.clusterKey, clusterKey: cluster.clusterKey,
-      x: Math.max(2, Math.min(80, parent.x + offset.dx)), y: Math.max(3, Math.min(75, parent.y + offset.dy)),
-      w: offset.w, h: offset.h,
-    });
-  }
-  let outpostIndex = 0;
-  for (const cluster of clusters.filter((item) => ['gateway', 'service'].includes(item.kind))) {
-    const slot = OUTPOST_SLOTS[outpostIndex++ % OUTPOST_SLOTS.length];
-    positions.push({ ...slot, id: cluster.clusterKey, clusterKey: cluster.clusterKey });
-  }
-  return positions;
-}
-
-function routeStyle(from, to) {
-  const ax = from.x + from.w / 2, ay = from.y + from.h / 2, bx = to.x + to.w / 2, by = to.y + to.h / 2;
-  const dx = bx - ax, dy = by - ay;
-  return { left: `${ax}%`, top: `${ay}%`, width: `${Math.hypot(dx, dy)}%`, transform: `rotate(${Math.atan2(dy, dx) * 180 / Math.PI}deg)` };
 }
 
 function AgentEmblem({ identity, size = 'md', selected = false, className = '' }) {
@@ -293,8 +139,7 @@ function Portrait({ identity, role, size = 'md' }) {
   return <span className={`senator-portrait size-${size}`} style={{ '--identity-hue': identityHue(identity.displayName) }}><UserRound aria-hidden="true" /><b>{initials(identity.displayName)}</b><small>{String(role || 'agent').slice(0, 1).toUpperCase()}</small></span>;
 }
 
-/* One identity question, asked once: person, model, or both. It used to be two settings —
-   identityMode for the panels and markerMode for the map markers — answering the same thing. */
+/* One identity question, asked once: person, model, or both. */
 function IdentityMark({ session, identity, settings, selected = false, size = 'md' }) {
   const mode = settings.identity;
   const showPortrait = mode !== 'model';
@@ -302,14 +147,22 @@ function IdentityMark({ session, identity, settings, selected = false, size = 'm
   return <span className={`identity-mark mode-${mode}${selected ? ' selected' : ''}`}>{showPortrait && <Portrait identity={identity} role={session.role} size={size} />}{showModel && <AgentEmblem identity={identity} size={showPortrait ? 'xs' : size} selected={selected} className={showPortrait ? 'model-overlay' : ''} />}</span>;
 }
 
-function CitySymbol({ resource, slot, tier, isCapital }) {
-  const Icon = KIND_ICON[resource.kind] ?? Landmark;
-  return <div className={`field-building kind-${resource.kind} tier-${tier} life-${resource.state}${isCapital ? ' capital-building' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%` }} title={`${resource.label} · ${stateLabel(resource.state)}`}><span className="building-shape" aria-hidden="true"><i /><i /><i /><i /><Icon /></span><b>{resource.label}</b><small>civic work</small></div>;
-}
-
-function AgentMarker({ session, identity, slot, index = 0, settings, selected, related, onSelect }) {
+function AgentMarker({ session, identity, x, y, index = 0, settings, selected, onSelect }) {
   const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  return <button type="button" className={`field-agent-marker state-${session.state}${selected ? ' selected' : ''}${related ? ' related' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }} onClick={(event) => { event.stopPropagation(); onSelect(session.id); }} aria-label={`${identity.displayName}, ${stateLabel(session.state)}`}><IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" />{session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}<span className="marker-label"><b>{identity.displayName}</b><small>{session.stateDetail || stateLabel(session.state)}</small></span></button>;
+  return <button
+    type="button"
+    className={`field-agent-marker state-${session.state}${selected ? ' selected' : ''}`}
+    style={{ left: `${x}%`, top: `${y}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }}
+    onClick={(event) => { event.stopPropagation(); onSelect(session); }}
+    aria-label={`${identity.displayName}, ${stateLabel(session.state)}${session.focusPath ? `, on ${session.focusPath}` : ''}`}
+  >
+    <IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" />
+    {session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}
+    <span className="marker-label">
+      <b>{identity.displayName}</b>
+      <small>{session.focusPath ? session.focusPath : session.stateDetail || stateLabel(session.state)}</small>
+    </span>
+  </button>;
 }
 
 function ProceduralSettlement({ name, isCapital, tier }) {
@@ -339,99 +192,56 @@ function ProceduralSettlement({ name, isCapital, tier }) {
   </div>;
 }
 
-function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, identities, settings, onAgent, onRegion, focused }) {
-  const maturity = verifiedContribution(cluster, agents);
-  const baseKind = cluster?.baseKind ?? cluster?.kind;
-  const active = agents.some((agent) => !TERMINAL_STATES.has(agent.state)) || cluster?.resources?.some((item) => item.state === 'running');
-  const useProceduralSettlement = baseKind === 'project';
-  const actionLabel = baseKind === 'project'
-    ? `Open ${cluster?.displayLabel ?? 'project'} City`
-    : `Inspect ${cluster?.displayLabel ?? baseKind ?? 'region'}`;
+/** The city: one mounted project, drawn as the settlement it always was. */
+function City({ position, workspace, isCapital, tier, active, focused, agents, onOpen }) {
   return <section
-    className={`field-region${cluster ? ` settled kind-${cluster.kind}` : ' unsettled'}${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}${agents.length > 6 ? ' agent-heavy' : ''}`}
+    className={`field-region settled kind-project${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}`}
     style={{ left: `${position.x}%`, top: `${position.y}%`, width: `${position.w}%`, height: `${position.h}%` }}
   >
     <div className="region-influence" aria-hidden="true" />
-    {cluster && <button type="button" className="field-region-action" aria-label={actionLabel} onClick={(event) => { event.stopPropagation(); onRegion(position.id); }} />}
-    {useProceduralSettlement && <ProceduralSettlement name={cluster?.displayLabel || cluster?.label || 'Project'} isCapital={isCapital} tier={maturity.tier} />}
-    {cluster && <header className="region-label"><b>{cluster.displayLabel}</b><small>{cluster.stateLabel || baseKind}</small></header>}
-    {isCapital && <div className="capital-label"><i />CAPITAL · {cluster?.displayLabel}</div>}
-    {cluster?.damaged && <div className="damage-signal" title={`${cluster.failureCount || 1} unresolved failure`}><i /><i /><i /></div>}
-    {cluster && <div className="maturity-pips" role="img" aria-label={`Verified contribution ${maturity.score}%`}>{[1, 2, 3, 4].map((tier) => <i key={tier} className={tier <= maturity.tier ? 'on' : ''} />)}</div>}
-    {(!useProceduralSettlement ? cluster?.resources ?? [] : []).slice(0, CITY_SLOTS.length).map((resource, index) => <CitySymbol key={resource.id} resource={resource} slot={CITY_SLOTS[index]} tier={maturity.tier} isCapital={isCapital && index === 0} />)}
-    {agents.slice(0, AGENT_SLOTS.length).map((session, index) => <AgentMarker key={session.id} session={session} identity={identities.get(session.id)} slot={AGENT_SLOTS[index]} index={index} settings={settings} selected={session.id === selectedId} related={relatedIds.has(session.id)} onSelect={onAgent} />)}
+    <button
+      type="button"
+      className="field-region-action"
+      aria-label={`Open ${workspace.name} at its project root`}
+      onClick={(event) => { event.stopPropagation(); onOpen(''); }}
+    />
+    <ProceduralSettlement name={workspace.name} isCapital={isCapital} tier={tier} />
+    {isCapital && <div className="capital-label"><i />CAPITAL · {workspace.name}</div>}
+    {agents > 0 && <span className="city-crowd mono" aria-hidden="true">{agents}</span>}
   </section>;
 }
 
-function MaturityCard({ cluster, agents, onClose }) {
-  if (!cluster) return null;
-  const maturity = verifiedContribution(cluster, agents);
-  const evidence = maturity.evidence ?? [];
-  return <aside className="maturity-card" onClick={(event) => event.stopPropagation()}>
-    <button type="button" onClick={onClose} aria-label="Close project details"><X /></button>
-    <span>{cluster.kind}</span><h2>{cluster.label}</h2>
-    <div className="maturity-score"><b>{maturity.score}%</b><small>evidence-backed maturity</small></div>
-    <div className="maturity-bar" role="progressbar" aria-label="Evidence-backed maturity" aria-valuemin="0" aria-valuemax="100" aria-valuenow={maturity.score}><i style={{ width: `${maturity.score}%` }} /></div>
-    <dl>
-      <div><dt>Activity</dt><dd>{maturity.activity ?? 0}%</dd></div>
-      <div><dt>Complete</dt><dd>{maturity.complete}%</dd></div>
-      <div><dt>Verified</dt><dd>{maturity.verified}%</dd></div>
-      <div><dt>Persisted</dt><dd>{maturity.persisted}%</dd></div>
-      <div><dt>Reliable</dt><dd>{maturity.reliability ?? 0}%</dd></div>
-    </dl>
-    <p>Only criterion evidence, an independent verification, and a revision-bound checkpoint grow the city. Activity is shown separately.</p>
-    {evidence.length > 0 && <ul className="maturity-evidence" aria-label="Maturity evidence">{evidence.slice(-4).reverse().map((item, index) => <li key={`${item.type}:${item.seq ?? item.verdictId ?? item.checkpointId ?? index}`}><b>{item.type}</b><span>{item.criterion ?? item.verdictId ?? item.checkpointId ?? `event #${item.seq}`}</span></li>)}</ul>}
-  </aside>;
-}
-
-function conversationText(event) {
-  return event.data?.text ?? event.data?.content ?? event.data?.summary ?? '';
-}
-
-function AgentInspector({ session, identity, settings, role, agent, trace, collaborators, onClose, onSettings, onOpen }) {
-  if (!session) return null;
-  const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  const cost = `$${(session.costUsd ?? 0).toFixed(4)}${session.budgetUsd ? ` / $${Number(session.budgetUsd).toFixed(2)}` : ''}`;
-  const spawned = trace.find((event) => event.kind === 'session.spawned')?.data ?? {};
-  const prompt = spawned.initialOrders ?? spawned.systemPrompt ?? session.target?.label ?? session.stateDetail;
-  const messages = trace.filter((event) => event.kind === 'session.message' && conversationText(event)).slice(-8);
-  const recent = trace.filter((event) => ['session.tool_use', 'session.tool_result'].includes(event.kind)).slice(-4).reverse();
-  const tools = agent?.tools_allow ?? role?.tools_allow ?? [];
-  return <aside className="field-side-panel agent-panel" onClick={(event) => event.stopPropagation()}>
-    <header><div className="inspector-identity"><IdentityMark session={session} identity={identity} settings={settings} selected size="lg" /><div><span>SENATOR</span><h2>{identity.displayName}</h2></div></div><div><button type="button" onClick={onSettings} aria-label="Open settings"><Settings /></button><button type="button" onClick={onClose} aria-label="Close agent"><X /></button></div></header>
-    <section><label>Objective</label><p>{session.target?.label ?? session.stateDetail ?? 'Awaiting a specific objective.'}</p></section>
-    <section><label>Progress <b>{pct}%</b></label><div className="inspector-progress" role="progressbar" aria-label={`${identity.displayName} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct}><i style={{ width: `${pct}%` }} /></div></section>
-    <section className="inspector-facts"><label>State</label><p><b>{stateLabel(session.state)}</b>{session.stateDetail ? ` · ${session.stateDetail}` : ''}{session.lastTool?.name ? ` · using ${session.lastTool.name}` : ''}</p><p className="mono">{cost} · context {session.contextPct ?? 0}%{session.error ? ` · ${session.error}` : ''}</p></section>
-    <section className="model-line"><label>Model / endpoint</label><div><AgentEmblem identity={identity} size="sm" /><p><b>{identity.endpointAlias}</b><span>{identity.servedModel}</span><small>{identity.hfRepo || identity.source}</small></p></div></section>
-    <section><label>Authority</label><div className="tool-loadout">{tools.length ? tools.map((tool) => <span key={tool}><ToolIcon name={tool} />{tool}</span>) : <em>No role tool allowlist</em>}</div></section>
-    <section><label>Working with</label><div className="collaboration-row">{collaborators.length ? collaborators.map((item) => <span key={item.id}><i className={`state-${item.state}`} />{item.name}</span>) : <em>No active links</em>}</div></section>
-    <section className="agent-prompt"><label>Prompt</label><p>{prompt || 'No prompt recorded for this session.'}</p>{spawned.systemPrompt && spawned.systemPrompt !== prompt && <details><summary>System instructions</summary><p>{spawned.systemPrompt}</p></details>}</section>
-    <section className="conversation-ledger"><label>Conversation</label>{messages.length ? messages.map((event) => <div key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{conversationText(event)}</p></div>) : <em>No conversation reported yet.</em>}</section>
-    <section className="activity-ledger"><label>Current activity</label>{recent.length ? recent.map((event) => <div key={event.id ?? event.seq}><time>{new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><p>{event.data?.summary ?? event.data?.text ?? event.kind.replaceAll('.', ' / ')}</p></div>) : <em>No tool activity reported.</em>}</section>
-    <section className="inspector-controls"><label>Talk / control</label><AgentControls session={session} onOpen={onOpen} /></section>
-  </aside>;
-}
-
-function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onStart }) {
-  return <section className={`agent-roster${sessions.length ? '' : ' quiet'}`} onClick={(event) => event.stopPropagation()} aria-label="Senate roster">
-    <header><i /><span>SENATE{sessions.length ? ` · ${sessions.length}` : ''}</span><i /></header>
-    <div>{sessions.length ? sessions.map((session) => {
-      const identity = identities.get(session.id);
-      const pct = session.progress?.total ? Math.round(((session.progress?.done ?? 0) / session.progress.total) * 100) : 0;
-      return <button
-        type="button"
-        key={session.id}
-        className={`${session.id === selectedId ? 'selected' : ''} state-${session.state}`}
-        onClick={() => onSelect(session.id)}
-        aria-pressed={session.id === selectedId}
-        aria-label={`Open ${identity.displayName} in the Senate, ${stateLabel(session.state)}, ${pct}% complete`}
-      >
-        <IdentityMark session={session} identity={identity} settings={settings} selected={session.id === selectedId} size="lg" />
-        <b>{identity.displayName}</b><small>{identity.endpointAlias}</small>
-        <span role="img" aria-label={`${pct}% complete`}>{[0, 1, 2, 3].map((n) => <i key={n} className={n < Math.max(1, Math.round((pct / 100) * 4)) ? 'on' : ''} />)}</span>
-      </button>;
-    }) : <p className="roster-empty">No agents yet.<button type="button" className="btn sm plain" onClick={(e) => onStart?.(e)}>Start an agent</button></p>}</div>
-  </section>;
+/**
+ * A district: one folder, drawn at a size that comes from its weight and a tone that
+ * comes from how recently anyone was in it.
+ */
+function District({ district, heat, agents, attention, focused, onOpen, onStart }) {
+  const Icon = KIND_ICON[LANDMARK_KIND[classify(district.dir)]] ?? Landmark;
+  return <div
+    className={`district heat-${heat.id}${focused ? ' focused' : ''}${attention ? ' attention' : ''}`}
+    style={{ left: `${district.x}%`, top: `${district.y}%`, '--district-weight': district.weight.toFixed(3) }}
+  >
+    <button
+      type="button"
+      className="district-open"
+      onClick={(event) => { event.stopPropagation(); onOpen(district.dir); }}
+      title={`${district.dir} — ${weightLabel(district)} · ${heat.label}`}
+      aria-label={`Open ${district.dir}: ${weightLabel(district)}, ${heat.label}`}
+    >
+      <span className="building-shape" aria-hidden="true"><i /><i /><i /><i /><Icon /></span>
+      <span className="district-plaque">
+        <b>{district.name}</b>
+        <small className="mono">{district.files == null ? '…' : district.files}{agents > 0 ? ` · ${agents} here` : ''}</small>
+      </span>
+    </button>
+    <button
+      type="button"
+      className="district-add"
+      title={`Start an agent in ${district.dir}`}
+      aria-label={`Start an agent in ${district.dir}`}
+      onClick={(event) => { event.stopPropagation(); onStart(district.dir, event); }}
+    ><Plus aria-hidden="true" /></button>
+  </div>;
 }
 
 function CapitalChooser({ workspaces, current, onChoose, onClose, pending, error }) {
@@ -441,18 +251,26 @@ function CapitalChooser({ workspaces, current, onChoose, onClose, pending, error
 
 export default function TheaterMode() {
   const st = useField();
-  const selectedId = st.activeSessionId;
   const [settings, setSettings] = useFieldSettings();
-  const [selectedRegion, setSelectedRegion] = useState(null), [settingsOpen, setSettingsOpen] = useState(false), [choosingCapital, setChoosingCapital] = useState(false), [pendingCapital, setPendingCapital] = useState(false), [capitalError, setCapitalError] = useState(''), [trace, setTrace] = useState([]);
-  const [starter, setStarter] = useState(null);
-  const [citiesOpen, setCitiesOpen] = useState(false);
+  const [place, setPlace] = useState(null);           // { workspaceId, dir } — the open folder
+  const [starter, setStarter] = useState(null);       // { workspace, dir, agentId, screen }
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [powerOpen, setPowerOpen] = useState(false);
+  const [choosingCapital, setChoosingCapital] = useState(false);
+  const [pendingCapital, setPendingCapital] = useState(false);
+  const [capitalError, setCapitalError] = useState('');
+  const [trees, setTrees] = useState({});             // JSON [ws, dir] -> entries | 'error'
+  const inFlight = useRef(new Set());
   const reconcileRef = useRef('');
   const defaultCapitalRef = useRef('');
+
   const view = st.snap;
-  const world = st.snap.world ?? { capitalWorkspaceId: null, assignments: {}, revision: 0 };
-  const workspaces = st.snap.workspaces.filter((item) => item.mounted);
-  // Anchor the world on the first project by default; the Capital button re-opens the chooser.
+  const now = view.now ?? Date.now();
+  const world = view.world ?? { capitalWorkspaceId: null, assignments: {}, revision: 0 };
+  const workspaces = useMemo(() => view.workspaces.filter((item) => item.mounted), [view.workspaces]);
+  const endpoints = view.endpoints?.length ? view.endpoints : st.config?.endpoints ?? [];
+
+  // Anchor the world on the first project by default; the Capital row re-opens the chooser.
   useEffect(() => {
     if (world.capitalWorkspaceId || !workspaces.length || !st.connected) return;
     const first = workspaces[0].id;
@@ -460,87 +278,335 @@ export default function TheaterMode() {
     defaultCapitalRef.current = first;
     api.selectCapital(first).catch((error) => { defaultCapitalRef.current = ''; setCapitalError(error.message); });
   }, [world.capitalWorkspaceId, workspaces, st.connected]);
-  const clusters = useMemo(() => infrastructureClusters(view, world.capitalWorkspaceId), [view, world.capitalWorkspaceId]);
-  const clusterByKey = useMemo(() => new Map(clusters.map((item) => [item.clusterKey, item])), [clusters]);
-  const positions = useMemo(() => livingWorldPositions(clusters, world.capitalWorkspaceId), [clusters, world.capitalWorkspaceId]);
-  const positionByKey = useMemo(() => new Map(positions.map((item) => [item.clusterKey, item])), [positions]);
-  const clusterByRegion = new Map(positions.map((position) => [position.id, clusterByKey.get(position.clusterKey)]));
+
+  // Territories are per project; the districts inside one are folders, not clusters.
   useEffect(() => {
-    if (!world.capitalWorkspaceId || !clusters.length) return;
+    if (!world.capitalWorkspaceId || !workspaces.length) return;
+    const clusters = workspaces.map((workspace) => ({
+      clusterKey: `workspace:${workspace.id}`, label: workspace.name, kind: 'project', workspaceId: workspace.id,
+    }));
     const signature = `${world.capitalWorkspaceId}:${clusters.map((item) => item.clusterKey).sort().join('|')}`;
-    const missing = clusters.some((item) => !world.assignments?.[item.clusterKey]);
     const currentKeys = new Set(clusters.map((item) => item.clusterKey));
+    const missing = clusters.some((item) => !world.assignments?.[item.clusterKey]);
     const stale = Object.keys(world.assignments ?? {}).some((key) => !currentKeys.has(key));
     const capitalWrong = world.assignments?.[`workspace:${world.capitalWorkspaceId}`]?.territoryId !== 'italia';
     if ((!missing && !stale && !capitalWrong) || reconcileRef.current === signature) return;
     reconcileRef.current = signature;
-    api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId }) => ({ clusterKey, label, kind, workspaceId }))).catch(() => { reconcileRef.current = ''; });
-  }, [clusters, world.assignments, world.capitalWorkspaceId]);
-  const sessions = useMemo(() => view.sessions.filter((session) => !TERMINAL_STATES.has(session.state)).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).slice(0, 40), [view.sessions]);
-  const selected = sessions.find((session) => session.id === selectedId) ?? null;
-  useEffect(() => { let alive = true; if (!selectedId) { setTrace([]); return () => { alive = false; }; } api.trace(selectedId, 0, 2000).then((result) => { if (alive) setTrace(result.events ?? []); }).catch(() => { if (alive) setTrace([]); }); return () => { alive = false; }; }, [selectedId, selected?.messageCount, selected?.toolCount, selected?.state, selected?.progress?.done]);
-  const endpoints = st.snap.endpoints?.length ? st.snap.endpoints : st.config?.endpoints ?? [];
-  const identities = useMemo(() => new Map(sessions.map((session) => [session.id, identityFor(session, endpoints, settings)])), [sessions, endpoints, settings]);
-  const sessionById = new Map(sessions.map((session) => [session.id, session]));
-  const collaboratorIds = new Set();
-  for (const edge of view.graph?.edges ?? []) { if (edge.type !== 'communicates_with') continue; const from = String(edge.from ?? '').replace(/^agent:/, ''), to = String(edge.to ?? '').replace(/^agent:/, ''); if (from === selectedId) collaboratorIds.add(to); if (to === selectedId) collaboratorIds.add(from); }
-  const collaborators = [...collaboratorIds].map((id) => sessionById.get(id)).filter(Boolean);
-  const agentsByRegion = new Map();
-  for (const session of sessions) { const frontKey = frontKeyFor(session); const workspaceKey = session.workspaceId ? `workspace:${session.workspaceId}` : `workspace:${world.capitalWorkspaceId}`; const hasDeparted = !['spawning', 'ready'].includes(session.state); const regionId = hasDeparted && positionByKey.has(frontKey) ? frontKey : workspaceKey; if (!agentsByRegion.has(regionId)) agentsByRegion.set(regionId, []); agentsByRegion.get(regionId).push(session); }
-  const routeLimit = settings.density === 'quiet' ? 6 : settings.density === 'dense' ? 16 : 11;
-  const routes = clusters.map((cluster) => ({ cluster, from: positionByKey.get(cluster.parentKey), to: positionByKey.get(cluster.clusterKey) })).filter((item) => item.from && item.to).slice(0, routeLimit);
-  const selectedCluster = selectedRegion ? clusterByRegion.get(selectedRegion) : null, selectedRegionAgents = selectedRegion ? agentsByRegion.get(selectedRegion) ?? [] : [];
-  const selectedRole = selected ? st.config?.roles?.find((item) => item.id === selected.role) : null;
-  const selectedAgent = selected ? st.config?.agents?.find((item) => item.id === selected.agentId) : null;
-  // The global "new agent" shortcut (Ctrl+Alt+N, wired in App.jsx) reaches whichever Field
-  // screen is mounted. The Board answers it in AtlasMode; this is Rome's half.
-  useEffect(() => {
-    const open = () => {
-      const workspace = workspaces.find((item) => item.id === world.capitalWorkspaceId) ?? workspaces[0];
-      if (!workspace) return;
-      setStarter({ workspace, screen: { x: Math.max(8, window.innerWidth / 2 - 180), y: 120 } });
+    api.reconcileWorld(clusters).catch(() => { reconcileRef.current = ''; });
+  }, [workspaces, world.assignments, world.capitalWorkspaceId]);
+
+  // ---- the folder tree, read one level at a time and kept ------------------------
+  // The map needs the level it is drawing plus each district's own listing for its file
+  // count; the open folder needs its own children. Everything is cached by path.
+  const wanted = useMemo(() => {
+    const keys = new Set();
+    const addLevel = (workspaceId, dir) => {
+      keys.add(treeKey(workspaceId, dir));
+      const entries = entriesOf(trees, workspaceId, dir);
+      if (!entries) return;
+      for (const entry of entries.filter((item) => item.dir).slice(0, 24)) {
+        keys.add(treeKey(workspaceId, normalizeDir(entry.path)));
+      }
     };
-    window.addEventListener('field:start-agent', open);
-    return () => window.removeEventListener('field:start-agent', open);
+    for (const workspace of workspaces) {
+      addLevel(workspace.id, place?.workspaceId === workspace.id ? parentOf(place.dir) : '');
+    }
+    if (place) addLevel(place.workspaceId, place.dir);
+    return [...keys];
+  }, [workspaces, place, trees]);
+
+  // One GET per path, ever: the in-flight set is a ref rather than state so a re-render
+  // while a listing is on the wire cannot cancel it or ask for it twice.
+  useEffect(() => {
+    for (const key of wanted) {
+      if (trees[key] !== undefined || inFlight.current.has(key)) continue;
+      inFlight.current.add(key);
+      const [wsId, dir] = JSON.parse(key);
+      api.tree(wsId, dir)
+        .then((result) => setTrees((prev) => ({ ...prev, [key]: result.entries ?? [] })))
+        .catch(() => setTrees((prev) => ({ ...prev, [key]: 'error' })))
+        .finally(() => inFlight.current.delete(key));
+    }
+  }, [wanted, trees]);
+
+  // ---- the map ------------------------------------------------------------------
+  const liveSessions = useMemo(
+    () => view.sessions.filter((session) => !TERMINAL_STATES.has(session.state)),
+    [view.sessions],
+  );
+  const identities = useMemo(
+    () => new Map(liveSessions.map((session) => [session.id, identityFor(session, endpoints, settings)])),
+    [liveSessions, endpoints, settings],
+  );
+
+  const cities = useMemo(() => {
+    const ordered = [...workspaces].sort(
+      (a, b) => Number(b.id === world.capitalWorkspaceId) - Number(a.id === world.capitalWorkspaceId),
+    );
+    const taken = new Set();
+    return ordered.map((workspace, index) => {
+      const preferred = settlementSeed(workspace.name).value % PROJECT_SLOTS.length;
+      let slot = preferred;
+      while (taken.has(slot) && taken.size < PROJECT_SLOTS.length) slot = (slot + 1) % PROJECT_SLOTS.length;
+      taken.add(slot);
+      return { workspace, position: PROJECT_SLOTS[slot] ?? PROJECT_SLOTS[Math.min(index, PROJECT_SLOTS.length - 1)] };
+    });
   }, [workspaces, world.capitalWorkspaceId]);
-  async function chooseCapital(workspaceId) { setPendingCapital(true); setCapitalError(''); try { await api.selectCapital(workspaceId); await api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId: ws }) => ({ clusterKey, label, kind, workspaceId: ws }))); reconcileRef.current = ''; setChoosingCapital(false); } catch (error) { setCapitalError(error.message); } finally { setPendingCapital(false); } }
-  const startAgent = (event, workspaceId = world.capitalWorkspaceId || workspaces[0]?.id) => {
+
+  const map = useMemo(() => cities.map(({ workspace, position }) => {
+    const level = place?.workspaceId === workspace.id ? parentOf(place.dir) : '';
+    const entries = entriesOf(trees, workspace.id, level);
+    const childTrees = new Map();
+    for (const entry of entries?.filter((item) => item.dir) ?? []) {
+      const child = normalizeDir(entry.path);
+      const tree = entriesOf(trees, workspace.id, child);
+      if (tree) childTrees.set(child, tree);
+    }
+    const districts = districtsAt({
+      workspaceId: workspace.id, dir: level, entries, childTrees,
+      folders: view.folders ?? [], files: view.files ?? [], now, limit: MAX_DISTRICTS,
+    });
+    const cityCentre = { x: position.x + position.w / 2, y: position.y + position.h / 2 };
+    const laid = ringLayout(districts ?? [], position, { seed: settlementSeed(workspace.name).value });
+    const mine = liveSessions.filter((session) => session.workspaceId === workspace.id);
+    const standing = standingPlaces(mine, laid.map((item) => item.dir));
+    const tier = verifiedContribution({ metrics: workspace.maturity }, mine).tier;
+    return { workspace, position, cityCentre, level, districts: laid, standing, tier, loading: entries === null };
+  }), [cities, trees, place, view.folders, view.files, liveSessions, now]);
+
+  // ---- the open folder ----------------------------------------------------------
+  const open = useMemo(() => {
+    if (!place) return null;
+    const workspace = workspaces.find((item) => item.id === place.workspaceId);
+    if (!workspace) return null;
+    const entries = entriesOf(trees, workspace.id, place.dir);
+    const childTrees = new Map();
+    for (const entry of entries?.filter((item) => item.dir) ?? []) {
+      const child = normalizeDir(entry.path);
+      const tree = entriesOf(trees, workspace.id, child);
+      if (tree) childTrees.set(child, tree);
+    }
+    const subfolders = districtsAt({
+      workspaceId: workspace.id, dir: place.dir, entries, childTrees,
+      folders: view.folders ?? [], files: view.files ?? [], now, limit: 40,
+    });
+    const mine = liveSessions.filter((session) => session.workspaceId === workspace.id);
+    const standing = subfolders ? standingPlaces(mine, subfolders.map((item) => item.dir)) : null;
+    const weight = {
+      ...folderRollup({ workspaceId: workspace.id, dir: place.dir, folders: view.folders ?? [], files: view.files ?? [], now }),
+      files: entries ? entries.filter((item) => !item.dir).length : null,
+      subfolders: entries ? entries.filter((item) => item.dir).length : 0,
+    };
+    return {
+      workspace,
+      weight,
+      subfolders: subfolders?.map((item) => ({ ...item, agents: standing?.get(item.dir)?.length ?? 0 })) ?? null,
+      sessions: sessionsInScope(view.sessions, {
+        workspaceId: workspace.id, dir: place.dir, finishedWithinMs: RECENTLY_FINISHED_MS, now,
+      }),
+    };
+  }, [place, workspaces, trees, view.folders, view.files, view.sessions, liveSessions, now]);
+
+  // ---- starting agents ----------------------------------------------------------
+  const startAgent = (workspaceId, dir = '', event = null, agentId = null) => {
     const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
     if (!workspace) return;
-    setStarter({ workspace, screen: { x: event?.clientX ?? window.innerWidth / 2 - 140, y: event?.clientY ?? 120 } });
+    setStarter({
+      workspace,
+      dir: normalizeDir(dir),
+      agentId,
+      screen: { x: event?.clientX ?? Math.max(8, window.innerWidth / 2 - 180), y: event?.clientY ?? 120 },
+    });
   };
-  return <div className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${selected || settingsOpen ? ' panel-open' : ''}${selected ? ' agent-selected' : ''}${sessions.length ? '' : ' senate-empty'}`} onClick={() => { clearActiveAgent(); setSelectedRegion(null); }}>
-    {/* Two controls. Theme became the nav; Models, Cities and Capital are rows in the
-        settings panel, where the rest of the world's configuration already lived. */}
+
+  // Ctrl+Alt+N reaches whichever Field screen is mounted; Rome answers it on the folder
+  // you have open, or on the capital when you have none.
+  useEffect(() => {
+    const onStart = () => {
+      const workspaceId = place?.workspaceId ?? world.capitalWorkspaceId ?? workspaces[0]?.id;
+      startAgent(workspaceId, place?.dir ?? '');
+    };
+    window.addEventListener('field:start-agent', onStart);
+    return () => window.removeEventListener('field:start-agent', onStart);
+  }, [place, workspaces, world.capitalWorkspaceId]);
+
+  async function chooseCapital(workspaceId) {
+    setPendingCapital(true); setCapitalError('');
+    try {
+      await api.selectCapital(workspaceId);
+      reconcileRef.current = '';
+      setChoosingCapital(false);
+    } catch (error) { setCapitalError(error.message); } finally { setPendingCapital(false); }
+  }
+
+  /* Opening a folder is a move in space, so it drops whichever agent was selected: only
+     clicking a marker re-selects one, and only then does the sheet scroll to it. */
+  const openFolder = (workspaceId, dir) => {
+    clearActiveAgent();
+    setPlace({ workspaceId, dir: normalizeDir(dir) });
+    setSettingsOpen(false);
+  };
+
+  const capital = workspaces.find((item) => item.id === world.capitalWorkspaceId);
+  const panelOpen = Boolean(open) || settingsOpen;
+
+  return <div
+    className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${panelOpen ? ' panel-open' : ''}${open ? ' folder-open' : ''}`}
+    onClick={() => { setPlace(null); clearActiveAgent(); }}
+  >
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
-      <div><span>IMPERIUM OPERIS</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : workspaces.length ? 'Anchoring the world…' : 'No project open'}</h1></div>
-      <div className="field-quick-settings"><button type="button" className="primary" disabled={!workspaces.length} onClick={(event) => startAgent(event)} aria-label="Start an agent"><Plus /><span>Start an agent</span></button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
+      <div>
+        <span>IMPERIUM OPERIS</span>
+        <h1>{capital?.name ?? (workspaces.length ? 'Anchoring the world…' : 'No project open')}</h1>
+      </div>
+      <div className="field-quick-settings">
+        {/* One primary per screen: it is this button until a folder is open, and the
+            folder's "Start an agent here" after that. */}
+        <button
+          type="button"
+          className={open ? '' : 'primary'}
+          disabled={!workspaces.length}
+          onClick={(event) => startAgent(world.capitalWorkspaceId ?? workspaces[0]?.id, '', event)}
+          aria-label="Start an agent on the capital project"
+          aria-keyshortcuts="Control+Alt+N"
+        ><Plus aria-hidden="true" /><span>Start an agent</span></button>
+        <button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button>
+      </div>
     </header>
+
     <main className="field-world-canvas living-world">
-      <div className="world-map-base" aria-hidden="true" /><div className="world-contours" aria-hidden="true" />
-      <div className="world-sea-label west">ORBIS OPERIS</div><div className="world-sea-label center">VIAE ET OPERA</div><div className="world-sea-label east">FINES ACTIVI</div>
-      <div className="world-routes">{routes.map(({ cluster, from, to }) => <i key={cluster.clusterKey} className={`route-${cluster.baseKind ?? cluster.kind}`} style={routeStyle(from, to)} />)}</div>
-      {positions.map((position) => <Region key={position.id} position={position} cluster={clusterByRegion.get(position.id)} agents={agentsByRegion.get(position.id) ?? []} isCapital={position.clusterKey === `workspace:${world.capitalWorkspaceId}`} selectedId={selectedId} relatedIds={collaboratorIds} identities={identities} settings={settings} onAgent={(id) => { selectAgent(id); setSettingsOpen(false); }} onRegion={(regionId) => { const cluster = clusterByRegion.get(regionId); if ((cluster?.baseKind ?? cluster?.kind) === 'project') openCity(cluster.workspaceId); else setSelectedRegion(regionId); }} focused={selectedRegion === position.id} />)}
-      <MaturityCard cluster={selectedCluster} agents={selectedRegionAgents} position={positionByKey.get(selectedRegion)} onClose={() => setSelectedRegion(null)} />
+      <div className="world-map-base" aria-hidden="true" />
+      <div className="world-contours" aria-hidden="true" />
+      <div className="world-sea-label west">ORBIS OPERIS</div>
+      <div className="world-sea-label center">VIAE ET OPERA</div>
+      <div className="world-sea-label east">FINES ACTIVI</div>
+
+      <div className="world-routes">
+        {map.flatMap(({ workspace, cityCentre, districts }) => districts.map((district) => (
+          <i key={`${workspace.id}:${district.dir}`} className="route-district" style={spokeStyle(cityCentre, district)} />
+        )))}
+      </div>
+
+      {map.map(({ workspace, position, cityCentre, level, districts, standing, tier, loading }) => {
+        const atCity = standing.get('') ?? [];
+        return <div key={workspace.id} className="city-group">
+          <City
+            position={position}
+            workspace={workspace}
+            isCapital={workspace.id === world.capitalWorkspaceId}
+            tier={tier}
+            active={districts.some((district) => (standing.get(district.dir) ?? []).length > 0) || atCity.length > 0}
+            focused={place?.workspaceId === workspace.id}
+            agents={atCity.length}
+            onOpen={(dir) => openFolder(workspace.id, dir)}
+          />
+
+          {level !== '' && (
+            <button
+              type="button"
+              className="district-up"
+              style={{ left: `${cityCentre.x}%`, top: `${position.y - 4}%` }}
+              onClick={(event) => { event.stopPropagation(); openFolder(workspace.id, parentOf(level)); }}
+            >↑ {level}</button>
+          )}
+
+          {districts.map((district) => {
+            const here = standing.get(district.dir) ?? [];
+            const heat = staleness(district.lastTs, now, here.length);
+            return <div key={district.dir} className="district-group">
+              <District
+                district={district}
+                heat={heat}
+                agents={here.length}
+                attention={here.some((session) => ATTENTION_STATES.has(session.state) || session.pendingPermission)}
+                focused={place?.workspaceId === workspace.id && place.dir === district.dir}
+                onOpen={(dir) => openFolder(workspace.id, dir)}
+                onStart={(dir, event) => startAgent(workspace.id, dir, event)}
+              />
+              {here.slice(0, MAX_MARKERS).map((session, index) => {
+                const offset = markerRing(here.length, index);
+                return <AgentMarker
+                  key={session.id}
+                  session={session}
+                  identity={identities.get(session.id)}
+                  x={district.x + offset.dx}
+                  y={district.y + offset.dy}
+                  index={index}
+                  settings={settings}
+                  selected={session.id === st.activeSessionId}
+                  onSelect={(picked) => {
+                    openFolder(workspace.id, district.dir);
+                    selectAgent(picked.id);
+                  }}
+                />;
+              })}
+              {here.length > MAX_MARKERS && (
+                <span className="district-overflow mono" style={{ left: `${district.x}%`, top: `${district.y + 9}%` }}>
+                  +{here.length - MAX_MARKERS}
+                </span>
+              )}
+            </div>;
+          })}
+
+          {atCity.slice(0, MAX_MARKERS).map((session, index) => {
+            const offset = markerRing(Math.max(2, atCity.length), index, { radius: 9 });
+            return <AgentMarker
+              key={session.id}
+              session={session}
+              identity={identities.get(session.id)}
+              x={cityCentre.x + offset.dx}
+              y={cityCentre.y + offset.dy}
+              index={index}
+              settings={settings}
+              selected={session.id === st.activeSessionId}
+              onSelect={(picked) => { openFolder(workspace.id, normalizeDir(picked.focusDir) || level); selectAgent(picked.id); }}
+            />;
+          })}
+
+          {loading && <span className="district-reading mono" style={{ left: `${cityCentre.x}%`, top: `${position.y + position.h + 2}%` }}>reading the folders…</span>}
+        </div>;
+      })}
     </main>
-    <AgentRoster sessions={sessions} identities={identities} settings={settings} selectedId={selectedId} onSelect={(id) => { selectAgent(id); setSettingsOpen(false); }} onStart={(event) => startAgent(event)} />
-    {!settingsOpen && <AgentInspector session={selected} identity={selected ? identities.get(selected.id) : null} settings={settings} role={selectedRole} agent={selectedAgent} trace={trace} collaborators={collaborators} onClose={clearActiveAgent} onSettings={() => setSettingsOpen(true)} onOpen={() => openSenate(selected.id)} />}
-    {trace.length >= 2000 && <div className="world-notice" role="status">Showing the first 2,000 events. Open History to load the rest.</div>}
+
+    {open && (
+      <FolderDetail
+        workspace={open.workspace}
+        dir={place.dir}
+        weight={open.weight}
+        subfolders={open.subfolders}
+        sessions={open.sessions}
+        selectedId={st.activeSessionId}
+        onNavigate={(dir) => openFolder(open.workspace.id, dir)}
+        onStart={(dir, event, agentId) => startAgent(open.workspace.id, dir, event, agentId ?? null)}
+        onClose={() => setPlace(null)}
+      />
+    )}
+
     {!workspaces.length && <div className="world-notice" role="status">No project is mounted. Add one under <code>workspaces</code> in <code>field/field.yaml</code> and restart Field.</div>}
     {capitalError && !choosingCapital && <div className="world-notice bad" role="alert">{capitalError}</div>}
+
     {settingsOpen && <FieldSettings
       settings={settings}
       setSettings={setSettings}
-      selected={selected}
+      selected={view.sessions.find((session) => session.id === st.activeSessionId) ?? null}
       config={st.config}
       onClose={() => setSettingsOpen(false)}
       onOpenModels={() => { setSettingsOpen(false); setPowerOpen(true); }}
-      onOpenCities={() => { setSettingsOpen(false); setCitiesOpen(true); }}
       onChooseCapital={() => { setSettingsOpen(false); setChoosingCapital(true); }}
     />}
-    {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
     {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} settings={settings} setSettings={setSettings} />}
-    {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} onOpenModels={() => { setStarter(null); setPowerOpen(true); }} />}
+    {starter && <ContextMenu
+      fixed
+      initialPane="spawn"
+      initialAgentId={starter.agentId}
+      screen={starter.screen}
+      target={starter.dir
+        ? { type: 'folder', id: starter.dir, label: starter.dir, workspaceId: starter.workspace.id }
+        : { type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }}
+      scopeNote={starter.dir ? `Folder in scope:\n- ${starter.dir}` : ''}
+      onClose={() => setStarter(null)}
+      onOpenModels={() => { setStarter(null); setPowerOpen(true); }}
+    />}
     {choosingCapital && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} />}
   </div>;
 }

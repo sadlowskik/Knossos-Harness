@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Landmark, MapPin, RadioTower, Upload, X } from 'lucide-react';
+import { Check, MapPin, RadioTower, Upload, X } from 'lucide-react';
 import { api } from '../net/client.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
 import {
@@ -28,7 +28,7 @@ export function ChoiceGroup({ value, options, onChange }) {
    left the Board with no settings at all; both screens now open this from their gear. */
 export default function FieldSettings({
   settings, setSettings, selected, config, onClose,
-  onOpenModels = null, onOpenCities = null, onChooseCapital = null,
+  onOpenModels = null, onChooseCapital = null,
   standalone = false,
 }) {
   const [tab, setTab] = useState('field');
@@ -41,7 +41,7 @@ export default function FieldSettings({
   const roleTools = role?.tools_allow ?? [];
   const selectedTools = override.toolsAllow ?? configuredAgent?.tools_allow ?? roleTools;
   // Rome hands in its world handlers; the Board does not have a world to configure.
-  const worldRows = [onOpenModels, onOpenCities, onChooseCapital].some(Boolean);
+  const worldRows = [onOpenModels, onChooseCapital].some(Boolean);
 
   function patchSettings(patch) { setSettings((current) => normalizeFieldSettings({ ...current, ...patch })); }
   function patchAgent(patch) { if (key) patchSettings({ agentOverrides: { ...settings.agentOverrides, [key]: { ...override, ...patch } } }); }
@@ -129,9 +129,8 @@ export default function FieldSettings({
             rows here rather than settings, and only appear on the screen that has a world. */}
         {worldRows && (
           <section className="settings-rows">
-            <label>{onOpenCities || onChooseCapital ? 'World' : 'Models'}</label>
+            <label>{onChooseCapital ? 'World' : 'Models'}</label>
             {onOpenModels && <button type="button" className="btn ghost" onClick={onOpenModels}><RadioTower aria-hidden="true" />Models<small>Cameo boxes, Ollama, provider keys</small></button>}
-            {onOpenCities && <button type="button" className="btn ghost" onClick={onOpenCities}><Landmark aria-hidden="true" />Cities<small>Per-project command hub</small></button>}
             {onChooseCapital && <button type="button" className="btn ghost" onClick={onChooseCapital}><MapPin aria-hidden="true" />Capital<small>The project the world is anchored on</small></button>}
           </section>
         )}

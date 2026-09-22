@@ -104,9 +104,9 @@ export default function PowerSources({ onClose, focus = null, settings = null, s
   }
 
   return (
-    <div className="cityhub-veil psrc-veil" onClick={onClose}>
-      <div className="cityhub psrc-modal" role="dialog" aria-modal="true" aria-labelledby="psrc-title" onClick={(e) => e.stopPropagation()}>
-        <header className="cityhub-head psrc-head">
+    <div className="psrc-veil" onClick={onClose}>
+      <div className="psrc-modal" role="dialog" aria-modal="true" aria-labelledby="psrc-title" onClick={(e) => e.stopPropagation()}>
+        <header className="psrc-head">
           <span className="psrc-title-wrap">
             <Cpu aria-hidden="true" />
             <span>
@@ -188,8 +188,8 @@ export default function PowerSources({ onClose, focus = null, settings = null, s
               <input type="password" value={form.key} onChange={(e) => patch({ key: e.target.value })} placeholder={needsUrl ? 'Leave empty for local' : 'sk-ant-…'} autoComplete="off" />
               <span className="psrc-help">Kept in {keyHome}. Sent once, never shown again.</span>
             </label>
-            {error && <p className="cityhub-error psrc-msg" role="alert">{error}</p>}
-            {note && <p className="cityhub-note psrc-msg" role="status">{note}</p>}
+            {error && <p className="psrc-msg bad" role="alert">{error}</p>}
+            {note && <p className="psrc-msg ok" role="status">{note}</p>}
             <div className="psrc-form-actions">
               <button type="button" className="btn ghost" onClick={onClose}>Close</button>
               <button type="button" className="btn primary" disabled={busy || (!form.name && !form.id)} onClick={add}><Plus aria-hidden="true" /> Add model</button>
