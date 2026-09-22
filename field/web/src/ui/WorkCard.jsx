@@ -1,7 +1,9 @@
-/* The one card. The Board and the Map strip used to keep two card components and two
-   state vocabularies for the same project-and-agent facts; both now render .work-card,
-   and the Map strip renders .work-card.compact — the same shell at 24px rows, without
-   the transcript. Four tones, one word list, one padding rhythm. */
+/* The shared vocabulary for a piece of work.
+
+   This was the one card, plus the parts a card is made of. The card shell itself belonged
+   to the canvas Map's strip, which is gone, so what is left is what Rome and Atlas both
+   still use: the plain-language state, the pill that says it, an agent's mark, and the
+   flush-set fact row. Four tones, one word list. */
 
 import { initials, identityHue } from '../theater/fieldPreferences.js';
 
@@ -74,53 +76,3 @@ export function MetaRow({ items = [], className = '' }) {
   );
 }
 
-/* The card shell. Slots, not variants: whichever screen fills them decides what the
-   card is about. `compact` is the Map strip — narrower, 24px rows, no transcript. */
-export default function WorkCard({
-  tone = 'idle',
-  compact = false,
-  selected = false,
-  needsYou = false,
-  hollow = false,
-  ariaLabel,
-  role = 'listitem',
-  mark = null,
-  title,
-  subtitle = null,
-  pill = null,
-  action = null,
-  meta = null,
-  notices = null,
-  children = null,
-  footer = null,
-  onTitleClick = null,
-  titleTitle = undefined,
-}) {
-  const heading = onTitleClick
-    ? <button type="button" className="work-who" onClick={onTitleClick} title={titleTitle}>
-        {mark}
-        <span className="work-who-text"><b>{title}</b>{subtitle && <small className="work-model">{subtitle}</small>}</span>
-      </button>
-    : <div className="work-who idle">
-        {mark}
-        <span className="work-who-text"><b>{title}</b>{subtitle && <small className="work-model">{subtitle}</small>}</span>
-      </div>;
-
-  return (
-    <article
-      className={`work-card tone-${tone}${compact ? ' compact' : ''}${selected ? ' selected' : ''}${needsYou ? ' needs-you' : ''}${hollow ? ' hollow' : ''}`}
-      role={role}
-      aria-label={ariaLabel}
-    >
-      <header className="work-card-head">
-        {heading}
-        {pill}
-        {action}
-      </header>
-      {meta}
-      {notices}
-      {children != null && <div className="work-card-body">{children}</div>}
-      {footer && <footer className="work-card-foot">{footer}</footer>}
-    </article>
-  );
-}

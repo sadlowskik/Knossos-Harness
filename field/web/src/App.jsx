@@ -1,34 +1,23 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api } from './net/client.js';
 import { setMode, useField } from './state/store.js';
-import RoutinesMode from './routines/RoutinesMode.jsx';
-import TracesMode from './traces/TracesMode.jsx';
-import CampaignMode from './campaigns/CampaignMode.jsx';
 import AtlasMode from './atlas/AtlasMode.jsx';
 import EmptyState from './ui/EmptyState.jsx';
 
-const WorkspaceMode = lazy(() => import('./workspace/WorkspaceMode.jsx'));
-// The canvas RTS renderer is an opt-in lens; lazy so it never weighs on the default path.
-const FieldMode = lazy(() => import('./field/FieldMode.jsx'));
-// Rome is a heavy illustrated map. It used to be reachable only through a buried
-// `theme` setting; it is a destination now, and still lazy.
+// Rome is a heavy illustrated map; it stays lazy even though it is the default.
 const TheaterMode = lazy(() => import('./theater/TheaterMode.jsx'));
 
-/* One row of destinations. There used to be two: a MODES row where "Field" was an alias
-   for Board, and a FIELD_LENSES row underneath it — seven buttons to say seven things.
-   `gap` marks the hairline after Rome, which separates the three live views of the work
-   from the four surfaces you work in. */
+/* Two destinations and a gear, which is the whole navigation.
+
+   There were seven: Board, Map, Rome, Project, Plans, Routines and History. Map was Rome
+   with a different skin, Project was a folder's detail behind a route, Plans was an
+   overlay on the territory, Routines was a settings panel and History was a time control
+   on the map. Each of those is now where it belongs, and the row says the two things
+   Field actually shows: a territory and every conversation on it. */
 const NAV = [
-  { id: 'theater', name: 'Board', key: 'V', alias: 'F' },
-  { id: 'rts', name: 'Map', key: 'G' },
   { id: 'rome', name: 'Rome', key: 'O' },
-  { id: 'workspace', name: 'Project', key: 'C', gap: true },
-  { id: 'campaigns', name: 'Plans', key: 'S' },
-  { id: 'routines', name: 'Routines', key: 'R' },
-  { id: 'traces', name: 'History', key: 'T' },
+  { id: 'atlas', name: 'Atlas', key: 'A' },
 ];
-const FIELD_MODES = new Set(['theater', 'field', 'rome', 'rts', 'campaigns', 'workspace']);
-const isOn = (id, mode) => mode === id || (id === 'theater' && mode === 'field');
 
 export default function App() {
   const st = useField();
@@ -41,17 +30,15 @@ export default function App() {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable) return;
       if (e.defaultPrevented || e.repeat || !e.altKey || !e.ctrlKey || e.metaKey) return;
       const pressed = e.key.toLowerCase();
-      const hit = NAV.find((m) => m.key.toLowerCase() === pressed || m.alias?.toLowerCase() === pressed);
+      const hit = NAV.find((m) => m.key.toLowerCase() === pressed);
       if (hit) {
         e.preventDefault();
         setMode(hit.id);
         return;
       }
-      // N — start an agent. Whichever Field screen is mounted opens its starter on the
-      // first mounted project; from Routines or History, come back to the Board first.
-      if (e.key.toLowerCase() === 'n') {
+      // N — start an agent. Both screens answer it where they stand.
+      if (pressed === 'n') {
         e.preventDefault();
-        if (!FIELD_MODES.has(st.mode)) setMode('theater');
         requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('field:start-agent')));
       }
     };
@@ -83,10 +70,10 @@ export default function App() {
           {NAV.map((m) => (
             <button
               key={m.id}
-              className={`mode segctl-item${m.gap ? ' segctl-gap' : ''}${isOn(m.id, st.mode) ? ' on' : ''}`}
+              className={`mode segctl-item${st.mode === m.id ? ' on' : ''}`}
               onClick={() => setMode(m.id)}
               type="button"
-              aria-current={isOn(m.id, st.mode) ? 'page' : undefined}
+              aria-current={st.mode === m.id ? 'page' : undefined}
               aria-keyshortcuts={`Control+Alt+${m.key}`}
             >
               {m.name}
@@ -121,25 +108,12 @@ export default function App() {
             </div>
           </div>
         )}
-        {(st.mode === 'theater' || st.mode === 'field') && <AtlasMode />}
-        {st.mode === 'rts' && (
-          <Suspense fallback={<EmptyState status title="Drawing the map…">The canvas renderer is loading. Agents appear on it as soon as it is ready.</EmptyState>}>
-            <FieldMode />
-          </Suspense>
-        )}
+        {st.mode === 'atlas' && <AtlasMode />}
         {st.mode === 'rome' && (
           <Suspense fallback={<EmptyState status title="Raising Rome…">The illustrated operations map is loading.</EmptyState>}>
             <TheaterMode />
           </Suspense>
         )}
-        {st.mode === 'campaigns' && <CampaignMode />}
-        {st.mode === 'workspace' && (
-          <Suspense fallback={<EmptyState status title="Opening the project…">Files, changes and the terminal are loading.</EmptyState>}>
-            <WorkspaceMode />
-          </Suspense>
-        )}
-        {st.mode === 'routines' && <RoutinesMode />}
-        {st.mode === 'traces' && <TracesMode />}
       </main>
     </div>
   );

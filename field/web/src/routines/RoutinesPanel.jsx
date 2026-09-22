@@ -1,8 +1,16 @@
+/* Routines, behind the gear.
+
+   Routines were a destination, which said they were a place you go. They are not: they
+   are a setting — which standing work is armed, when it last fired and what came of it.
+   So this is the same panel, whole, inside Field settings: the enable switch with its
+   risk confirmation, the trigger, the next scheduled run, the last outcome, the run
+   history and Run now. Nothing about it changed except where it lives. */
+
 import { useEffect, useState } from 'react';
 import { api } from '../net/client.js';
 import { useField } from '../state/store.js';
 
-export default function RoutinesMode() {
+export default function RoutinesPanel() {
   const st = useField();
   const [states, setStates] = useState({});
   const [details, setDetails] = useState({});
@@ -46,15 +54,15 @@ export default function RoutinesMode() {
   };
 
   return (
-    <div className="sheet">
-      <h2 className="sheet-title">Routines</h2>
-      <p className="sheet-sub">
+    <section className="routines-panel">
+      <label>Routines</label>
+      <p className="settings-help">
         Persistent and scheduled work. Each routine is a file in <code>field/routines/</code> and
         lives in Git. Enablement and run outcomes are retained in the Field event log. A routine
         that fires spawns a real session with the role, endpoint, budget, and orders written here.
       </p>
 
-      {err && <div className="ctx-err" style={{ margin: '0 0 12px', maxWidth: 900 }}>{err}</div>}
+      {err && <div className="ctx-err" role="alert">{err}</div>}
 
       {routines.length === 0 && (
         <div className="empty"><b>No routines defined.</b>Add a YAML file under <code>field/routines/</code> with a trigger (cron or file change), a role, orders and a budget, then restart Field. It appears here with an enable switch and a Run now button.</div>
@@ -78,20 +86,12 @@ export default function RoutinesMode() {
               ><i /></button>
 
               <span className="rt-name">{r.name ?? r.id}</span>
-              <span className="rt-trigger">
-                {r.trigger?.kind === 'schedule'
-                  ? `cron ${r.trigger.cron}`
-                  : r.trigger?.kind === 'fs_change'
-                    ? `on change · ${(r.trigger.paths ?? []).join(', ')} · ${r.trigger.debounce_seconds ?? 60}s debounce`
-                    : r.trigger?.kind ?? 'manual'}
-              </span>
-
               <span style={{ flex: '1 1 auto' }} />
               {spawned.length > 0 && (
                 <span className="label">{spawned.length} run{spawned.length > 1 ? 's' : ''}</span>
               )}
               <button
-                className="btn"
+                className="btn sm"
                 onClick={() => runNow(r.id)}
                 disabled={busy[r.id]}
                 type="button"
@@ -99,6 +99,13 @@ export default function RoutinesMode() {
             </div>
 
             <div className="rt-body">
+              <span className="rt-trigger">
+                {r.trigger?.kind === 'schedule'
+                  ? `cron ${r.trigger.cron}`
+                  : r.trigger?.kind === 'fs_change'
+                    ? `on change · ${(r.trigger.paths ?? []).join(', ')} · ${r.trigger.debounce_seconds ?? 60}s debounce`
+                    : r.trigger?.kind ?? 'manual'}
+              </span>
               <div className="rt-orders">{r.orders?.trim() ?? '(no orders)'}</div>
               <div className="rt-meta">
                 <Meta k="role" v={r.role} />
@@ -124,7 +131,7 @@ export default function RoutinesMode() {
           </div>
         );
       })}
-    </div>
+    </section>
   );
 }
 
@@ -138,7 +145,7 @@ function Meta({ k, v }) {
   return (
     <div>
       <div className="label">{k}</div>
-      <div className="mono" style={{ fontSize: 11, color: 'var(--body)' }}>{v ?? '—'}</div>
+      <div className="mono rt-meta-value">{v ?? '—'}</div>
     </div>
   );
 }

@@ -149,6 +149,25 @@ export default function Conversation({
   const current = normalizePath(session.focusPath);
   const errorText = session.error ?? session.lastError ?? null;
 
+  /* Who this agent is actually working with. The selection HUD on the canvas Map and the
+     senate chamber in Plans each showed a version of this; both screens are gone, so the
+     facts live on the conversation, which is the one place an agent is described. */
+  const working = (() => {
+    const ids = new Set();
+    for (const edge of st.snap.graph?.edges ?? []) {
+      if (edge.type !== 'communicates_with') continue;
+      const from = String(edge.from ?? '').replace(/^agent:/, '');
+      const to = String(edge.to ?? '').replace(/^agent:/, '');
+      if (from === session.id) ids.add(to);
+      if (to === session.id) ids.add(from);
+    }
+    for (const child of session.children ?? []) ids.add(child);
+    return [...ids]
+      .map((id) => st.snap.sessions.find((item) => item.id === id)?.name)
+      .filter(Boolean);
+  })();
+  const delegated = (session.delegations ?? []).map((item) => item.type ?? 'subagent');
+
   const contextPending = attached.length > 0 && JSON.stringify(attached) !== JSON.stringify(sentFiles);
 
   const toggleFile = (path) => setSettings((prev) => {
@@ -333,10 +352,17 @@ export default function Conversation({
             project?.git?.branch && changed
               ? { key: 'changed', label: 'changed', value: `${changed} files`, onClick: () => openChanges(project.id), title: 'Review, accept or revert the changes' }
               : null,
+            session.role && { key: 'role', label: 'role', value: session.role },
             lastTool && { key: 'tool', label: 'tool', value: lastTool },
+            session.toolCount != null && {
+              key: 'tools', label: 'tools',
+              value: `${session.toolCount}${session.editCount ? ` · ${session.editCount} edits` : ''}`,
+            },
             pct != null && { key: 'progress', label: 'progress', value: `${pct}%` },
             elapsed != null && { key: 'elapsed', label: 'elapsed', value: elapsed < 1 ? '<1m' : `${elapsed}m` },
             session.contextPct != null && { key: 'context', label: 'context', value: `${session.contextPct}%` },
+            delegated.length > 0 && { key: 'delegated', label: 'delegated', value: delegated.join(', ') },
+            working.length > 0 && { key: 'working-with', label: 'working with', value: working.join(', '), title: 'Agents this one is talking to or has delegated to' },
             {
               key: 'cost',
               label: session.budgetExhausted ? 'budget' : 'cost',

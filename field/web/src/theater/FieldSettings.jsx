@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, MapPin, RadioTower, Upload, X } from 'lucide-react';
 import { api } from '../net/client.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
+import RoutinesPanel from '../routines/RoutinesPanel.jsx';
 import {
   CUSTOM_FONT_MAX_BYTES,
   DEFAULT_FIELD_SETTINGS,
@@ -24,8 +25,11 @@ export function ChoiceGroup({ value, options, onChange }) {
   ))}</div>;
 }
 
-/* The one settings panel. It used to live inside the Rome branch of TheaterMode, which
-   left the Board with no settings at all; both screens now open this from their gear. */
+/* The one settings panel, opened from the gear on either screen.
+
+   Its third tab is Routines, which used to be a destination of its own. Standing work —
+   what is armed, when it fires, what came of it last — is a setting, not a place, so the
+   whole panel moved in here rather than keeping a nav button alive for it. */
 export default function FieldSettings({
   settings, setSettings, selected, config, onClose,
   onOpenModels = null, onChooseCapital = null,
@@ -103,7 +107,7 @@ export default function FieldSettings({
     onClick={(event) => event.stopPropagation()}
   >
     <header><div><span>FIELD</span><h2>Settings</h2></div><button type="button" onClick={onClose} aria-label="Close settings"><X /></button></header>
-    <nav>{['field', 'agents'].map((item) => (
+    <nav>{['field', 'agents', 'routines'].map((item) => (
       <button type="button" key={item} className={tab === item ? 'on' : ''} onClick={() => setTab(item)}>{item}</button>
     ))}</nav>
     <div className="settings-scroll">
@@ -153,6 +157,7 @@ export default function FieldSettings({
         {selected ? <section className="agent-settings"><label>Selected agent</label><h3>{override.displayName || selected.name}</h3><div className="settings-field"><span>Display name</span><input value={override.displayName ?? selected.name ?? ''} onChange={(event) => patchAgent({ displayName: event.target.value })} /></div><div className="settings-field"><span>Endpoint alias</span><input value={override.endpointAlias ?? ''} placeholder="Use endpoint name" onChange={(event) => patchAgent({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={override.hfRepo ?? ''} placeholder="owner/model" onChange={(event) => patchAgent({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Icon URL</span><input value={override.iconUrl ?? ''} placeholder="https://…" onChange={(event) => patchAgent({ iconUrl: event.target.value, iconDataUrl: '' })} /></div><label className="upload-control"><Upload />Upload icon<input type="file" accept="image/*" onChange={upload} /></label></section> : <section><p>Select an agent to edit its persistent name and emblem.</p></section>}
         {selected && <section><label>Tool authority</label><p className="settings-help">A configured agent may receive a subset of its role&apos;s real allowlist. Changes apply on its next deployment.</p><div className="authority-grid">{roleTools.map((tool) => <button type="button" key={tool} className={selectedTools.includes(tool) ? 'on' : ''} aria-pressed={selectedTools.includes(tool)} onClick={() => toggleTool(tool)}><ToolIcon name={tool} />{tool}<Check /></button>)}</div>{!configuredAgent && <small>Ad-hoc sessions cannot persist tool changes.</small>}</section>}
       </>}
+      {tab === 'routines' && <RoutinesPanel />}
     </div>
     <footer>
       <button type="button" className="restore" onClick={() => setSettings(normalizeFieldSettings(DEFAULT_FIELD_SETTINGS))}>Restore defaults</button>

@@ -1,8 +1,21 @@
+/* Plans, drawn on the territory.
+
+   A plan is an objective, a definition of done and the agents working towards it. That is
+   never a separate place: it is a claim over part of the map. So Plans is not a
+   destination any more — it is an overlay on Rome that draws each plan across the city it
+   targets and the districts its agents are standing in, with the plan's objectives, its
+   roster and its controls in a panel beside them. A plan with no folder to stand on is
+   listed in the panel rather than given invented geography.
+
+   The per-agent "chamber" that used to live here is gone: it showed the prompt, the
+   model, the cost and the messages, which is the conversation panel, and the conversation
+   panel is one click away in the folder the agent is standing in. */
+
 import { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { api } from '../net/client.js';
-import { clearActiveAgent, openSenate, selectCampaign, useField } from '../state/store.js';
+import { selectCampaign, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
-import AgentControls from '../hud/AgentControls.jsx';
 import ReplayRail from '../ui/ReplayRail.jsx';
 import { plainState } from '../ui/WorkCard.jsx';
 
@@ -18,58 +31,40 @@ const PHASE_WORD = {
 };
 const OPEN_PHASES = new Set(['mobilizing', 'blue_building', 'red_challenging', 'contested', 'blue_mitigating', 'red_retesting', 'referee_review']);
 
-export default function CampaignMode() {
-  const st = useField();
-  const agent = st.snap.sessions.find((session) => session.id === st.activeSessionId);
-  return agent ? <AgentChamber session={agent} /> : <PlansCommand />;
+function phaseLabel(phase) { return PHASE_WORD[phase] ?? phase?.replaceAll('_', ' ') ?? 'unknown'; }
+
+export function planMembers(campaign) {
+  const teams = campaign.teams ?? {};
+  return Object.keys(teams).flatMap((lane) => (teams[lane]?.members ?? []).map((member) => ({ ...member, lane })));
 }
 
-function AgentChamber({ session }) {
-  const st = useField();
-  const [trace, setTrace] = useState([]);
-  const role = st.config?.roles?.find((item) => item.id === session.role);
-  const campaign = st.snap.campaigns?.find((item) => item.id === session.campaignId);
-  const workspace = st.snap.workspaces.find((item) => item.id === session.workspaceId);
-  const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  const collaborators = useMemo(() => {
-    const ids = new Set();
-    for (const edge of st.snap.graph?.edges ?? []) {
-      if (edge.type !== 'communicates_with') continue;
-      const from = String(edge.from ?? '').replace(/^agent:/, '');
-      const to = String(edge.to ?? '').replace(/^agent:/, '');
-      if (from === session.id) ids.add(to);
-      if (to === session.id) ids.add(from);
+const normalizeDir = (value) => (typeof value === 'string' ? value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '') : '');
+
+/**
+ * Where a plan stands on the map: the city it targets, plus every district one of its
+ * agents is currently in. `map` is Rome's own geometry, so a plan is drawn over the same
+ * shapes you clicked to get here.
+ */
+export function planGround(campaign, map, sessions) {
+  const workspaceId = campaign.target?.workspaceId ?? campaign.target?.id ?? null;
+  const city = map.find((item) => item.workspace.id === workspaceId) ?? null;
+  const memberIds = new Set(planMembers(campaign).map((member) => member.sessionId));
+  const points = [];
+  if (city) points.push({ key: `city:${city.workspace.id}`, x: city.cityCentre.x, y: city.cityCentre.y, label: city.workspace.name });
+  for (const entry of map) {
+    for (const district of entry.districts) {
+      const occupied = sessions.some((session) => (
+        memberIds.has(session.id)
+        && session.workspaceId === entry.workspace.id
+        && normalizeDir(session.focusDir) === district.dir
+      ));
+      if (occupied) points.push({ key: `d:${entry.workspace.id}:${district.dir}`, x: district.x, y: district.y, label: district.name });
     }
-    return [...ids].map((id) => st.snap.sessions.find((item) => item.id === id)).filter(Boolean);
-  }, [session.id, st.snap.graph?.edges, st.snap.sessions]);
-
-  useEffect(() => {
-    let alive = true;
-    api.trace(session.id, 0, 2000).then((result) => { if (alive) setTrace(result.events ?? []); }).catch(() => { if (alive) setTrace([]); });
-    return () => { alive = false; };
-  }, [session.id, session.messageCount, session.toolCount, session.state, session.progress?.done]);
-
-  const spawn = trace.find((event) => event.kind === 'session.spawned')?.data ?? {};
-  const messages = trace.filter((event) => event.kind === 'session.message').slice(-10);
-  const activity = trace.filter((event) => ['session.tool_use', 'session.tool_result', 'session.state'].includes(event.kind)).slice(-8).reverse();
-  const endpoint = st.snap.endpoints.find((item) => item.id === session.endpointId);
-  return <main className="senate-session-shell">
-    <header className="senate-session-header"><div><span>AGENT</span><h1>{session.name}</h1><p>{session.role} · {session.state?.replaceAll('_', ' ')}</p></div><button type="button" onClick={clearActiveAgent}>Back to plans</button></header>
-    <section className="senate-dais">
-      <div className="senate-agent-seal">{String(session.name || 'A').slice(0, 2).toUpperCase()}</div>
-      <div><span>CURRENT OBJECTIVE</span><h2>{session.target?.label ?? session.stateDetail ?? 'Awaiting orders'}</h2><p>{workspace?.name ?? session.workspaceId}{campaign ? ` · ${campaign.name}` : ''}</p></div>
-      <div className="senate-progress"><b>{pct}%</b><span role="progressbar" aria-label={`${session.name} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct}><i style={{ width: `${pct}%` }} /></span><small>{session.progress?.done ?? 0} / {session.progress?.total ?? 0} stages</small></div>
-    </section>
-    <div className="senate-chamber-grid">
-      {trace.length >= 2000 && <div className="label">Showing the first 2,000 events. Open History to load the rest.</div>}
-      <section className="senate-brief"><span>PROMPT</span><p>{spawn.initialOrders ?? spawn.systemPrompt ?? 'No prompt was recorded for this session.'}</p>{spawn.systemPrompt && spawn.systemPrompt !== spawn.initialOrders && <details><summary>System instructions</summary><p>{spawn.systemPrompt}</p></details>}<dl><div><dt>Model</dt><dd>{session.model ?? 'unreported'}</dd></div><div><dt>Endpoint</dt><dd>{endpoint?.name ?? session.endpointId ?? 'local'}</dd></div><div className={session.budgetExhausted ? 'budget-exhausted' : ''}><dt>Cost</dt><dd>${(session.costUsd ?? 0).toFixed(4)}{session.budgetUsd ? ` of ${Number(session.budgetUsd).toFixed(2)}` : ''}{session.budgetRemainingUsd != null && !session.budgetExhausted ? ` · ${Number(session.budgetRemainingUsd).toFixed(2)} left` : ''}{session.budgetExhausted ? ' · exhausted' : ''}</dd></div><div><dt>Tools</dt><dd>{(role?.tools_allow ?? []).join(', ') || 'none declared'}</dd></div></dl><AgentControls session={session} /></section>
-      <section className="senate-conversation"><span>CONVERSATION</span>{messages.length ? messages.map((event) => <article key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{event.data?.text ?? event.data?.content ?? event.data?.summary}</p></article>) : <em>No messages yet.</em>}</section>
-      <section className="senate-cohort"><span>WORKING WITH</span>{collaborators.length ? collaborators.map((item) => <button type="button" key={item.id} onClick={() => openSenate(item.id)}><i className={`state-${item.state}`} /><b>{item.name}</b><small>{item.role} · {item.state}</small></button>) : <em>No active links.</em>}<span className="senate-activity-title">RECENT ACTIVITY</span>{activity.length ? activity.map((event) => <article key={event.id ?? event.seq}><b>{event.kind.replace('session.', '')}</b><p>{event.data?.summary ?? event.data?.detail ?? event.data?.name ?? 'Status updated'}</p></article>) : <em>Nothing yet.</em>}</section>
-    </div>
-  </main>;
+  }
+  return { workspaceId, city, points };
 }
 
-function PlansCommand() {
+export default function PlansOverlay({ map = [], onClose, onOpenAgent = null }) {
   const st = useField();
   const campaigns = st.snap.campaigns ?? [];
   const [selected, setSelected] = useState(st.activeCampaignId ?? campaigns[0]?.id ?? null);
@@ -92,6 +87,12 @@ function PlansCommand() {
   const liveCampaign = campaigns.find((c) => c.id === selected) ?? null;
   const campaign = replay?.campaign ?? liveCampaign;
   const sessions = useMemo(() => new Map(st.snap.sessions.map((s) => [s.id, s])), [st.snap.sessions]);
+
+  const grounds = useMemo(
+    () => new Map(campaigns.map((item) => [item.id, planGround(item, map, st.snap.sessions)])),
+    [campaigns, map, st.snap.sessions],
+  );
+  const unplaced = campaigns.filter((item) => !grounds.get(item.id)?.points.length);
 
   const act = async (kind, payload = {}) => {
     if (!liveCampaign || busy || historyOpen) return;
@@ -117,101 +118,135 @@ function PlansCommand() {
   const spent = members.reduce((sum, m) => sum + (sessions.get(m.sessionId)?.costUsd ?? 0), 0);
 
   return (
-    <div className="campaign-shell">
-      <aside className="campaign-index">
-        <div className="campaign-index-head">
-          <span className="label">plans</span>
-          <button className="campaign-add" type="button" onClick={() => setCreating(true)} aria-label="Create plan" title="Create plan">+</button>
-        </div>
-        {campaigns.map((c) => {
-          const live = planMembers(c).filter((m) => m.status === 'active').length;
-          return (
-            <button
-              type="button" key={c.id}
-              className={`campaign-item${c.id === selected ? ' on' : ''}`}
-              onClick={() => { setSelected(c.id); selectCampaign(c.id); }}
-            >
-              <span className={`campaign-sigil phase-${c.phase}`} />
-              <span><b>{c.name}</b><small>{phaseLabel(c.phase)}{live ? ` · ${live} working` : ''}</small></span>
-            </button>
-          );
+    <>
+      {/* The territory each plan covers, over the map itself. */}
+      <div className="plans-ground" aria-hidden="true">
+        {campaigns.map((item) => {
+          const ground = grounds.get(item.id);
+          if (!ground?.points.length) return null;
+          const on = item.id === selected;
+          return ground.points.map((point) => (
+            <span
+              key={`${item.id}:${point.key}`}
+              className={`plan-claim phase-${item.phase}${on ? ' on' : ''}`}
+              style={{ left: `${point.x}%`, top: `${point.y}%` }}
+            ><i />{on ? item.name : ''}</span>
+          ));
         })}
-        {!campaigns.length && <div className="campaign-none">No plans yet.</div>}
+      </div>
+
+      <aside className="plans-panel" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="Plans on this territory">
+        <header className="plans-panel-head">
+          <div>
+            <span className="label">plans on this territory</span>
+            <h2>{campaigns.length === 1 ? 'One plan' : `${campaigns.length} plans`}</h2>
+          </div>
+          <button type="button" className="btn sm ghost icon" aria-label="Close the plans overlay" onClick={onClose}>
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="plans-index" role="list">
+          {campaigns.map((c) => {
+            const live = planMembers(c).filter((m) => m.status === 'active').length;
+            const placed = grounds.get(c.id)?.points.length ?? 0;
+            return (
+              <button
+                type="button" key={c.id} role="listitem"
+                className={`campaign-item${c.id === selected ? ' on' : ''}`}
+                onClick={() => { setSelected(c.id); selectCampaign(c.id); }}
+              >
+                <span className={`campaign-sigil phase-${c.phase}`} />
+                <span>
+                  <b>{c.name}</b>
+                  <small>
+                    {phaseLabel(c.phase)}{live ? ` · ${live} working` : ''}
+                    {placed ? ` · ${placed} on the map` : ' · nowhere on the map yet'}
+                  </small>
+                </span>
+              </button>
+            );
+          })}
+          {!campaigns.length && <div className="campaign-none">No plans yet.</div>}
+        </div>
+
+        {unplaced.length > 0 && campaigns.length > unplaced.length && (
+          <p className="plans-unplaced">
+            {unplaced.length === 1 ? 'One plan has' : `${unplaced.length} plans have`} no folder to stand on yet,
+            so {unplaced.length === 1 ? 'it is' : 'they are'} only in this list.
+          </p>
+        )}
+
+        {campaign ? (
+          <div className="plans-detail">
+            <header className="plans-detail-head">
+              <span className="label">plan · {phaseLabel(campaign.phase)}{campaign.paused ? ' · on hold' : ''}</span>
+              <h3>{campaign.name}</h3>
+              {campaign.intent && <p className="campaign-intent">{campaign.intent}</p>}
+              <div className="campaign-meters mono">
+                {historyOpen && <span className="history-status">replay · event {replay?.actualSeq ?? '…'}</span>}
+                <span>{campaign.scope}</span>
+                <span>{members.filter((m) => m.status === 'active').length} working</span>
+                <span className={campaign.budgetExhausted || spent >= campaign.budgetUsd ? 'budget-exhausted' : ''} title="spent of budget · remaining">
+                  ${spent.toFixed(2)} of ${campaign.budgetUsd.toFixed(0)} · ${Math.max(0, campaign.budgetUsd - spent).toFixed(2)} left
+                </span>
+                <button type="button" onClick={() => { setHistoryOpen((value) => !value); setReplay(null); }}>
+                  {historyOpen ? 'return live' : 'history'}
+                </button>
+              </div>
+            </header>
+
+            {historyOpen && liveCampaign && (
+              <CampaignReplayRail campaign={liveCampaign} onReplay={setReplay} />
+            )}
+
+            <section className="campaign-fronts" aria-label="Objectives">
+              {campaign.objectives.map((objective) => (
+                <ObjectiveCard key={objective.id} objective={objective} campaign={campaign} sessions={sessions} />
+              ))}
+            </section>
+
+            <PlanAgents
+              campaign={campaign}
+              members={members}
+              sessions={sessions}
+              config={st.config}
+              busy={busy || historyOpen}
+              act={act}
+              onOpen={(id) => onOpenAgent?.(id)}
+            />
+
+            <div className="campaign-actions">
+              {historyOpen && <span className="history-readonly mono">historical state · controls locked</span>}
+              {campaign.phase === 'draft' && <Action primary disabled={busy || historyOpen} onClick={start}>Start plan</Action>}
+              {!campaign.paused && OPEN_PHASES.has(campaign.phase) && (
+                <Action disabled={busy || historyOpen} onClick={() => act('pause')}>Hold</Action>
+              )}
+              {campaign.paused && <Action disabled={busy || historyOpen} onClick={() => act('resume')}>Resume</Action>}
+              {!['cancelled', 'promoted'].includes(campaign.phase) && (
+                <Action danger disabled={busy || historyOpen} onClick={() => {
+                  if (window.confirm('Cancel this plan? Its agents are stopped.')) act('cancel', { reason: 'operator cancelled from the plans overlay' });
+                }}>Cancel plan</Action>
+              )}
+            </div>
+            {error && <div className="campaign-error mono" role="alert">{error}</div>}
+          </div>
+        ) : (
+          <div className="campaign-empty">
+            <div className="campaign-empty-mark" />
+            <b>No plan yet.</b>
+            <span>A plan is an objective with a definition of done and the agents assigned to reach it. Field starts them, tracks their spend, and keeps the history replayable.</span>
+          </div>
+        )}
+
+        <footer className="plans-panel-foot">
+          <button type="button" className="btn primary" onClick={() => setCreating(true)}>Create a plan</button>
+        </footer>
       </aside>
 
-      {campaign ? (
-        <main className="campaign-table">
-          <header className="campaign-titlebar">
-            <div>
-              <span className="label">plan · {phaseLabel(campaign.phase)}{campaign.paused ? ' · on hold' : ''}</span>
-              <h1>{campaign.name}</h1>
-              {campaign.intent && <p className="campaign-intent">{campaign.intent}</p>}
-            </div>
-            <div className="campaign-meters mono">
-              {historyOpen && <span className="history-status">replay · event {replay?.actualSeq ?? '…'}</span>}
-              <span>{campaign.scope}</span>
-              <span>{members.filter((m) => m.status === 'active').length} working</span>
-              <span className={campaign.budgetExhausted || spent >= campaign.budgetUsd ? 'budget-exhausted' : ''} title="spent of budget · remaining">
-                ${spent.toFixed(2)} of ${campaign.budgetUsd.toFixed(0)} · ${Math.max(0, campaign.budgetUsd - spent).toFixed(2)} left
-              </span>
-              <button type="button" onClick={() => { setHistoryOpen((value) => !value); setReplay(null); }}>
-                {historyOpen ? 'return live' : 'history'}
-              </button>
-            </div>
-          </header>
-
-          {historyOpen && liveCampaign && (
-            <CampaignReplayRail campaign={liveCampaign} onReplay={setReplay} />
-          )}
-
-          <section className="campaign-fronts" aria-label="Objectives">
-            {campaign.objectives.map((objective) => (
-              <ObjectiveCard key={objective.id} objective={objective} campaign={campaign} sessions={sessions} />
-            ))}
-          </section>
-
-          <PlanAgents
-            campaign={campaign}
-            members={members}
-            sessions={sessions}
-            config={st.config}
-            busy={busy || historyOpen}
-            act={act}
-            onOpen={(id) => openSenate(id)}
-          />
-
-          <div className="campaign-actions">
-            {historyOpen && <span className="history-readonly mono">historical state · controls locked</span>}
-            {campaign.phase === 'draft' && <Action primary disabled={busy || historyOpen} onClick={start}>Start plan</Action>}
-            {!campaign.paused && OPEN_PHASES.has(campaign.phase) && (
-              <Action disabled={busy || historyOpen} onClick={() => act('pause')}>Hold</Action>
-            )}
-            {campaign.paused && <Action disabled={busy || historyOpen} onClick={() => act('resume')}>Resume</Action>}
-            {!['cancelled', 'promoted'].includes(campaign.phase) && (
-              <Action danger disabled={busy || historyOpen} onClick={() => {
-                if (window.confirm('Cancel this plan? Its agents are stopped.')) act('cancel', { reason: 'operator cancelled from Plans' });
-              }}>Cancel plan</Action>
-            )}
-          </div>
-          {error && <div className="campaign-error mono" role="alert">{error}</div>}
-        </main>
-      ) : (
-        <main className="campaign-empty">
-          <div className="campaign-empty-mark" />
-          <b>No plan yet.</b>
-          <span>A plan is an objective with a definition of done and the agents assigned to reach it. Field starts them, tracks their spend, and keeps the history replayable.</span>
-          <Action primary onClick={() => setCreating(true)}>Create a plan</Action>
-        </main>
-      )}
-
       {creating && <CreateCampaign config={st.config} onClose={() => setCreating(false)} onCreated={(id) => { setSelected(id); selectCampaign(id); setCreating(false); }} />}
-    </div>
+    </>
   );
-}
-
-function planMembers(campaign) {
-  const teams = campaign.teams ?? {};
-  return Object.keys(teams).flatMap((lane) => (teams[lane]?.members ?? []).map((member) => ({ ...member, lane })));
 }
 
 function CampaignReplayRail({ campaign, onReplay }) {
@@ -246,8 +281,8 @@ function CampaignReplayRail({ campaign, onReplay }) {
   const first = trace.events[0]?.seq ?? 0;
   const last = trace.events.at(-1)?.seq ?? first;
   const event = [...trace.events].reverse().find((item) => item.seq <= cursor);
-  // The same scrubber History uses. Plans and History stay separate screens; only the
-  // control they both needed is shared.
+  // The same scrubber the map's time control uses; a plan's own history is per-plan, so
+  // it stays here rather than moving the whole map back with it.
   return (
     <ReplayRail
       className="campaign-replay"
@@ -316,7 +351,7 @@ function PlanAgents({ campaign, members, sessions, config, busy, act, onOpen }) 
           const session = sessions.get(member.sessionId);
           return (
             <div className="formation-unit" key={member.sessionId}>
-              <button type="button" onClick={() => onOpen(member.sessionId)} title={session?.state ?? member.status}>
+              <button type="button" onClick={() => onOpen(member.sessionId)} title="Open this agent where it is standing">
                 <i className={`dot tone-${plainState(session).tone}`} />
                 <span>{session?.name ?? member.agentId ?? member.sessionId.slice(0, 6)}</span>
                 <small>{member.role ?? session?.role ?? 'agent'} · {String(session?.state ?? member.status).replaceAll('_', ' ')}{session?.costUsd ? ` · $${session.costUsd.toFixed(3)}` : ''}</small>
@@ -387,7 +422,6 @@ function Action({ children, onClick, disabled, danger, primary }) {
   return <button className={`campaign-action${danger ? ' danger' : ''}${primary ? ' primary' : ''}`} type="button" onClick={onClick} disabled={disabled}>{children}</button>;
 }
 
-function phaseLabel(phase) { return PHASE_WORD[phase] ?? phase?.replaceAll('_', ' ') ?? 'unknown'; }
 function eventLabel(event) {
   const d = event.data ?? {};
   if (event.kind === 'campaign.phase_changed') return `${phaseLabel(d.from)} → ${phaseLabel(d.to)}`;

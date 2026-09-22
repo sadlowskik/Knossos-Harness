@@ -1,18 +1,24 @@
 /* A folder, opened.
 
    This is the whole point of Rome: click a district and you get the place, not a
-   statistics card. The place is its conversations — the same `Conversation` panel the
-   Board mounts, so you can read and talk to whoever is working here with the same
-   controls and the same file strip — above them the folder's path, weight and
-   staleness, and below them its subfolders, so you can keep going down.
+   statistics card. The place is its conversations — the same `Conversation` panel Atlas
+   mounts, so you can read and talk to whoever is working here with the same controls and
+   the same file strip — above them the folder's path, weight and staleness, and below
+   them its subfolders, so you can keep going down.
 
-   It replaced three things that each showed a slice of this: the city command hub, the
-   senate roster and the region maturity inspector. */
+   It opens compact, as a sheet beside the map. Expand it and the same folder fills the
+   screen with its files, its diffs, the project's changes and a shell: that is what the
+   Project destination was, and it was never a place of its own — it was this folder at a
+   larger size. Expanding does not navigate, so the map is one Escape away.
+
+   It replaced four things that each showed a slice of this: the city command hub, the
+   senate roster, the region maturity inspector and the Project screen. */
 
 import { useEffect, useRef } from 'react';
-import { ChevronRight, Folder, Plus, X } from 'lucide-react';
+import { ChevronRight, Folder, Maximize2, Minimize2, Plus, X } from 'lucide-react';
 import { useField } from '../state/store.js';
 import Conversation, { conversationNeedsYou, sortConversations, TERMINAL_STATES } from '../ui/Conversation.jsx';
+import FolderWorkspace from './FolderWorkspace.jsx';
 import { crumbsFor, dirName, staleness, weightLabel } from './districts.js';
 
 export default function FolderDetail({
@@ -23,8 +29,11 @@ export default function FolderDetail({
   sessions,
   selectedId = null,
   primary = true,
+  expanded = false,
+  request = null,
   onNavigate,
   onStart,
+  onToggleExpand,
   onClose,
 }) {
   const st = useField();
@@ -48,7 +57,11 @@ export default function FolderDetail({
   }, [selectedId, dir]);
 
   return (
-    <aside className="folder-sheet" onClick={(event) => event.stopPropagation()} aria-label={`Folder ${dir || workspace.name}`}>
+    <aside
+      className={`folder-sheet${expanded ? ' expanded' : ''}`}
+      onClick={(event) => event.stopPropagation()}
+      aria-label={`Folder ${dir || workspace.name}`}
+    >
       <header className="folder-head">
         <nav className="folder-crumbs" aria-label="Folder path">
           <button type="button" className="folder-crumb" onClick={() => onNavigate('')}>{workspace.name}</button>
@@ -61,6 +74,14 @@ export default function FolderDetail({
             </span>
           ))}
           <span className="grow" />
+          <button
+            type="button"
+            className="btn sm ghost icon"
+            aria-pressed={expanded}
+            aria-label={expanded ? 'Collapse this folder back beside the map' : 'Expand this folder to its files, changes and terminal'}
+            title={expanded ? 'Back to the map' : 'Files, changes and terminal'}
+            onClick={onToggleExpand}
+          >{expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}</button>
           <button type="button" className="btn sm ghost icon" aria-label="Close this folder" onClick={onClose}>
             <X aria-hidden="true" />
           </button>
@@ -87,6 +108,16 @@ export default function FolderDetail({
         </div>
       </header>
 
+      {expanded ? (
+        <FolderWorkspace
+          workspace={workspace}
+          dir={dir}
+          initialPath={request?.path ?? null}
+          initialView={request?.view ?? null}
+          initialPane={request?.pane ?? null}
+          initialUrl={request?.url ?? null}
+        />
+      ) : (
       <div className="folder-sheet-scroll" ref={scrollRef}>
         <section className="folder-convos" role="list" aria-label="Conversations in this folder">
           {here.map((session) => (
@@ -135,6 +166,7 @@ export default function FolderDetail({
           })}
         </section>
       </div>
+      )}
     </aside>
   );
 }

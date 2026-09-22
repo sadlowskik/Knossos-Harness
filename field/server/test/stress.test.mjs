@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { Projection } from '../src/store/projection.js';
-import { computeLayout } from '../../web/src/field/layout.js';
+// The canvas Field's layout is gone with the Map screen it drew. Rome places the same
+// agents by the folder they are standing in, so that is what this budget now covers.
+import { scoreDistricts, standingPlaces } from '../../web/src/theater/districts.js';
 
 const cfg = {
   workspaces: [{ id: 'cameo', name: 'Cameo', path: '/cameo', mounted: true, region: { x: 0, y: 0, w: 900, h: 500 } }],
@@ -102,7 +104,12 @@ const a = live.snapshot();
 const snapshotMs = performance.now() - snapshotStart;
 const b = rebuilt.snapshot();
 const layoutStart = performance.now();
-const layout = computeLayout(a, a.positions, a.now, { missions: [] });
+const districts = scoreDistricts(a.folders.filter((f) => f.workspaceId === 'cameo').map((f) => ({
+  workspaceId: f.workspaceId, dir: f.dir, name: f.dir, files: 0, subfolders: 0,
+  hits: f.hits, recentChanges: 0, lastTs: f.lastTs,
+})));
+const standing = standingPlaces(a.sessions, districts.map((d) => d.dir));
+const layout = { agents: [...standing.values()].flat() };
 const layoutMs = performance.now() - layoutStart;
 assert.equal(a.seq, events.at(-1).seq);
 assert.equal(a.sessions.length, 30);
@@ -118,7 +125,7 @@ assert.ok(a.graph.edges.length <= 8000);
 assert.ok(a.graph.totals.nodes >= 10_000, `expected 10k graph nodes, got ${a.graph.totals.nodes}`);
 assert.equal(layout.agents.length, 30);
 assert.ok(snapshotMs < 500, `bounded snapshot too slow: ${snapshotMs.toFixed(0)}ms`);
-assert.ok(layoutMs < 50, `field layout too slow: ${layoutMs.toFixed(0)}ms`);
+assert.ok(layoutMs < 50, `Rome placement too slow: ${layoutMs.toFixed(0)}ms`);
 assert.ok(firstMs < 15_000 && secondMs < 15_000, `replay too slow: ${firstMs.toFixed(0)} / ${secondMs.toFixed(0)}ms`);
 
 console.log(`stress: ${events.length.toLocaleString()} events, 30 agents, ${a.graph.totals.nodes} graph nodes; replay ${firstMs.toFixed(0)}ms/${secondMs.toFixed(0)}ms, snapshot ${snapshotMs.toFixed(1)}ms, layout ${layoutMs.toFixed(1)}ms`);

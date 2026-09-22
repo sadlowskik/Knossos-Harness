@@ -242,7 +242,7 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
             <>
               <Item onClick={() => { selectOnly([target.id]); onClose(); }}>Select only this agent</Item>
               <Item onClick={() => { openInWorkspace({ type: 'session', id: target.id }); onClose(); }}>
-                Open transcript & workspace
+                Show on the map, where it is working
               </Item>
               <Sep />
               <Item disabled={!selection.length} onClick={() => cmd('pause')}>Pause</Item>
@@ -274,7 +274,7 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
                     path: target.type === 'workspace' ? '' : target.id,
                   });
                   onClose();
-                }}>Open in Workspace</Item>
+                }}>Open its files</Item>
               )}
               {target.type === 'website' && target.url && (
                 <Item onClick={() => { openInWorkspace({ type: 'browser', url: target.url }); onClose(); }}>

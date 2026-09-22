@@ -8,24 +8,31 @@
    holds the file it is on, and moves as that changes; three markers in one district and
    none in the next is the thing this screen can show that a list cannot.
 
-   Clicking a district opens the folder, and the folder is its conversations. What used to
-   be here instead — the city command hub, the senate roster, the region maturity card and
-   the agent inspector — each showed one slice of that, so all four are gone. */
+   Clicking a district opens the folder, and the folder is its conversations; expand that
+   folder and it is also its files, its diffs and a shell in it. Along the bottom is time:
+   drag it and the same map shows an earlier moment. Over it, when you ask for them, are
+   the plans, drawn across the folders they cover.
+
+   What used to be separate screens for each of those — the canvas Map, Project, History
+   and Plans — each showed one slice of this map, so all four are gone. So are the city
+   command hub, the senate roster, the region maturity card and the agent inspector. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen, Box, Container, Database, GitBranch, Globe2,
   Landmark, Network, Plus, RadioTower, Settings, ShieldCheck,
-  UserRound, Wrench,
+  Target, UserRound, Wrench,
 } from 'lucide-react';
 import { api } from '../net/client.js';
-import { clearActiveAgent, selectAgent, useField } from '../state/store.js';
+import { clearActiveAgent, romeRequestHandled, selectAgent, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
+import PlansOverlay from '../campaigns/PlansOverlay.jsx';
 import FieldSettings from './FieldSettings.jsx';
 import FolderDetail from './FolderDetail.jsx';
+import TimeControl from './TimeControl.jsx';
 import { sessionsInScope, TERMINAL_STATES } from '../ui/Conversation.jsx';
 import { identityFor, identityHue, initials, verifiedContribution } from './fieldPreferences.js';
 import useFieldSettings from './useFieldSettings.js';
@@ -253,6 +260,10 @@ export default function TheaterMode() {
   const st = useField();
   const [settings, setSettings] = useFieldSettings();
   const [place, setPlace] = useState(null);           // { workspaceId, dir } — the open folder
+  const [expanded, setExpanded] = useState(false);    // that folder, filling the screen
+  const [request, setRequest] = useState(null);       // what a caller asked the folder to show
+  const [plansOpen, setPlansOpen] = useState(false);
+  const [replay, setReplay] = useState(null);         // a past moment, or null for live
   const [starter, setStarter] = useState(null);       // { workspace, dir, agentId, screen }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [powerOpen, setPowerOpen] = useState(false);
@@ -264,7 +275,14 @@ export default function TheaterMode() {
   const reconcileRef = useRef('');
   const defaultCapitalRef = useRef('');
 
-  const view = st.snap;
+  /* Live is the snapshot. A replay substitutes the three fields the map is drawn from —
+     where the agents are, how stale each folder is, what changed — folded from the same
+     event log up to the moment on the rail. Everything else, projects included, is what
+     it is now: a project that is not mounted today was not a city yesterday either. */
+  const view = useMemo(() => (replay
+    ? { ...st.snap, now: replay.at || st.snap.now, sessions: replay.sessions, folders: replay.folders, files: replay.files }
+    : st.snap), [st.snap, replay]);
+  const replaying = Boolean(replay);
   const now = view.now ?? Date.now();
   const world = view.world ?? { capitalWorkspaceId: null, assignments: {}, revision: 0 };
   const workspaces = useMemo(() => view.workspaces.filter((item) => item.mounted), [view.workspaces]);
@@ -409,6 +427,8 @@ export default function TheaterMode() {
 
   // ---- starting agents ----------------------------------------------------------
   const startAgent = (workspaceId, dir = '', event = null, agentId = null) => {
+    // Nothing starts in the past: the rail has to be back at live first.
+    if (replaying) return;
     const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
     if (!workspace) return;
     setStarter({
@@ -440,19 +460,55 @@ export default function TheaterMode() {
   }
 
   /* Opening a folder is a move in space, so it drops whichever agent was selected: only
-     clicking a marker re-selects one, and only then does the sheet scroll to it. */
-  const openFolder = (workspaceId, dir) => {
-    clearActiveAgent();
+     clicking a marker re-selects one, and only then does the sheet scroll to it. A folder
+     opens compact; moving between folders while expanded stays expanded, because that is
+     the same act of walking around with the files open. */
+  const openFolder = (workspaceId, dir, { keepExpanded = false, keepAgent = false } = {}) => {
+    if (!keepAgent) clearActiveAgent();
     setPlace({ workspaceId, dir: normalizeDir(dir) });
+    if (!keepExpanded) { setExpanded(false); setRequest(null); }
     setSettingsOpen(false);
   };
 
+  /* Anything anywhere can say "open this in Rome": a context menu, a conversation's
+     "changed files", a plan's roster. The request arrives through the store and is
+     consumed once, so re-rendering does not drag you back to it. */
+  useEffect(() => {
+    const ask = st.rome;
+    if (!ask) return;
+    if (ask.plans) setPlansOpen(true);
+    if (ask.sessionId) selectAgent(ask.sessionId);
+    if (ask.workspaceId) {
+      setPlace({ workspaceId: ask.workspaceId, dir: normalizeDir(ask.dir ?? '') });
+      setExpanded(Boolean(ask.expanded));
+      setRequest(ask.path || ask.view || ask.pane || ask.url ? ask : null);
+      setSettingsOpen(false);
+    }
+    romeRequestHandled(ask.seq);
+  }, [st.rome]);
+
+  // Escape backs out one layer at a time: the expanded folder, then the folder, then the
+  // plans overlay. It never leaves Rome.
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (expanded) { setExpanded(false); setRequest(null); return; }
+      if (place) { setPlace(null); clearActiveAgent(); return; }
+      if (plansOpen) setPlansOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded, place, plansOpen]);
+
   const capital = workspaces.find((item) => item.id === world.capitalWorkspaceId);
-  const panelOpen = Boolean(open) || settingsOpen;
+  const panelOpen = Boolean(open) || settingsOpen || plansOpen;
+  // One primary per screen, and it belongs to the innermost thing you opened: the plans
+  // overlay's "Create a plan", the folder's "Start an agent here", or this header.
+  const headerIsPrimary = !open && !plansOpen && !replaying;
 
   return <div
-    className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${panelOpen ? ' panel-open' : ''}${open ? ' folder-open' : ''}`}
-    onClick={() => { setPlace(null); clearActiveAgent(); }}
+    className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${panelOpen ? ' panel-open' : ''}${open ? ' folder-open' : ''}${expanded ? ' folder-expanded' : ''}${plansOpen ? ' plans-open' : ''}${replaying ? ' replaying' : ''}`}
+    onClick={() => { setPlace(null); setExpanded(false); setRequest(null); clearActiveAgent(); }}
   >
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
       <div>
@@ -460,12 +516,18 @@ export default function TheaterMode() {
         <h1>{capital?.name ?? (workspaces.length ? 'Anchoring the world…' : 'No project open')}</h1>
       </div>
       <div className="field-quick-settings">
-        {/* One primary per screen: it is this button until a folder is open, and the
-            folder's "Start an agent here" after that. */}
         <button
           type="button"
-          className={open ? '' : 'primary'}
-          disabled={!workspaces.length}
+          className={plansOpen ? 'on' : ''}
+          aria-pressed={plansOpen}
+          onClick={() => setPlansOpen((value) => !value)}
+          aria-label={plansOpen ? 'Hide the plans drawn on this territory' : 'Show the plans drawn on this territory'}
+        ><Target aria-hidden="true" /><span>Plans{(view.campaigns?.length ?? 0) > 0 ? ` · ${view.campaigns.length}` : ''}</span></button>
+        <button
+          type="button"
+          className={headerIsPrimary ? 'primary' : ''}
+          disabled={!workspaces.length || replaying}
+          title={replaying ? 'You are looking at an earlier moment. Go back to live to start an agent.' : undefined}
           onClick={(event) => startAgent(world.capitalWorkspaceId ?? workspaces[0]?.id, '', event)}
           aria-label="Start an agent on the capital project"
           aria-keyshortcuts="Control+Alt+N"
@@ -566,7 +628,21 @@ export default function TheaterMode() {
           {loading && <span className="district-reading mono" style={{ left: `${cityCentre.x}%`, top: `${position.y + position.h + 2}%` }}>reading the folders…</span>}
         </div>;
       })}
+
+      {plansOpen && <PlansOverlay
+        map={map}
+        onClose={() => setPlansOpen(false)}
+        onOpenAgent={(sessionId) => {
+          const session = view.sessions.find((item) => item.id === sessionId);
+          if (!session?.workspaceId) return;
+          selectAgent(sessionId);
+          openFolder(session.workspaceId, normalizeDir(session.focusDir), { keepAgent: true });
+        }}
+      />}
     </main>
+
+    {/* Time, along the bottom of the territory. Live is the right edge. */}
+    <TimeControl onReplay={setReplay} />
 
     {open && (
       <FolderDetail
@@ -576,9 +652,13 @@ export default function TheaterMode() {
         subfolders={open.subfolders}
         sessions={open.sessions}
         selectedId={st.activeSessionId}
-        onNavigate={(dir) => openFolder(open.workspace.id, dir)}
+        primary={!plansOpen}
+        expanded={expanded}
+        request={request}
+        onNavigate={(dir) => openFolder(open.workspace.id, dir, { keepExpanded: expanded })}
         onStart={(dir, event, agentId) => startAgent(open.workspace.id, dir, event, agentId ?? null)}
-        onClose={() => setPlace(null)}
+        onToggleExpand={() => setExpanded((value) => { if (value) setRequest(null); return !value; })}
+        onClose={() => { setPlace(null); setExpanded(false); setRequest(null); }}
       />
     )}
 

@@ -1,4 +1,4 @@
-/* The Board is a set of conversations.
+/* Atlas is every conversation at once.
 
    It used to be a grid of project cards with the agents working on them folded inside,
    which is backwards: you do not talk to a repository. One panel per agent — running,
@@ -7,8 +7,11 @@
    top, because "show me only what is happening in Cameo" is a question about a set of
    conversations, not a reason to draw a card for a folder.
 
-   The panel itself lives in ui/Conversation.jsx so the Map can mount the same thing in
-   its folder detail. This file only composes them into columns. */
+   It is one of the two destinations. Rome answers "where is the work happening"; this
+   answers "what is every agent doing", which is why an all-conversations view belongs
+   here and not on a screen of its own. The panel itself lives in ui/Conversation.jsx so
+   Rome can mount the same thing in its folder detail; this file composes them into
+   columns. */
 
 import { useEffect, useMemo, useState } from 'react';
 import { Settings } from 'lucide-react';
@@ -21,9 +24,9 @@ import ContextMenu from '../hud/ContextMenu.jsx';
 import EmptyState from '../ui/EmptyState.jsx';
 import Conversation, { sessionsInScope, sortConversations } from '../ui/Conversation.jsx';
 
-// A conversation that ended stays on the Board for this long: long enough to read what
-// happened and start another agent on the same work, not so long that the Board becomes
-// a graveyard. Everything older is in Traces.
+// A conversation that ended stays on Atlas for this long: long enough to read what
+// happened and start another agent on the same work, not so long that Atlas becomes a
+// graveyard. Everything older is on Rome's time rail.
 const RECENTLY_FINISHED_MS = 30 * 60 * 1000;
 
 export default function AtlasMode() {
@@ -187,7 +190,7 @@ export default function AtlasMode() {
               >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
             )}
           >
-            The Board is a conversation per agent: talk to it, choose the files it should work on, and pause or stop
+            Atlas is a conversation per agent: talk to it, choose the files it should work on, and pause or stop
             it from the same panel. Start one to open the first conversation.
           </EmptyState>
         )}
