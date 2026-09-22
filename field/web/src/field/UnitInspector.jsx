@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { openCity, openInWorkspace, useField } from '../state/store.js';
-import { ColumnTranscript } from '../atlas/AtlasMode.jsx';
+import { ColumnTranscript } from '../ui/Transcript.jsx';
 import { StatusPill, plainState } from '../ui/WorkCard.jsx';
 import AgentControls from '../hud/AgentControls.jsx';
 import VerdictLadder from '../ui/VerdictLadder.jsx';

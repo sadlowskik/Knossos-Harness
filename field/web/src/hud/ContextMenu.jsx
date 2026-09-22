@@ -19,14 +19,16 @@ function emptyDraft(config) {
   };
 }
 
-export default function ContextMenu({ screen, target, onClose, initialPane = null, fixed = false, onOpenModels = null }) {
+/* `initialAgentId` preselects the agent definition: the Board's "start another one like
+   this" on a finished conversation opens the same agent on the same project. */
+export default function ContextMenu({ screen, target, onClose, initialPane = null, initialAgentId = null, fixed = false, onOpenModels = null }) {
   const st = useField();
   const ref = useRef(null);
   const [pane, setPane] = useState(initialPane);      // null | 'assign' | 'spawn' | 'new-agent'
   const [endpoint, setEndpoint] = useState('auto');
   const [thinking, setThinking] = useState('adaptive');
   const [orders, setOrders] = useState('');
-  const [agentId, setAgentId] = useState('');
+  const [agentId, setAgentId] = useState(initialAgentId ?? '');
   const [wsId, setWsId] = useState(target.workspaceId ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -56,7 +58,11 @@ export default function ContextMenu({ screen, target, onClose, initialPane = nul
   }, [onClose]);
 
   useEffect(() => {
-    if (config?.agents?.length && !agentId) setAgentId(config.agents[0].id);
+    // A preselected agent that no longer exists in config falls back to the first one,
+    // rather than leaving the select on a definition the server cannot spawn.
+    if (config?.agents?.length && !config.agents.some((agent) => agent.id === agentId)) {
+      setAgentId(config.agents[0].id);
+    }
   }, [config, agentId]);
   useEffect(() => {
     if (config?.workspaces?.length && !wsId) setWsId(config.workspaces[0].id);

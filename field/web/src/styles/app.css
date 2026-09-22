@@ -1866,6 +1866,182 @@
 .atlas-empty code { padding: 1px 5px; border-radius: var(--radius-sm); background: var(--surface-2); font: 12px var(--font-mono); color: var(--text-2); }
 .atlas-empty-actions { display: flex; justify-content: center; gap: 8px; }
 
+/* ---- conversations ------------------------------------------------------------
+
+   The Board's unit. One panel per agent: a header, the files that agent has in scope,
+   its transcript scrolling inside the panel, and a composer. The panel is also mounted
+   outside the Board (the Map's folder detail), so nothing here depends on .atlas-*. */
+
+.convo-filter { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.convo-filter select {
+  height: 26px; max-width: 260px; padding: 0 6px;
+  background: var(--surface-2); border: 1px solid var(--edge-2); border-radius: var(--radius);
+  color: var(--text-1); font: 500 12px var(--font-sans);
+}
+
+/* One wide column for a single conversation, two or three when there are more. Below
+   1000px a second column would be two unreadable columns, so there is one. */
+.atlas-convos { display: grid; gap: 18px; align-items: start; }
+.atlas-convos[data-columns="1"] { grid-template-columns: minmax(0, 1fr); }
+.atlas-convos[data-columns="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.atlas-convos[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1400px) { .atlas-convos[data-columns="3"] { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) {
+  .atlas-convos[data-columns="2"], .atlas-convos[data-columns="3"] { grid-template-columns: minmax(0, 1fr); }
+}
+
+.convo {
+  position: relative;
+  display: flex; flex-direction: column; min-width: 0;
+  max-height: min(78vh, 880px);
+  background: var(--surface-1);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  color: var(--text-2);
+  --card-tone: transparent;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.convo::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--card-tone); z-index: 1; }
+.convo.tone-working { --card-tone: var(--st-working); }
+.convo.tone-attention { --card-tone: var(--st-attention); }
+.convo.tone-done { --card-tone: var(--st-done); }
+.convo.tone-failed { --card-tone: var(--st-failed); }
+.convo:hover { border-color: var(--edge-2); }
+/* Same rule as the card: one hairline in the attention colour, sorted to the front of
+   the Board. It does not blink. */
+.convo.needs-you { border-color: rgba(245, 184, 74, .5); }
+.convo.needs-you::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 1px; background: var(--st-attention); }
+.convo.collapsed { max-height: none; }
+.convo.focused { max-height: none; min-height: min(80vh, 900px); }
+
+.convo-head {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--edge);
+  background: var(--surface-0);
+}
+.convo-who {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  margin: -4px; padding: 4px;
+  border: 0; border-radius: var(--radius);
+  background: transparent; color: inherit; font-family: inherit; text-align: left; cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.convo-who:hover { background: var(--surface-2); }
+.convo-who-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.convo-who b {
+  font: var(--fw-h2) var(--fs-h2)/var(--lh-h2) var(--font-sans); letter-spacing: var(--ls-h2);
+  color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.convo-project { flex: none; max-width: 30%; font-size: var(--fs-micro); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.convo-head-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.convo-oneline { margin: 0; padding: 8px 14px; font: 12px/1.5 var(--font-mono); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* what this conversation is working on */
+.convo-files {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 8px 14px; border-bottom: 1px solid var(--edge);
+}
+.convo-files-label {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--font-mono);
+  letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-3);
+}
+.convo-files-label svg { width: 12px; height: 12px; }
+.convo-file {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 230px; min-width: 0;
+  height: 22px; padding: 0 4px 0 8px;
+  border: 1px solid var(--edge-2); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-2);
+  font: 11px var(--font-mono);
+}
+button.convo-file { cursor: pointer; }
+button.convo-file:hover { border-color: var(--edge-2); color: var(--text-1); }
+.convo-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.convo-file-tag {
+  flex: none; font: var(--fw-label) 9px var(--font-mono); letter-spacing: var(--ls-label);
+  text-transform: uppercase; color: var(--text-3);
+}
+/* the agent's own file is shown, never silently merged with what you attached */
+.convo-file.current { border-style: dashed; background: transparent; padding-right: 8px; }
+.convo-file.current.on { border-style: solid; background: var(--surface-2); }
+.convo-file-x {
+  display: inline-grid; place-items: center; flex: none; width: 16px; height: 16px;
+  padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-3); cursor: pointer;
+}
+.convo-file-x svg { width: 11px; height: 11px; }
+.convo-file-x:hover { background: var(--surface-3); color: var(--text-1); }
+.convo-files-none { font-size: var(--fs-micro); color: var(--text-3); }
+.convo-files-pick { position: relative; margin-left: auto; flex: none; }
+
+.convo-picker {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  width: min(320px, 78vw); max-height: 330px;
+  display: flex; flex-direction: column;
+  background: var(--surface-1); border: 1px solid var(--edge-2); border-radius: var(--radius);
+  box-shadow: var(--shadow-md); overflow: hidden;
+}
+.convo-picker-head { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+.convo-picker-path { flex: 1; min-width: 0; font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.convo-picker-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px; }
+.convo-picker-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 26px; padding: 0 8px;
+  border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2);
+  font: 12px var(--font-mono); text-align: left; cursor: pointer;
+}
+.convo-picker-row svg { width: 13px; height: 13px; flex: none; color: var(--text-3); }
+.convo-picker-row:hover:not(:disabled) { background: var(--surface-2); color: var(--text-1); }
+.convo-picker-row.on { color: var(--text-1); }
+.convo-picker-row.on svg { color: var(--st-done); }
+.convo-picker-row:disabled { opacity: .45; cursor: not-allowed; }
+.convo-picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.convo-picker-more { flex: none; color: var(--text-3); }
+.convo-picker-note { margin: 0; padding: 6px 8px; font-size: 12px; color: var(--text-3); }
+.convo-picker-note.bad { color: var(--st-failed); }
+
+.convo-notices { flex: none; padding: 8px 0 0; }
+.convo-objective { flex: none; margin: 0; padding: 10px 14px 0; }
+
+/* The transcript scrolls inside the panel and follows the tail only while the reader
+   is at the tail. */
+.convo-feed-wrap { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.convo-feed { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px; }
+.convo-feed.compact { display: flex; flex-direction: column; gap: 8px; padding: 0; }
+.atlas-feed-wrap .convo-feed { max-height: min(340px, 40vh); padding-right: 4px; }
+.pane-body > .convo-feed-wrap { height: 100%; }
+.convo-feed-empty, .convo-feed-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-3); }
+.convo-feed-note.bad { color: var(--st-failed); }
+.tr .body.thinking { opacity: .72; font-style: italic; }
+.convo-jump {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  height: 24px; padding: 0 10px;
+  border: 1px solid var(--edge-2); border-radius: var(--radius-pill);
+  background: var(--surface-3); color: var(--text-1);
+  font: 500 11px var(--font-sans); cursor: pointer; box-shadow: var(--shadow-sm);
+}
+.convo-jump:hover { background: var(--surface-2); }
+
+.convo-foot {
+  flex: none; display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 14px 12px; border-top: 1px solid var(--edge);
+  background: var(--surface-0); font-size: var(--fs-small);
+}
+.convo-error { margin: 0; font-size: 12px; color: var(--st-failed); }
+.convo-composer { display: flex; flex-direction: column; gap: 6px; }
+.convo-composer textarea {
+  width: 100%; min-height: 44px; resize: vertical; box-sizing: border-box; padding: 7px 9px;
+  border: 1px solid var(--edge-2); border-radius: var(--radius); background: var(--surface-0);
+  color: var(--text-1); font: 13px/1.4 var(--font-sans);
+}
+.convo-composer textarea::placeholder { color: var(--text-3); }
+.convo-composer-row { display: flex; align-items: center; gap: 8px; }
+.convo-composer-hint { flex: 1; min-width: 0; font-size: var(--fs-micro); color: var(--text-3); }
+.convo-ended { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.convo-ended p { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--text-2); }
+.convo-offline { margin: 0; text-align: center; font-size: 12px; color: var(--st-failed); }
+
 @media (max-width: 760px) {
   .atlas-head { padding: 12px 16px; gap: 10px; }
   .atlas-title { flex-basis: 100%; }
@@ -1876,10 +2052,13 @@
   .work-card-context, .work-card-body, .work-card-notices, .work-card-foot { padding-left: 14px; padding-right: 14px; }
   .atlas-perm { margin-left: 14px; margin-right: 14px; }
   .atlas-line { grid-template-columns: 48px minmax(0, 1fr); }
+  .convo { max-height: none; }
+  .convo-head, .convo-files, .convo-foot, .convo-feed, .convo-objective, .convo-oneline { padding-left: 12px; padding-right: 12px; }
+  .convo-picker { right: auto; left: 0; width: min(320px, 92vw); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .work-card, .work-who, .work-pill, .work-row, .segctl, .segctl-item, .segctl-hint, .viewctl-item, .btn, .topstats .stat, .topbar-signout, .psrc-row, .psrc-close, .psrc-form input, .psrc-form select { transition: none; }
+  .work-card, .work-who, .work-pill, .work-row, .convo, .convo-who, .segctl, .segctl-item, .segctl-hint, .viewctl-item, .btn, .topstats .stat, .topbar-signout, .psrc-row, .psrc-close, .psrc-form input, .psrc-form select { transition: none; }
   .work-pill i, .work-card::after, .perm-flag i, .atlas-section-title i, .atlas-perm-label i, .atlas-empty-mark.pending::after, .topstats .stat i, .perm, .psrc-modal, .fatal-card { animation: none; }
 }
 

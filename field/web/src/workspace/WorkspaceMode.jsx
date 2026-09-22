@@ -3,7 +3,7 @@ import { api, on } from '../net/client.js';
 import { selectProject, setState, useField } from '../state/store.js';
 import { renderMarkdown } from './md.js';
 import { validateBrowserUrl } from './browser-url.js';
-import VerdictLadder from '../ui/VerdictLadder.jsx';
+import SessionTranscript from '../ui/Transcript.jsx';
 
 export default function WorkspaceMode() {
   const st = useField();
@@ -479,138 +479,22 @@ function Diff({ wsId, path }) {
 
 /* ------------------------------------------------------------------ transcript */
 
+/* The rows, the trace subscription and the autoscroll rule live in ui/Transcript.jsx:
+   this pane, the Board's conversations and the Map's fold render the same thing. */
 function Transcript({ session }) {
-  const sessionId = session?.id;
-  const [events, setEvents] = useState([]);
   const st = useField();
-  const bottomRef = useRef(null);
-
-  useEffect(() => {
-    if (!sessionId) { setEvents([]); return; }
-    let alive = true;
-    api.trace(sessionId, 0, 2000).then((r) => { if (alive) setEvents(r.events); }).catch(() => { if (alive) setEvents([]); });
-    return () => { alive = false; };
-  }, [sessionId]);
-
-  // Append live events for this session as they arrive.
-  useEffect(() => {
-    if (!sessionId) return;
-    return on('event', (evt) => {
-      if (evt.subject !== sessionId && evt.data?.sessionId !== sessionId) return;
-      setEvents((prev) => (prev.some((e) => e.seq === evt.seq) ? prev : [...prev, evt]));
-    });
-  }, [sessionId]);
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
-
-  if (!sessionId) {
+  if (!session?.id) {
     return <div className="empty"><b>No agent open.</b>Pick an agent on the Board or Map and choose Open transcript.</div>;
   }
-
-  const rows = events.filter((e) => [
-    'session.spawned', 'session.message', 'session.thinking', 'session.tool_use', 'session.tool_result',
-    'session.ended', 'permission.requested', 'permission.decided', 'work.verified', 'session.verification',
-  ].includes(e.kind));
-  const objective = st.snap.campaigns
-    .flatMap((campaign) => campaign.objectives ?? [])
-    .find((item) => item.id === session?.objectiveId);
-
   return (
-    <div className="transcript">
-      {events.length >= 2000 && <div className="label">Showing the first 2,000 events. Open Traces to load the rest.</div>}
-      <div className="agent-brief">
-        <span className="label">current objective</span>
-        <b>{objective?.statement ?? session?.target?.label ?? session?.target?.id ?? 'Awaiting assignment'}</b>
-        <span className="mono">{session?.state?.replaceAll('_', ' ') ?? 'unknown'}{objective?.status ? ` · ${objective.status}` : ''}{session?.costUsd != null ? ` · $${session.costUsd.toFixed(4)}` : ''}</span>
-        {objective?.progress?.total && (
-          <progress max={objective.progress.total} value={objective.progress.done ?? 0} />
-        )}
-      </div>
-      {rows.map((e) => <TranscriptRow key={e.seq} evt={e} />)}
-      <div ref={bottomRef} />
-    </div>
+    <SessionTranscript
+      session={session}
+      brief
+      campaigns={st.snap.campaigns ?? []}
+      connected={st.connected !== false}
+      className="transcript"
+    />
   );
-}
-
-function TranscriptRow({ evt }) {
-  const d = evt.data ?? {};
-  switch (evt.kind) {
-    case 'session.spawned':
-      return (
-        <div className="tr prompt">
-          <div className="who">initial prompt</div>
-          <details>
-            <summary>{d.initialOrders ?? 'Open prompt'}</summary>
-            <pre className="body">{d.systemPrompt}</pre>
-          </details>
-        </div>
-      );
-    case 'session.message':
-      return (
-        <div className={`tr ${d.role}`}>
-          <div className="who">{d.role}</div>
-          <div className="body">{d.text}</div>
-        </div>
-      );
-    case 'session.thinking':
-      return (
-        <div className="tr tool">
-          <div className="who">thinking</div>
-          <div className="body" style={{ opacity: .72, fontStyle: 'italic' }}>{d.text?.slice(0, 600)}</div>
-        </div>
-      );
-    case 'session.tool_use':
-      return (
-        <div className="tr tool">
-          <div className="who">{d.name}</div>
-          <div className="body">{d.summary}</div>
-        </div>
-      );
-    case 'session.tool_result':
-      return (
-        <div className={`tr ${d.ok === false ? 'error' : 'tool'}`}>
-          <div className="who">{d.ok === false ? 'tool failed' : 'result'}</div>
-          <div className="body">{(d.preview ?? '').slice(0, 400)}</div>
-        </div>
-      );
-    case 'permission.requested':
-      return (
-        <div className="tr tool">
-          <div className="who">approval requested</div>
-          <div className="body">{d.toolName}</div>
-        </div>
-      );
-    case 'permission.decided':
-      return (
-        <div className="tr tool">
-          <div className="who">approval {d.decision}</div>
-          <div className="body">by {d.by}</div>
-        </div>
-      );
-    case 'work.verified':
-      return (
-        <div className="tr tool">
-          <div className="who">verified</div>
-          <div className="body">{d.result}{d.tier ? ` · ${d.tier}` : ''}{d.summary ? ` — ${d.summary}` : ''}</div>
-        </div>
-      );
-    case 'session.verification':
-      return (
-        <div className="tr tool">
-          <div className="who">verdict</div>
-          <div className="body"><VerdictLadder verdict={{ ...d, ts: evt.ts }} compact /></div>
-        </div>
-      );
-    case 'session.ended':
-      return (
-        <div className={`tr ${d.reason === 'error' ? 'error' : 'user'}`}>
-          <div className="who">session {d.reason}</div>
-          {d.error && <div className="body">{d.error}</div>}
-        </div>
-      );
-    default:
-      return null;
-  }
 }
 
 /* ------------------------------------------------------------------ terminal */

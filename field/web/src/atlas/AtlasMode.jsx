@@ -1,75 +1,114 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Settings } from 'lucide-react';
-import { api, on } from '../net/client.js';
-import { openChanges, openInWorkspace, selectAgent, useField } from '../state/store.js';
-import { identityFor } from '../theater/fieldPreferences.js';
+/* The Board is a set of conversations.
+
+   It used to be a grid of project cards with the agents working on them folded inside,
+   which is backwards: you do not talk to a repository. One panel per agent — running,
+   waiting, or finished in the last half hour — each one a chat window with the files
+   that agent has in scope. Projects did not disappear; they became the filter at the
+   top, because "show me only what is happening in Cameo" is a question about a set of
+   conversations, not a reason to draw a card for a folder.
+
+   The panel itself lives in ui/Conversation.jsx so the Map can mount the same thing in
+   its folder detail. This file only composes them into columns. */
+
+import { useEffect, useMemo, useState } from 'react';
+import { Settings } from 'lucide-react';
+import { useField } from '../state/store.js';
 import useFieldSettings from '../theater/useFieldSettings.js';
 import FieldSettings from '../theater/FieldSettings.jsx';
-import PermissionRequests, { isPrivilegedTool } from '../hud/PermissionRequests.jsx';
+import PermissionRequests from '../hud/PermissionRequests.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
-import AgentControls from '../hud/AgentControls.jsx';
 import EmptyState from '../ui/EmptyState.jsx';
-import WorkCard, { AgentMark, MetaRow, StatusPill, plainState } from '../ui/WorkCard.jsx';
+import Conversation, { sessionsInScope, sortConversations } from '../ui/Conversation.jsx';
 
-const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
-const ATTENTION = new Set(['blocked', 'error', 'waiting_permission']);
-const TRACE_KINDS = new Set([
-  'session.spawned', 'session.message', 'session.thinking', 'session.tool_use',
-  'session.tool_result', 'session.ended', 'permission.requested', 'permission.decided',
-  'work.verified',
-]);
-
-// plainState lives with the card it labels; re-exported because the Map imports it here.
-export { plainState };
+// A conversation that ended stays on the Board for this long: long enough to read what
+// happened and start another agent on the same work, not so long that the Board becomes
+// a graveyard. Everything older is in Traces.
+const RECENTLY_FINISHED_MS = 30 * 60 * 1000;
 
 export default function AtlasMode() {
   const st = useField();
   const [settings, setSettings] = useFieldSettings();
-  const selectedId = st.activeSessionId;
   const [modelsOpen, setModelsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [starter, setStarter] = useState(null); // { workspace, screen }
+  const [starter, setStarter] = useState(null);   // { workspace, pane, screen, agentId }
+  const [project, setProject] = useState('all');  // the slim project filter
+  const [focusedId, setFocusedId] = useState(null);
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
+
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
-  const startAgent = (workspace, e, pane = 'spawn') => setStarter({
+  const endpoints = st.snap.endpoints?.length ? st.snap.endpoints : st.config?.endpoints ?? [];
+  const pendingCount = st.snap.permissions?.length ?? 0;
+
+  const startAgent = (workspace, e, { pane = 'spawn', agentId = null } = {}) => setStarter({
     workspace,
     pane,
+    agentId,
     screen: { x: e?.clientX ?? window.innerWidth / 2 - 140, y: e?.clientY ?? 120 },
   });
-  // Ctrl+Alt+N from App.jsx: open the starter on the first mounted project. Defining a new
-  // agent now lives inside that dialog rather than as a second header button.
+
+  // Ctrl+Alt+N from App.jsx: start a conversation on the filtered project, or the first.
   useEffect(() => {
     const open = () => {
       if (!workspaces.length) return;
-      setStarter({ workspace: workspaces[0], pane: 'spawn', screen: { x: Math.max(8, window.innerWidth / 2 - 180), y: 120 } });
+      const workspace = workspaces.find((item) => item.id === project) ?? workspaces[0];
+      setStarter({ workspace, pane: 'spawn', agentId: null, screen: { x: Math.max(8, window.innerWidth / 2 - 180), y: 120 } });
     };
     window.addEventListener('field:start-agent', open);
     return () => window.removeEventListener('field:start-agent', open);
-  }, [workspaces]);
-  const sessions = useMemo(
-    () => [...st.snap.sessions].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
-    [st.snap.sessions],
+  }, [workspaces, project]);
+
+  // Running, waiting, and recently finished — in that order, decisions first.
+  const all = useMemo(() => sortConversations(
+    sessionsInScope(st.snap.sessions, {
+      finishedWithinMs: RECENTLY_FINISHED_MS,
+      now: st.snap.now ?? Date.now(),
+    }),
+    st.snap.permissions ?? [],
+  ), [st.snap.sessions, st.snap.permissions, st.snap.now]);
+
+  const shown = useMemo(
+    () => (project === 'all' ? all : all.filter((session) => session.workspaceId === project)),
+    [all, project],
   );
-  const live = sessions.filter((session) => !TERMINAL.has(session.state));
-  const endpoints = st.snap.endpoints?.length ? st.snap.endpoints : st.config?.endpoints ?? [];
-  const identities = useMemo(
-    () => new Map(sessions.map((session) => [session.id, identityFor(session, endpoints, settings)])),
-    [sessions, endpoints, settings],
-  );
-  const columns = useMemo(() => buildColumns(workspaces, live, sessions), [workspaces, live, sessions]);
-  const pendingCount = st.snap.permissions?.length ?? 0;
+
+  // A focused conversation takes the whole width; otherwise up to three columns, and one
+  // wide column when there is only one conversation to read.
+  const focused = focusedId ? shown.find((session) => session.id === focusedId) ?? null : null;
+  const panels = focused ? [focused] : shown;
+  const columns = focused ? 1 : Math.min(3, panels.length || 1);
+  const projectOf = (session) => workspaces.find((item) => item.id === session.workspaceId) ?? null;
+
+  const counts = useMemo(() => {
+    const map = new Map();
+    for (const session of all) map.set(session.workspaceId, (map.get(session.workspaceId) ?? 0) + 1);
+    return map;
+  }, [all]);
 
   return (
     <div className="atlas-board">
-      {/* One row: the primary action and the gear. The live counters are in the topbar,
-          and the heading only repeated what the nav already says. */}
+      {/* One row: which project you are looking at, the primary action, the gear. */}
       <header className="atlas-head">
+        {workspaces.length > 1 && all.length > 0 && (
+          <label className="convo-filter">
+            <span className="label">project</span>
+            <select value={project} onChange={(e) => { setProject(e.target.value); setFocusedId(null); }}>
+              <option value="all">All projects · {all.length}</option>
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}{counts.get(workspace.id) ? ` · ${counts.get(workspace.id)}` : ' · none'}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span className="grow" />
         <div className="atlas-actions">
-          {workspaces.length > 0 && (
+          {workspaces.length > 0 && all.length > 0 && (
             <button
               type="button"
               className="btn primary"
-              onClick={(e) => startAgent(workspaces[0], e)}
+              onClick={(e) => startAgent(workspaces.find((item) => item.id === project) ?? workspaces[0], e)}
               aria-keyshortcuts="Control+Alt+N"
             >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
           )}
@@ -78,6 +117,7 @@ export default function AtlasMode() {
           </button>
         </div>
       </header>
+
       <div className="atlas-scroll">
         {pendingCount > 0 && (
           <section className="atlas-approvals" aria-label="Approvals waiting">
@@ -88,7 +128,8 @@ export default function AtlasMode() {
             <PermissionRequests />
           </section>
         )}
-        {columns.length > 0 && endpoints.length === 0 && (
+
+        {workspaces.length > 0 && endpoints.length === 0 && (
           <section className="atlas-approvals atlas-nudge" aria-label="No model yet">
             <h2 className="atlas-section-title"><i aria-hidden="true" />No model yet</h2>
             <p>Agents cannot start until a model is set up: a Cameo box, Ollama on this machine, or a provider key.</p>
@@ -97,38 +138,81 @@ export default function AtlasMode() {
             </div>
           </section>
         )}
-        {columns.length ? (
-          <div className="atlas-grid" role="list">
-            {columns.map((column) => (
-              <AgentColumn
-                key={column.key}
-                column={column}
-                identity={column.session ? identities.get(column.session.id) : null}
-                selected={column.session?.id === selectedId}
-                permissions={st.snap.permissions ?? []}
-                campaigns={st.snap.campaigns ?? []}
-                now={st.snap.now}
-                onStart={startAgent}
+
+        {panels.length > 0 && (
+          <div className="atlas-convos" data-columns={columns} role="list">
+            {panels.map((session) => (
+              <Conversation
+                key={session.id}
+                session={session}
+                workspace={projectOf(session)}
+                focused={focusedId === session.id}
+                collapsed={collapsedIds.has(session.id) && focusedId !== session.id}
+                showProject={project === 'all'}
+                onToggleFocus={() => setFocusedId((id) => (id === session.id ? null : session.id))}
+                onToggleCollapse={() => setCollapsedIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(session.id)) next.delete(session.id); else next.add(session.id);
+                  return next;
+                })}
+                onStartSimilar={(ended) => startAgent(
+                  projectOf(ended) ?? workspaces[0],
+                  null,
+                  { agentId: ended.agentId ?? null },
+                )}
               />
             ))}
           </div>
-        ) : (
+        )}
+
+        {panels.length === 0 && workspaces.length === 0 && (
           <EmptyState
             title="No project open"
             action={<button type="button" className="btn primary" onClick={() => setModelsOpen(true)}>Set up a model</button>}
           >
-            Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field. Each
-            project gets a card here, and each agent working on it gets its own.
+            Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field.
+            Every agent you start on it gets a conversation here.
           </EmptyState>
         )}
+
+        {panels.length === 0 && workspaces.length > 0 && all.length === 0 && (
+          <EmptyState
+            title="No agents running"
+            action={(
+              <button
+                type="button"
+                className="btn primary"
+                onClick={(e) => startAgent(workspaces.find((item) => item.id === project) ?? workspaces[0], e)}
+                aria-keyshortcuts="Control+Alt+N"
+              >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
+            )}
+          >
+            The Board is a conversation per agent: talk to it, choose the files it should work on, and pause or stop
+            it from the same panel. Start one to open the first conversation.
+          </EmptyState>
+        )}
+
+        {panels.length === 0 && all.length > 0 && (
+          <EmptyState
+            title={`No agents on ${workspaces.find((item) => item.id === project)?.name ?? 'this project'}`}
+            action={<button type="button" className="btn" onClick={() => setProject('all')}>Show every project</button>}
+          >
+            {all.length === 1 ? 'One conversation is running' : `${all.length} conversations are running`} on other projects.
+          </EmptyState>
+        )}
+
+        {!st.connected && panels.length === 0 && (
+          <p className="convo-offline" role="status">Not connected to the Field server, so this is the last state the browser received.</p>
+        )}
       </div>
+
       {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} settings={settings} setSettings={setSettings} />}
       {settingsOpen && (
         <FieldSettings
           standalone
           settings={settings}
           setSettings={setSettings}
-          selected={sessions.find((session) => session.id === selectedId) ?? null}
+          selected={st.snap.sessions.find((session) => session.id === st.activeSessionId) ?? null}
           config={st.config}
           onClose={() => setSettingsOpen(false)}
           onOpenModels={() => { setSettingsOpen(false); setModelsOpen(true); }}
@@ -138,6 +222,7 @@ export default function AtlasMode() {
         <ContextMenu
           fixed
           initialPane={starter.pane ?? 'spawn'}
+          initialAgentId={starter.agentId ?? null}
           screen={starter.screen}
           target={starter.workspace
             ? { type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }
@@ -148,238 +233,4 @@ export default function AtlasMode() {
       )}
     </div>
   );
-}
-
-function buildColumns(workspaces, live, allSessions) {
-  const byWorkspace = new Map(workspaces.map((workspace) => [workspace.id, { workspace, agents: [] }]));
-  for (const session of live) {
-    const bucket = byWorkspace.get(session.workspaceId) ?? byWorkspace.get(workspaces[0]?.id);
-    if (bucket) bucket.agents.push(session);
-  }
-  const columns = [];
-  for (const { workspace, agents } of byWorkspace.values()) {
-    if (agents.length) {
-      for (const session of agents) {
-        columns.push({ key: session.id, workspace, session });
-      }
-    } else {
-      columns.push({ key: `ws:${workspace.id}`, workspace, session: null });
-    }
-  }
-  if (!columns.length && allSessions.length) {
-    for (const session of allSessions.slice(0, 8)) {
-      columns.push({
-        key: session.id,
-        workspace: workspaces.find((item) => item.id === session.workspaceId) ?? null,
-        session,
-      });
-    }
-  }
-  // Cards that need a decision sort to the front of the grid. That, and a hairline in the
-  // attention colour, replaces the border that used to pulse forever.
-  const needsYou = (column) => Number(Boolean(
-    column.session && (ATTENTION.has(column.session.state) || column.session.pendingPermission),
-  ));
-  return columns.sort((a, b) => needsYou(b) - needsYou(a));
-}
-
-function AgentColumn({ column, identity, selected, permissions, campaigns, now, onStart }) {
-  const { workspace, session } = column;
-  const pending = permissions.filter((item) => item.sessionId === session?.id);
-  const state = plainState(session);
-  const needsYou = Boolean(session && (ATTENTION.has(session.state) || pending.length));
-  const lastTool = typeof session?.lastTool === 'string' ? session.lastTool : session?.lastTool?.name;
-  const cost = session?.costUsd ? `$${Number(session.costUsd).toFixed(3)}` : '';
-  const elapsed = session?.startedAt ? Math.max(0, Math.round(((now ?? Date.now()) - session.startedAt) / 60000)) : null;
-  const pct = session?.progress?.total ? Math.round(((session.progress.done ?? 0) / session.progress.total) * 100) : null;
-  const changed = workspace?.git?.files?.length ?? workspace?.changeCount ?? 0;
-
-  const meta = (workspace || session?.cwd) ? (
-    <MetaRow
-      className="work-card-context"
-      items={[
-        { key: 'project', value: workspace?.name ?? session?.cwd, title: workspace?.path },
-        workspace?.git?.branch && { key: 'branch', value: workspace.git.branch },
-        workspace?.git?.branch && changed
-          ? { key: 'changed', value: `${changed} changed`, onClick: () => openChanges(workspace.id), title: 'Review, accept or revert the changes' }
-          : null,
-      ]}
-    />
-  ) : null;
-
-  const notices = pending.length ? (
-    <div className="work-card-notices">
-      {pending.map((permission) => (
-        <div className="atlas-perm" key={permission.id} role="note">
-          <span className="atlas-perm-label">
-            <i aria-hidden="true" />
-            {isPrivilegedTool(permission.toolName, permission.input) ? 'Privileged approval' : 'Approval'} · <code>{permission.toolName}</code>
-          </span>
-          <code className="atlas-perm-input">{summarize(permission.toolName, permission.input)}</code>
-          <button
-            type="button"
-            className="atlas-perm-jump"
-            onClick={() => document.querySelector('.atlas-approvals')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
-          >Decide at the top of the board</button>
-        </div>
-      ))}
-    </div>
-  ) : null;
-
-  const footer = session ? (
-    <>
-      <MetaRow
-        items={[
-          lastTool && { key: 'tool', label: 'tool', value: lastTool },
-          pct != null && { key: 'progress', label: 'progress', value: `${pct}%` },
-          elapsed != null && { key: 'elapsed', label: 'elapsed', value: elapsed < 1 ? '<1m' : `${elapsed}m` },
-          session.contextPct != null && { key: 'context', label: 'context', value: `${session.contextPct}%` },
-          {
-            key: 'cost',
-            label: session.budgetExhausted ? 'budget' : 'cost',
-            tone: session.budgetExhausted ? 'failed' : null,
-            title: session.budgetExhausted ? 'budget exhausted; the agent is paused' : 'spent / budget',
-            value: `${cost || '$0.000'}${session.budgetUsd ? ` / ${Number(session.budgetUsd).toFixed(2)}` : ''}${session.budgetExhausted ? ' · exhausted' : ''}`,
-          },
-        ]}
-        className="work-meta-foot"
-      />
-      {session.error && <p className="atlas-foot-error" role="alert">{session.error}</p>}
-      <AgentControls session={session} compact onOpen={() => openInWorkspace({ type: 'session', id: session.id })} />
-    </>
-  ) : null;
-
-  return (
-    <WorkCard
-      tone={state.tone}
-      selected={selected}
-      needsYou={needsYou}
-      hollow={!session}
-      ariaLabel={session ? `${identity?.displayName ?? session.name ?? session.id}, ${state.label}` : `${workspace?.name ?? 'Project'}, no agent yet`}
-      mark={session
-        ? <AgentMark identity={identity} />
-        : <AgentMark project name={workspace?.name ?? '?'} />}
-      title={session ? (identity?.displayName ?? session.name ?? session.id) : (workspace?.name ?? 'Project')}
-      subtitle={session ? (identity?.endpointAlias ?? session.model ?? 'no model') : 'no agent yet'}
-      onTitleClick={session ? () => selectAgent(session.id) : null}
-      titleTitle={session ? 'Select this agent' : undefined}
-      pill={<StatusPill state={state} />}
-      action={!session && (
-        <button
-          type="button"
-          className="btn quiet-add"
-          aria-label={`Start an agent on ${workspace?.name ?? 'this project'}`}
-          title={`Start an agent on ${workspace?.name ?? 'this project'}`}
-          onClick={(e) => onStart(workspace, e)}
-        ><Plus aria-hidden="true" /></button>
-      )}
-      meta={meta}
-      notices={notices}
-      footer={footer}
-    >
-      {session
-        ? <ColumnTranscript session={session} campaigns={campaigns} />
-        : (
-          <div className="atlas-idle">
-            <b>No agent working on this project yet.</b>
-            <p>Use the + above to start one with orders, a model and a thinking level. It shows up here the moment it begins; routines and plans can also assign agents.</p>
-            <div className="atlas-idle-actions">
-              <button type="button" className="btn ghost" onClick={() => openInWorkspace({ type: 'workspace', workspaceId: workspace?.id, path: '' })}>Open files</button>
-            </div>
-          </div>
-        )}
-    </WorkCard>
-  );
-}
-
-export function ColumnTranscript({ session, campaigns }) {
-  const sessionId = session.id;
-  const [events, setEvents] = useState([]);
-  const bottomRef = useRef(null);
-
-  useEffect(() => {
-    let alive = true;
-    api.trace(sessionId, 0, 400).then((result) => { if (alive) setEvents(result.events ?? []); }).catch(() => { if (alive) setEvents([]); });
-    return () => { alive = false; };
-  }, [sessionId, session.messageCount, session.toolCount, session.state]);
-
-  useEffect(() => on('event', (evt) => {
-    if (evt.subject !== sessionId && evt.data?.sessionId !== sessionId) return;
-    setEvents((prev) => (prev.some((item) => item.seq === evt.seq) ? prev : [...prev, evt]));
-  }), [sessionId]);
-
-  useEffect(() => { bottomRef.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
-
-  const objective = campaigns.flatMap((campaign) => campaign.objectives ?? []).find((item) => item.id === session.objectiveId);
-  const rows = events.filter((evt) => TRACE_KINDS.has(evt.kind)).slice(-80);
-
-  return (
-    <div className="atlas-trace">
-      <p className="atlas-objective">{objective?.statement ?? session.target?.label ?? session.stateDetail ?? 'Waiting for an assignment'}</p>
-      {rows.length ? (
-        <div className="atlas-feed">
-          {rows.map((evt) => <TraceLine key={evt.seq} evt={evt} />)}
-          <div ref={bottomRef} />
-        </div>
-      ) : (
-        <p className="atlas-feed-empty">Nothing reported yet. Messages and tool calls will appear here as the agent works.</p>
-      )}
-    </div>
-  );
-}
-
-function TraceLine({ evt }) {
-  const data = evt.data ?? {};
-  if (evt.kind === 'session.message') {
-    const role = data.role ?? 'note';
-    return (
-      <p className={`atlas-line ${role}`}>
-        <span className="atlas-role">{role === 'assistant' ? 'agent' : role}</span>
-        <span className="atlas-text">{String(data.text ?? '').slice(0, 500)}</span>
-      </p>
-    );
-  }
-  if (evt.kind === 'session.tool_use') {
-    return (
-      <p className="atlas-line tool">
-        <span className="atlas-role">tool</span>
-        <span className="atlas-text"><code>{data.name}</code>{data.summary ? <> {data.summary}</> : null}</span>
-      </p>
-    );
-  }
-  if (evt.kind === 'session.tool_result') {
-    const failed = data.ok === false;
-    return (
-      <p className={`atlas-line ${failed ? 'error' : 'result'}`}>
-        <span className="atlas-role">{failed ? 'failed' : 'result'}</span>
-        <span className="atlas-text mono">{String(data.preview ?? '').slice(0, 240)}</span>
-      </p>
-    );
-  }
-  if (evt.kind === 'permission.requested') {
-    return (
-      <p className="atlas-line approval">
-        <span className="atlas-role">approval</span>
-        <span className="atlas-text">Asked to run <code>{data.toolName}</code></span>
-      </p>
-    );
-  }
-  if (evt.kind === 'session.ended') {
-    return (
-      <p className={`atlas-line ${data.reason === 'error' ? 'error' : 'ended'}`}>
-        <span className="atlas-role">ended</span>
-        <span className="atlas-text">{data.reason}{data.error ? ` · ${data.error}` : ''}</span>
-      </p>
-    );
-  }
-  return null;
-}
-
-function summarize(toolName, input) {
-  if (!input || typeof input !== 'object') return String(input ?? toolName);
-  if (typeof input.command === 'string') return input.command;
-  if (typeof input.file_path === 'string') return input.file_path;
-  if (typeof input.path === 'string') return input.path;
-  if (typeof input.url === 'string') return input.url;
-  return toolName;
 }

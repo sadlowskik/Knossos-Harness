@@ -4,9 +4,11 @@ import { api } from '../net/client.js';
 const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
 
 // One place to talk to an agent: a message box wired to the mid-session `say` command
-// plus pause / resume / escalate / stop. Used by the Atlas card, the Rome inspector and
-// the Map unit inspector so every surface offers the same verbs.
-export default function AgentControls({ session, onOpen, compact = false }) {
+// plus pause / resume / escalate / stop. Used by the Board's conversations, the Rome
+// inspector and the Map unit inspector so every surface offers the same verbs.
+// `showSay={false}` keeps only the verbs: the Board's conversation has its own composer,
+// which prepends the files in scope before sending the same `say` command.
+export default function AgentControls({ session, onOpen, compact = false, showSay = true }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null);
@@ -41,7 +43,7 @@ export default function AgentControls({ session, onOpen, compact = false }) {
 
   return (
     <div className={`agent-controls${compact ? ' compact' : ''}`} onClick={(e) => e.stopPropagation()}>
-      {!terminal && (
+      {!terminal && showSay && (
         <textarea
           ref={inputRef}
           rows={compact ? 1 : 2}
@@ -60,7 +62,7 @@ export default function AgentControls({ session, onOpen, compact = false }) {
         {!terminal && <button type="button" className="btn sm danger" disabled={busy} onClick={() => run('cancel', {}, 'Stopped.')}>Stop</button>}
         {onOpen && <button type="button" className="btn sm ghost" onClick={onOpen}>Open transcript</button>}
         <span className="grow" />
-        {!terminal && <button type="button" className="btn sm primary" disabled={busy || !text.trim()} onClick={say}>{busy ? 'Working…' : 'Send'}</button>}
+        {!terminal && showSay && <button type="button" className="btn sm primary" disabled={busy || !text.trim()} onClick={say}>{busy ? 'Working…' : 'Send'}</button>}
       </div>
       {note && <p className={`agent-controls-note ${note.tone}`} role="status">{note.text}</p>}
     </div>

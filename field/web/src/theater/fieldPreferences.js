@@ -19,6 +19,10 @@ export const DEFAULT_FIELD_SETTINGS = Object.freeze({
   density: 'balanced',
   motion: true,
   agentOverrides: {},
+  // Which files each conversation has in scope: { [sessionId]: ['src/a.rs', …] }.
+  // Client-side only — the server has no notion of an attached file; the Board prepends
+  // the list to the next message it sends.
+  sessionFiles: {},
   modelRegistry: {
     'ox-alpha': {
       endpointAlias: 'OX Alpha',
@@ -55,6 +59,41 @@ function migratedIdentity(input) {
   return ['person', 'model', 'both'].includes(value) ? value : DEFAULT_FIELD_SETTINGS.identity;
 }
 
+export const MAX_SESSION_FILES = 24;
+const MAX_SESSION_FILE_PATH = 400;
+const MAX_SESSIONS_WITH_FILES = 200;
+const NO_FILES = Object.freeze([]);
+
+/* The attached-file map is operator input that survives a reload, so it is normalized
+   the same way the other stored keys are: anything that is not a list of workspace-
+   relative paths is dropped rather than handed back to the picker or to an agent. */
+function safeSessionFiles(value) {
+  const input = safeObject(value);
+  const out = {};
+  for (const [id, list] of Object.entries(input).slice(0, MAX_SESSIONS_WITH_FILES)) {
+    if (!Array.isArray(list) || !id) continue;
+    const paths = [...new Set(list
+      .filter((path) => typeof path === 'string' && path && path.length <= MAX_SESSION_FILE_PATH)
+      .map((path) => path.replaceAll('\\', '/').replace(/^\/+/, '').trim())
+      .filter(Boolean))].slice(0, MAX_SESSION_FILES);
+    if (paths.length) out[String(id)] = paths;
+  }
+  return out;
+}
+
+/** The files attached to one conversation. Stable empty array, so memos stay stable. */
+export function sessionFilesFor(settings, sessionId) {
+  return settings?.sessionFiles?.[sessionId] ?? NO_FILES;
+}
+
+/** Settings with one conversation's attached files replaced (empty removes the key). */
+export function withSessionFiles(settings, sessionId, paths) {
+  const next = { ...(settings?.sessionFiles ?? {}) };
+  if (paths?.length) next[sessionId] = paths;
+  else delete next[sessionId];
+  return { ...settings, sessionFiles: next };
+}
+
 export function normalizeFieldSettings(value = {}) {
   const input = safeObject(value);
   // The removed keys are destructured away so a stored blob cannot smuggle them back in.
@@ -72,6 +111,7 @@ export function normalizeFieldSettings(value = {}) {
     density: ['quiet', 'balanced', 'dense'].includes(input.density) ? input.density : DEFAULT_FIELD_SETTINGS.density,
     motion: input.motion !== false,
     agentOverrides: safeObject(input.agentOverrides),
+    sessionFiles: safeSessionFiles(input.sessionFiles),
     modelRegistry: {
       ...DEFAULT_FIELD_SETTINGS.modelRegistry,
       ...safeObject(input.modelRegistry),
