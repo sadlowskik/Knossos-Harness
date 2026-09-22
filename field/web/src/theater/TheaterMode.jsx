@@ -32,6 +32,7 @@ import ContextMenu from '../hud/ContextMenu.jsx';
 import PlansOverlay from '../campaigns/PlansOverlay.jsx';
 import FieldSettings from './FieldSettings.jsx';
 import FolderDetail from './FolderDetail.jsx';
+import IslandPlate from './IslandPlate.jsx';
 import TimeControl from './TimeControl.jsx';
 import { sessionsInScope, TERMINAL_STATES } from '../ui/Conversation.jsx';
 import { plainActivity } from '../ui/WorkCard.jsx';
@@ -39,8 +40,9 @@ import { identityFor, identityHue, initials, verifiedContribution } from './fiel
 import useFieldSettings from './useFieldSettings.js';
 import {
   districtsAt, folderRollup, markerRing, normalizeDir, parentOf,
-  ringLayout, staleness, standingPlaces, weightLabel,
+  staleness, standingPlaces, weightLabel,
 } from './districts.js';
+import { frameFor, islandFor } from './island.js';
 
 const ATTENTION_STATES = new Set(['blocked', 'error', 'waiting_permission']);
 // A conversation that ended stays in a folder this long, as on the Board.
@@ -48,11 +50,14 @@ const RECENTLY_FINISHED_MS = 30 * 60 * 1000;
 const MAX_DISTRICTS = 7;
 const MAX_MARKERS = 8;
 
-const PROJECT_SLOTS = [
-  { x: 35, y: 18, w: 17, h: 22 },
-  { x: 13, y: 25, w: 17, h: 21 }, { x: 66, y: 32, w: 17, h: 21 },
-  { x: 20, y: 63, w: 17, h: 20 }, { x: 62, y: 62, w: 17, h: 20 },
-];
+/* The settlement sits on the island the generator drew, at the quiet inland spot it
+   picked; its footprint is a fraction of that island's frame so a crowded archipelago
+   draws smaller towns. */
+const settlementBox = (extent, site) => {
+  const w = Math.min(18, extent.rx * 0.6);
+  const h = Math.min(23, extent.ry * 0.8);
+  return { x: site.x - w / 2, y: site.y - h / 2, w, h };
+};
 const LANDMARK_KIND = {
   model: 'model', runtime: 'runtime', knowledge: 'archive', verification: 'verification',
   interface: 'interface', storage: 'storage', core: 'core', general: 'project',
@@ -215,7 +220,9 @@ function City({ position, workspace, isCapital, tier, active, focused, agents, o
       onClick={(event) => { event.stopPropagation(); onOpen(''); }}
     />
     <ProceduralSettlement name={workspace.name} isCapital={isCapital} tier={tier} />
-    {isCapital && <div className="capital-label"><i />CAPITAL · {workspace.name}</div>}
+    {/* The island's name is the project's name. It used to be prefixed "CAPITAL ·", which
+        is a word from the costume rather than a thing on the screen. */}
+    {isCapital && <div className="capital-label"><i />{workspace.name}</div>}
     {agents > 0 && <span className="city-crowd mono" aria-hidden="true">{agents}</span>}
   </section>;
 }
@@ -366,21 +373,17 @@ export default function TheaterMode() {
     [liveSessions, endpoints, settings],
   );
 
+  /* The capital's island takes the first frame; the rest of the archipelago follows in a
+     stable order, so a project does not swap seas because another one mounted. */
   const cities = useMemo(() => {
     const ordered = [...workspaces].sort(
-      (a, b) => Number(b.id === world.capitalWorkspaceId) - Number(a.id === world.capitalWorkspaceId),
+      (a, b) => Number(b.id === world.capitalWorkspaceId) - Number(a.id === world.capitalWorkspaceId)
+        || String(a.path ?? a.id).localeCompare(String(b.path ?? b.id)),
     );
-    const taken = new Set();
-    return ordered.map((workspace, index) => {
-      const preferred = settlementSeed(workspace.name).value % PROJECT_SLOTS.length;
-      let slot = preferred;
-      while (taken.has(slot) && taken.size < PROJECT_SLOTS.length) slot = (slot + 1) % PROJECT_SLOTS.length;
-      taken.add(slot);
-      return { workspace, position: PROJECT_SLOTS[slot] ?? PROJECT_SLOTS[Math.min(index, PROJECT_SLOTS.length - 1)] };
-    });
+    return ordered.map((workspace, index) => ({ workspace, frame: frameFor(ordered.length, index) }));
   }, [workspaces, world.capitalWorkspaceId]);
 
-  const map = useMemo(() => cities.map(({ workspace, position }) => {
+  const map = useMemo(() => cities.map(({ workspace, frame }) => {
     const level = place?.workspaceId === workspace.id ? parentOf(place.dir) : '';
     const entries = entriesOf(trees, workspace.id, level);
     const childTrees = new Map();
@@ -393,13 +396,62 @@ export default function TheaterMode() {
       workspaceId: workspace.id, dir: level, entries, childTrees,
       folders: view.folders ?? [], files: view.files ?? [], now, limit: MAX_DISTRICTS,
     });
-    const cityCentre = { x: position.x + position.w / 2, y: position.y + position.h / 2 };
-    const laid = ringLayout(districts ?? [], position, { seed: settlementSeed(workspace.name).value });
     const mine = liveSessions.filter((session) => session.workspaceId === workspace.id);
-    const standing = standingPlaces(mine, laid.map((item) => item.dir));
     const tier = verifiedContribution({ metrics: workspace.maturity }, mine).tier;
-    return { workspace, position, cityCentre, level, districts: laid, standing, tier, loading: entries === null };
+
+    /* The ground is generated from this folder and its children, seeded by the path: drill
+       into `web` and you sail to `…/field/web`'s own island, the same one every time. It is
+       memoized on that seed and on the folder list, never on the event log, so an arriving
+       event moves the markers and leaves the coastline alone. */
+    if (!districts) {
+      const centre = { x: frame.cx, y: frame.cy };
+      return {
+        workspace, frame, island: null, heat: new Map(), level, tier, loading: true,
+        position: settlementBox(frame, centre), cityCentre: centre,
+        districts: [], standing: standingPlaces(mine, []),
+      };
+    }
+    const island = islandFor({
+      id: `${normalizeDir(workspace.path) || workspace.id}/${level}`,
+      regions: districts.map((item) => ({ key: item.dir, name: item.name, weight: item.weight })),
+      frame,
+    });
+    const ground = new Map(island.regions.map((region) => [region.key, region]));
+    const laid = districts.map((district) => {
+      const spot = ground.get(district.dir);
+      return {
+        ...district,
+        x: spot?.x ?? island.site.x,
+        y: spot?.y ?? island.site.y,
+        cityX: island.site.x,
+        cityY: island.site.y,
+      };
+    });
+    const standing = standingPlaces(mine, laid.map((item) => item.dir));
+    const heat = new Map(laid.map((district) => [
+      district.dir, staleness(district.lastTs, now, (standing.get(district.dir) ?? []).length).id,
+    ]));
+    return {
+      workspace,
+      frame,
+      island,
+      heat,
+      position: settlementBox(island, island.site),
+      cityCentre: { x: island.site.x, y: island.site.y },
+      level,
+      districts: laid,
+      standing,
+      tier,
+      loading: false,
+    };
   }), [cities, trees, place, view.folders, view.files, liveSessions, now]);
+
+  const plates = useMemo(
+    () => map.filter((entry) => entry.island).map((entry) => ({
+      key: entry.workspace.id, island: entry.island, heat: entry.heat,
+    })),
+    [map],
+  );
 
   // ---- the open folder ----------------------------------------------------------
   const open = useMemo(() => {
@@ -520,9 +572,10 @@ export default function TheaterMode() {
     onClick={() => { setPlace(null); setExpanded(false); setRequest(null); clearActiveAgent(); }}
   >
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
+      {/* The project's name, in plain words. The kicker over it used to read IMPERIUM
+          OPERIS, which named nothing an operator could click. */}
       <div>
-        <span>IMPERIUM OPERIS</span>
-        <h1>{capital?.name ?? (workspaces.length ? 'Anchoring the world…' : 'No project open')}</h1>
+        <h1>{capital?.name ?? (workspaces.length ? 'Opening the project…' : 'No project open')}</h1>
       </div>
       <div className="field-quick-settings">
         <button
@@ -546,11 +599,7 @@ export default function TheaterMode() {
     </header>
 
     <main className="field-world-canvas living-world">
-      <div className="world-map-base" aria-hidden="true" />
-      <div className="world-contours" aria-hidden="true" />
-      <div className="world-sea-label west">ORBIS OPERIS</div>
-      <div className="world-sea-label center">VIAE ET OPERA</div>
-      <div className="world-sea-label east">FINES ACTIVI</div>
+      <IslandPlate plates={plates} />
 
       <div className="world-routes">
         {map.flatMap(({ workspace, cityCentre, districts }) => districts.map((district) => (

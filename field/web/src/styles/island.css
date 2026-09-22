@@ -1,0 +1,250 @@
+/* The island plate, and everything that had to change because the ground got light.
+
+   Rome's ground used to be a dark satellite relief of the Mediterranean. It is now a
+   daylight parchment plate, generated from the repository, sitting inside the same dark
+   application shell — the header and the time rail keep their night colours, the map in
+   between is paper. Which means every label, plaque, chip and marker that was drawn to sit
+   on a dark photograph now sits on a light one, and each of them is re-stated here.
+
+   This file is loaded after app.css, so the overrides below win on source order at equal
+   specificity. Nothing in app.css is edited: the Mediterranean rules are still there, they
+   are simply no longer rendered (TheaterMode stopped mounting `.world-map-base`,
+   `.world-contours` and the sea labels). */
+
+.field-world-shell {
+  /* the plate */
+  --isle-paper:      #F0E4C8;
+  --isle-paper-warm: #F6EDD9;
+  --isle-paper-deep: #DFCFAC;
+  --isle-sea:        #9BAFB3;
+  --isle-sea-deep:   #5E7B86;
+  --isle-land:       #ECE3C8;
+  --isle-olive:      #939C63;
+  /* the drawn line, and the words on top of it */
+  --isle-ink:        #463C28;
+  --isle-ink-soft:   rgba(70, 60, 40, .46);
+  --isle-label:      #2B2417;
+  --isle-label-soft: #5A5140;
+  --isle-halo:       rgba(247, 240, 224, .94);
+  --isle-chip:       rgba(249, 243, 229, .94);
+}
+
+/* The vignette and scanlines were atmosphere for a dark photograph; on parchment they read
+   as dirt. The plate frames itself with `.island-edge` instead. */
+.field-world-shell::after { box-shadow: none; background: none; }
+
+/* ---- the plate itself ------------------------------------------------------------ */
+
+.island-ground { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; }
+
+.island-paper {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(128% 96% at 50% 8%, var(--isle-paper-warm) 0%, var(--isle-paper) 46%, var(--isle-paper-deep) 100%);
+}
+
+/* A little tooth, so the paper is a surface rather than a fill. */
+.island-grain {
+  position: absolute; inset: 0;
+  opacity: .30;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' seed='7'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.42'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
+
+/* An inset edge shadow and a double rule inset from the plate edge — the two marks that
+   say "this is a printed plate" and not "this is a div". */
+.island-edge {
+  position: absolute; inset: 0;
+  box-shadow:
+    inset 0 0 40px rgba(96, 74, 42, .20),
+    inset 0 0 130px rgba(96, 74, 42, .11),
+    inset 0 1px 0 rgba(255, 252, 244, .5);
+}
+.island-edge::before,
+.island-edge::after { content: ''; position: absolute; pointer-events: none; }
+.island-edge::before { inset: 13px; border: 1px solid rgba(84, 68, 42, .34); }
+.island-edge::after { inset: 18px; border: 1px solid rgba(84, 68, 42, .16); }
+
+.island-art { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+/* ---- water, land, relief ---------------------------------------------------------- */
+
+.island-sea { fill: var(--isle-sea); opacity: .60; }
+
+.island-depth path { fill: none; stroke: var(--isle-sea-deep); stroke-linejoin: round; stroke-linecap: round; }
+.island-depth.band-far path { stroke-width: 18; opacity: .13; }
+.island-depth.band-near path { stroke-width: 9; opacity: .17; }
+.island-depth.band-shelf path { stroke-width: 3.5; opacity: .22; }
+
+/* Drawn under the land, so only its seaward half survives: the lighter of the two coast
+   lines, a pale rule just outside the shore. */
+.island-shore-outer path { fill: none; stroke: #F5EEDC; stroke-width: 4.5; opacity: .8; stroke-linejoin: round; stroke-linecap: round; }
+
+.island-land { fill: var(--isle-land); }
+.island-relief path { fill: var(--isle-olive); }
+
+/* The tint has to stay a wash: strong enough to group a region and to say how long ago
+   anyone was in it, never strong enough that a cold district reads as water. */
+.island-tint path { fill-opacity: .16; }
+.island-tint .heat-live { fill: #4E8C6C; fill-opacity: .26; }
+.island-tint .heat-hot { fill: #D9812A; fill-opacity: .20; }
+.island-tint .heat-warm { fill: #BE8A34; fill-opacity: .15; }
+.island-tint .heat-cool { fill: #8D8C76; fill-opacity: .12; }
+.island-tint .heat-cold { fill: #7B7D72; fill-opacity: .17; }
+/* Ground nobody has been on reads as unexplored: colourless, and the flattest thing here. */
+.island-tint .heat-untouched { fill: #85837A; fill-opacity: .26; }
+
+.island-borders path { fill: none; stroke: var(--isle-ink-soft); stroke-width: 1.1; stroke-dasharray: 3.5 2.6; opacity: .72; }
+.island-hatch path { fill: none; stroke: rgba(72, 61, 38, .46); stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+.island-shore path { fill: none; stroke: #3B3322; stroke-width: 1.7; opacity: .9; stroke-linejoin: round; stroke-linecap: round; }
+.island.small-isle .island-shore path { stroke-width: 1.4; }
+
+/* ---- the roads out to the districts ------------------------------------------------ */
+/* Gold dashes glowing on a dark sea became invisible ink on paper. Drawn ink now. */
+.world-routes i,
+.world-routes i.route-district {
+  background: repeating-linear-gradient(90deg, transparent 0 4px, rgba(74, 62, 40, .42) 4px 9px, transparent 9px 14px);
+  filter: none;
+  opacity: .7;
+}
+
+/* ---- the settlement sits on the island --------------------------------------------- */
+
+.settled .region-influence {
+  border: 1px dashed rgba(96, 78, 46, .22);
+  background: radial-gradient(ellipse, rgba(255, 250, 236, .5), rgba(226, 210, 176, .22) 56%, transparent 76%);
+  box-shadow: none;
+}
+.field-region:hover .region-influence,
+.field-region.focused .region-influence,
+.field-region:focus-within .region-influence { border-color: rgba(96, 78, 46, .5); background-color: rgba(255, 251, 238, .34); }
+.field-region.active .region-influence::after { box-shadow: 0 0 26px rgba(214, 133, 43, .3); }
+
+/* The cutouts are the authored art and are unchanged; what changes is the ground they are
+   bedded into and the black they were shadowed with, both of which were for a night map. */
+.settlement-ground {
+  background: radial-gradient(ellipse at 48% 47%, rgba(166, 150, 104, .42), rgba(180, 165, 120, .26) 48%, rgba(190, 176, 136, .12) 68%, transparent 78%);
+}
+.settlement-road { opacity: .5; background: linear-gradient(180deg, transparent, rgba(120, 98, 58, .26) 25%, rgba(96, 78, 44, .34) 48%, rgba(120, 98, 58, .2) 70%, transparent); }
+.settlement-site::after { background: radial-gradient(ellipse 58% 47% at 50% 59%, transparent 0 60%, rgba(102, 84, 52, .22) 76%, transparent 90%); opacity: .7; }
+.settlement-module { filter: drop-shadow(0 10px 9px rgba(78, 60, 32, .38)) saturate(.94) brightness(1.02); }
+.settlement-module.support { opacity: .93; filter: drop-shadow(0 8px 7px rgba(78, 60, 32, .34)) saturate(.88) brightness(.96); }
+.settlement-site.tier-0 .settlement-module { opacity: .68; filter: grayscale(.3) brightness(.95); }
+.settlement-site.tier-1 .settlement-module { opacity: .85; filter: saturate(.8) brightness(.98); }
+.settlement-site.tier-2 .settlement-module { filter: drop-shadow(0 9px 8px rgba(78, 60, 32, .36)) saturate(.9) brightness(1); }
+.field-region.capital .settlement-module.primary { filter: drop-shadow(0 13px 11px rgba(78, 60, 32, .42)) saturate(1) brightness(1.04); }
+.settlement-capital { filter: drop-shadow(0 13px 11px rgba(78, 60, 32, .42)) saturate(.98) brightness(1.02); }
+.field-region:hover .settlement-capital,
+.field-region.focused .settlement-capital,
+.field-region:focus-within .settlement-capital { filter: drop-shadow(0 15px 12px rgba(78, 60, 32, .46)) saturate(1.06) brightness(1.08); }
+.field-region:hover .settlement-module,
+.field-region.focused .settlement-module,
+.field-region:focus-within .settlement-module { filter: drop-shadow(0 12px 10px rgba(78, 60, 32, .4)) saturate(1) brightness(1.06); }
+
+/* ---- labels, plaques, chips and badges over light ground --------------------------- */
+/* This is the risk of the whole change: every one of these was a light face with a black
+   halo. Each becomes a dark face with a paper halo, or a paper chip with dark ink. */
+
+.settlement-plaque {
+  border-color: rgba(96, 78, 46, .4);
+  background: linear-gradient(180deg, rgba(252, 246, 233, .97), rgba(238, 228, 205, .97));
+  color: var(--isle-label);
+  box-shadow: 0 3px 9px rgba(84, 66, 38, .26);
+}
+.settlement-plaque i { border-right-color: rgba(96, 78, 46, .26); color: #8A5C1E; }
+.settlement-plaque b { color: var(--isle-label); }
+.settlement-plaque small { border-left-color: rgba(96, 78, 46, .24); color: var(--isle-label-soft); }
+.field-region.capital .settlement-plaque { border-color: rgba(138, 92, 30, .55); box-shadow: 0 3px 10px rgba(84, 66, 38, .3); }
+.motion-on .field-region.active .settlement-plaque { animation: none; border-color: rgba(176, 106, 26, .7); }
+
+.capital-label,
+.living-world .capital-label {
+  padding: 3px 8px;
+  border: 1px solid rgba(96, 78, 46, .34);
+  border-radius: var(--radius-sm);
+  background: var(--isle-chip);
+  color: var(--isle-label);
+  text-shadow: none;
+  box-shadow: 0 2px 7px rgba(84, 66, 38, .2);
+  letter-spacing: .06em;
+}
+.capital-label i { border-color: #8A5C1E; background: #C58A2E; }
+
+.district-plaque b {
+  color: var(--isle-label);
+  text-shadow: 0 0 3px var(--isle-halo), 0 0 7px var(--isle-halo), 0 1px 0 var(--isle-halo);
+}
+.district-plaque small {
+  color: var(--isle-label-soft);
+  text-shadow: 0 0 3px var(--isle-halo), 0 0 7px var(--isle-halo);
+}
+.district.heat-cool .district-plaque b,
+.district.heat-cold .district-plaque b { color: #4A4235; }
+.district.heat-untouched .district-plaque small { color: #6B6558; }
+
+/* Staleness used to dim toward black, which on paper only makes a label darker and
+   crisper. Cold ground steps back by losing colour and a little presence instead. */
+.district.heat-cool { filter: saturate(.78); }
+.district.heat-cold { filter: saturate(.5); opacity: .92; }
+.district.heat-untouched { filter: saturate(.22); opacity: .84; }
+
+.building-shape { filter: drop-shadow(0 3px 3px rgba(78, 60, 32, .34)); }
+.district-open:hover { border-color: rgba(96, 78, 46, .45); background: rgba(255, 251, 240, .5); }
+.district.focused .district-open { border-color: #8A5C1E; background: rgba(255, 249, 235, .62); }
+.district-open:focus-visible { outline-color: #7A5116; }
+
+.district-add {
+  border-color: rgba(96, 78, 46, .42);
+  background: var(--isle-chip);
+  color: var(--isle-label-soft);
+  box-shadow: 0 2px 6px rgba(84, 66, 38, .22);
+}
+.district-add:hover { border-color: #8A5C1E; color: var(--isle-label); background: #FFF8E9; }
+
+.district-overflow, .district-reading, .district-up {
+  border-color: rgba(96, 78, 46, .34);
+  background: var(--isle-chip);
+  color: var(--isle-label-soft);
+  box-shadow: 0 2px 6px rgba(84, 66, 38, .18);
+}
+.district-up { color: #7A5116; }
+.district-up:hover { border-color: #7A5116; color: var(--isle-label); }
+.district-reading { color: #6B6558; }
+
+.city-crowd {
+  border-color: rgba(96, 78, 46, .34);
+  background: var(--isle-chip);
+  color: #7A5116;
+  box-shadow: 0 2px 6px rgba(84, 66, 38, .18);
+}
+
+.field-region-action:focus-visible { outline-color: #7A5116; box-shadow: 0 0 0 5px rgba(122, 81, 22, .2); }
+
+/* Markers keep their dark emblem — a dark chip on paper is the one thing here that was
+   already the right way round — but lose the black bloom it needed on a night map. */
+.agent-emblem, .senator-portrait { box-shadow: 0 4px 10px rgba(78, 60, 32, .34); }
+.field-agent-marker::after { border-color: rgba(78, 60, 32, .5); }
+.marker-equipment { border-color: rgba(96, 78, 46, .5); box-shadow: 0 2px 5px rgba(78, 60, 32, .3); }
+
+.marker-label {
+  border-color: rgba(96, 78, 46, .38);
+  background: var(--isle-chip);
+  box-shadow: 0 5px 12px rgba(84, 66, 38, .26);
+}
+.marker-label b { color: var(--isle-label); }
+.marker-label small { color: var(--isle-label-soft); }
+
+/* A plan's claim is drawn on the plate too. */
+.plan-claim {
+  border-color: rgba(122, 81, 22, .45);
+  background: color-mix(in srgb, var(--isle-chip), transparent 8%);
+  color: var(--isle-label-soft);
+}
+.plan-claim.on { border-color: #7A5116; background: rgba(240, 190, 110, .4); color: var(--isle-label); }
+.plan-claim.phase-verified, .plan-claim.phase-promoted { border-color: rgba(62, 116, 88, .6); }
+
+@media (max-width: 900px) {
+  .island-edge::before { inset: 8px; }
+  .island-edge::after { inset: 12px; }
+}

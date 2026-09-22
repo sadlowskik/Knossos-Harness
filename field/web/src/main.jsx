@@ -4,6 +4,7 @@ import App from './App.jsx';
 import { bootstrap } from './state/store.js';
 import './styles/tokens.css';
 import './styles/app.css';
+import './styles/island.css';
 
 bootstrap();
 
