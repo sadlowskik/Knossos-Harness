@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, RadioTower, Upload, X } from 'lucide-react';
+import { Check, Landmark, MapPin, RadioTower, Upload, X } from 'lucide-react';
 import { api } from '../net/client.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
 import {
@@ -27,9 +27,11 @@ export function ChoiceGroup({ value, options, onChange }) {
 /* The one settings panel. It used to live inside the Rome branch of TheaterMode, which
    left the Board with no settings at all; both screens now open this from their gear. */
 export default function FieldSettings({
-  settings, setSettings, selected, config, onClose, onOpenModels = null, standalone = false,
+  settings, setSettings, selected, config, onClose,
+  onOpenModels = null, onOpenCities = null, onChooseCapital = null,
+  standalone = false,
 }) {
-  const [tab, setTab] = useState('world');
+  const [tab, setTab] = useState('field');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const key = selected ? agentPreferenceKey(selected) : null;
@@ -38,11 +40,11 @@ export default function FieldSettings({
   const role = selected ? config?.roles?.find((item) => item.id === selected.role) : null;
   const roleTools = role?.tools_allow ?? [];
   const selectedTools = override.toolsAllow ?? configuredAgent?.tools_allow ?? roleTools;
-  const oxAlpha = settings.modelRegistry['ox-alpha'];
+  // Rome hands in its world handlers; the Board does not have a world to configure.
+  const worldRows = [onOpenModels, onOpenCities, onChooseCapital].some(Boolean);
 
   function patchSettings(patch) { setSettings((current) => normalizeFieldSettings({ ...current, ...patch })); }
   function patchAgent(patch) { if (key) patchSettings({ agentOverrides: { ...settings.agentOverrides, [key]: { ...override, ...patch } } }); }
-  function patchOx(patch) { patchSettings({ modelRegistry: { ...settings.modelRegistry, 'ox-alpha': { ...oxAlpha, ...patch } } }); }
   function toggleTool(tool) { patchAgent({ toolsAllow: selectedTools.includes(tool) ? selectedTools.filter((item) => item !== tool) : [...selectedTools, tool] }); }
 
   function upload(event) {
@@ -101,16 +103,11 @@ export default function FieldSettings({
     onClick={(event) => event.stopPropagation()}
   >
     <header><div><span>FIELD</span><h2>Settings</h2></div><button type="button" onClick={onClose} aria-label="Close settings"><X /></button></header>
-    <nav>{['world', 'identity', 'models'].map((item) => (
+    <nav>{['field', 'agents'].map((item) => (
       <button type="button" key={item} className={tab === item ? 'on' : ''} onClick={() => setTab(item)}>{item}</button>
     ))}</nav>
     <div className="settings-scroll">
-      {tab === 'world' && <>
-        <section>
-          <label>Theme</label>
-          <p className="settings-help">Atlas is the parallel agent board. Rome is the operations map.</p>
-          <ChoiceGroup value={settings.theme} options={[{ value: 'atlas', label: 'Atlas' }, { value: 'rome', label: 'Rome' }]} onChange={(theme) => patchSettings({ theme })} />
-        </section>
+      {tab === 'field' && <>
         <section>
           <label>Typeface</label>
           <p className="settings-help">
@@ -128,11 +125,14 @@ export default function FieldSettings({
           </label>
           <small>woff2, ttf or otf, under 1.5 MB. It is stored on this device with the rest of your settings.</small>
         </section>
-        {onOpenModels && (
-          <section>
-            <label>Models</label>
-            <p className="settings-help">Cameo boxes, Ollama and provider keys: what agents actually run on.</p>
-            <button type="button" className="btn ghost" onClick={onOpenModels}><RadioTower aria-hidden="true" />Set up models</button>
+        {/* What used to be three buttons in Rome's header. They open dialogs, so they are
+            rows here rather than settings, and only appear on the screen that has a world. */}
+        {worldRows && (
+          <section className="settings-rows">
+            <label>{onOpenCities || onChooseCapital ? 'World' : 'Models'}</label>
+            {onOpenModels && <button type="button" className="btn ghost" onClick={onOpenModels}><RadioTower aria-hidden="true" />Models<small>Cameo boxes, Ollama, provider keys</small></button>}
+            {onOpenCities && <button type="button" className="btn ghost" onClick={onOpenCities}><Landmark aria-hidden="true" />Cities<small>Per-project command hub</small></button>}
+            {onChooseCapital && <button type="button" className="btn ghost" onClick={onChooseCapital}><MapPin aria-hidden="true" />Capital<small>The project the world is anchored on</small></button>}
           </section>
         )}
         <section>
@@ -144,14 +144,16 @@ export default function FieldSettings({
           <button type="button" className={settings.motion ? 'on' : ''} aria-pressed={settings.motion} aria-label="World motion" onClick={() => patchSettings({ motion: !settings.motion })}><i /></button>
         </section>
       </>}
-      {tab === 'identity' && <>
-        <section><label>Agent identity</label><ChoiceGroup value={settings.identityMode} options={[{ value: 'portrait', label: 'Portrait' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(identityMode) => patchSettings({ identityMode })} /></section>
-        <section><label>Map markers</label><ChoiceGroup value={settings.markerMode} options={[{ value: 'person', label: 'Person' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(markerMode) => patchSettings({ markerMode })} /></section>
+      {tab === 'agents' && <>
+        <section>
+          <label>Show an agent as</label>
+          <p className="settings-help">One answer for the whole app: the cards, the panels and the map markers all use it.</p>
+          <ChoiceGroup value={settings.identity} options={[{ value: 'person', label: 'Person' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(identity) => patchSettings({ identity })} />
+        </section>
         <section><label>Emblem source</label><select value={settings.emblemSource} aria-label="Emblem source" onChange={(event) => patchSettings({ emblemSource: event.target.value })}><option value="auto">Auto</option><option value="huggingface">Hugging Face</option><option value="endpoint">Endpoint</option><option value="upload">Upload</option><option value="initials">Initials</option></select><small>HF avatar › endpoint › upload › initials</small></section>
         {selected ? <section className="agent-settings"><label>Selected agent</label><h3>{override.displayName || selected.name}</h3><div className="settings-field"><span>Display name</span><input value={override.displayName ?? selected.name ?? ''} onChange={(event) => patchAgent({ displayName: event.target.value })} /></div><div className="settings-field"><span>Endpoint alias</span><input value={override.endpointAlias ?? ''} placeholder="Use endpoint name" onChange={(event) => patchAgent({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={override.hfRepo ?? ''} placeholder="owner/model" onChange={(event) => patchAgent({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Icon URL</span><input value={override.iconUrl ?? ''} placeholder="https://…" onChange={(event) => patchAgent({ iconUrl: event.target.value, iconDataUrl: '' })} /></div><label className="upload-control"><Upload />Upload icon<input type="file" accept="image/*" onChange={upload} /></label></section> : <section><p>Select an agent to edit its persistent name and emblem.</p></section>}
         {selected && <section><label>Tool authority</label><p className="settings-help">A configured agent may receive a subset of its role&apos;s real allowlist. Changes apply on its next deployment.</p><div className="authority-grid">{roleTools.map((tool) => <button type="button" key={tool} className={selectedTools.includes(tool) ? 'on' : ''} aria-pressed={selectedTools.includes(tool)} onClick={() => toggleTool(tool)}><ToolIcon name={tool} />{tool}<Check /></button>)}</div>{!configuredAgent && <small>Ad-hoc sessions cannot persist tool changes.</small>}</section>}
       </>}
-      {tab === 'models' && <section className="model-registry-card"><label>Distillation teacher</label><h3>OX Alpha is GLM 5.3 Flash</h3><p>OX Alpha is the endpoint alias. It serves GLM 5.3 Flash and supplies teacher traces for the Ornith student.</p><div className="settings-field"><span>Teacher endpoint</span><input value={oxAlpha.endpointAlias} onChange={(event) => patchOx({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>Model served</span><input value={oxAlpha.servedModel} onChange={(event) => patchOx({ servedModel: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={oxAlpha.hfRepo} onChange={(event) => patchOx({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Student target</span><input value={oxAlpha.studentTarget} onChange={(event) => patchOx({ studentTarget: event.target.value })} /></div><div className="settings-toggle"><div><label>Collect teacher traces</label><p>Mark OX Alpha traces as distillation source data.</p></div><button type="button" className={oxAlpha.collectTeacherTraces ? 'on' : ''} aria-pressed={oxAlpha.collectTeacherTraces} aria-label="Collect teacher traces" onClick={() => patchOx({ collectTeacherTraces: !oxAlpha.collectTeacherTraces })}><i /></button></div></section>}
     </div>
     <footer>
       <button type="button" className="restore" onClick={() => setSettings(normalizeFieldSettings(DEFAULT_FIELD_SETTINGS))}>Restore defaults</button>

@@ -3,6 +3,8 @@ import { api } from '../net/client.js';
 import { clearActiveAgent, openSenate, selectCampaign, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import AgentControls from '../hud/AgentControls.jsx';
+import ReplayRail from '../ui/ReplayRail.jsx';
+import { plainState } from '../ui/WorkCard.jsx';
 
 // The server's director still keys rosters by lane. The client shows one flat list of
 // agents per plan and always files them under this lane until the server is simplified.
@@ -239,18 +241,22 @@ function CampaignReplayRail({ campaign, onReplay }) {
     return () => { alive = false; clearTimeout(timer); };
   }, [campaign.id, cursor, onReplay, trace]);
 
-  if (error) return <div className="campaign-replay error mono">{error}</div>;
-  if (!trace) return <div className="campaign-replay mono">loading plan history…</div>;
+  if (error) return <div className="replay-rail error mono">{error}</div>;
+  if (!trace) return <div className="replay-rail mono">loading plan history…</div>;
   const first = trace.events[0]?.seq ?? 0;
   const last = trace.events.at(-1)?.seq ?? first;
   const event = [...trace.events].reverse().find((item) => item.seq <= cursor);
+  // The same scrubber History uses. Plans and History stay separate screens; only the
+  // control they both needed is shared.
   return (
-    <div className="campaign-replay">
-      <span className="label">replay</span>
-      <input type="range" min={first} max={last} value={Math.min(cursor, last)} onChange={(e) => setCursor(Number(e.target.value))} aria-label="Replay position" />
-      <span className="mono">{cursor} / {last}{trace.nextFrom != null && ' · first page'}</span>
-      <b>{event ? eventLabel(event) : 'before start'}</b>
-    </div>
+    <ReplayRail
+      className="campaign-replay"
+      min={first}
+      max={last}
+      value={Math.min(cursor, last)}
+      onChange={setCursor}
+      detail={event ? eventLabel(event) : 'before start'}
+    />
   );
 }
 
@@ -311,7 +317,7 @@ function PlanAgents({ campaign, members, sessions, config, busy, act, onOpen }) 
           return (
             <div className="formation-unit" key={member.sessionId}>
               <button type="button" onClick={() => onOpen(member.sessionId)} title={session?.state ?? member.status}>
-                <i className={`dot ${session?.state ?? 'idle'}`} />
+                <i className={`dot tone-${plainState(session).tone}`} />
                 <span>{session?.name ?? member.agentId ?? member.sessionId.slice(0, 6)}</span>
                 <small>{member.role ?? session?.role ?? 'agent'} · {String(session?.state ?? member.status).replaceAll('_', ' ')}{session?.costUsd ? ` · $${session.costUsd.toFixed(3)}` : ''}</small>
               </button>

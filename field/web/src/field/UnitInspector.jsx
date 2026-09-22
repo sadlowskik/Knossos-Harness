@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { openCity, openInWorkspace, useField } from '../state/store.js';
 import { ColumnTranscript } from '../atlas/AtlasMode.jsx';
+import { StatusPill, plainState } from '../ui/WorkCard.jsx';
 import AgentControls from '../hud/AgentControls.jsx';
 import VerdictLadder from '../ui/VerdictLadder.jsx';
 
@@ -13,12 +14,6 @@ export function budgetLine(session) {
   const left = session.budgetRemainingUsd != null ? ` · ${Number(session.budgetRemainingUsd).toFixed(2)} left` : '';
   return `${spent} / ${budget}${left}`;
 }
-
-const STATE_WORD = {
-  waiting_permission: 'needs approval', blocked: 'blocked', error: 'failed', thinking: 'thinking',
-  working: 'working', paused: 'paused', spawning: 'starting', ready: 'ready', idle: 'idle',
-  done: 'done', cancelled: 'stopped', interrupted: 'interrupted',
-};
 
 // A selected unit's panel on the Map: live transcript (reusing Atlas's ColumnTranscript
 // fold), where it is working, and the shared talk / pause / stop controls. It overlays the
@@ -48,9 +43,8 @@ export default function UnitInspector({ session, onClose }) {
       onClick={(e) => e.stopPropagation()}
     >
       <header className="unit-inspector-head">
-        <span className={`dot ${session.state}`} aria-hidden="true" />
         <b className="unit-inspector-name">{session.name ?? session.id}</b>
-        <span className="unit-inspector-state">{STATE_WORD[session.state] ?? session.state}</span>
+        <StatusPill compact state={plainState(session)} />
         <button type="button" className="unit-inspector-close" onClick={onClose} aria-label="Close agent details">×</button>
       </header>
 

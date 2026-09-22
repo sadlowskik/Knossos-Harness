@@ -4,24 +4,31 @@ import { setMode, useField } from './state/store.js';
 import RoutinesMode from './routines/RoutinesMode.jsx';
 import TracesMode from './traces/TracesMode.jsx';
 import CampaignMode from './campaigns/CampaignMode.jsx';
-import TheaterMode from './theater/TheaterMode.jsx';
+import AtlasMode from './atlas/AtlasMode.jsx';
+import EmptyState from './ui/EmptyState.jsx';
 
 const WorkspaceMode = lazy(() => import('./workspace/WorkspaceMode.jsx'));
 // The canvas RTS renderer is an opt-in lens; lazy so it never weighs on the default path.
 const FieldMode = lazy(() => import('./field/FieldMode.jsx'));
+// Rome is a heavy illustrated map. It used to be reachable only through a buried
+// `theme` setting; it is a destination now, and still lazy.
+const TheaterMode = lazy(() => import('./theater/TheaterMode.jsx'));
 
-const MODES = [
-  { id: 'theater', name: 'Field', key: 'F' },
+/* One row of destinations. There used to be two: a MODES row where "Field" was an alias
+   for Board, and a FIELD_LENSES row underneath it — seven buttons to say seven things.
+   `gap` marks the hairline after Rome, which separates the three live views of the work
+   from the four surfaces you work in. */
+const NAV = [
+  { id: 'theater', name: 'Board', key: 'V', alias: 'F' },
+  { id: 'rts', name: 'Map', key: 'G' },
+  { id: 'rome', name: 'Rome', key: 'O' },
+  { id: 'workspace', name: 'Project', key: 'C', gap: true },
+  { id: 'campaigns', name: 'Plans', key: 'S' },
   { id: 'routines', name: 'Routines', key: 'R' },
   { id: 'traces', name: 'History', key: 'T' },
 ];
-const FIELD_LENSES = [
-  { id: 'theater', name: 'Board', key: 'V' },
-  { id: 'rts', name: 'Map', key: 'G' },
-  { id: 'workspace', name: 'Project', key: 'C' },
-  { id: 'campaigns', name: 'Plans', key: 'S' },
-];
-const FIELD_MODES = new Set(['theater', 'field', 'rts', 'campaigns', 'workspace']);
+const FIELD_MODES = new Set(['theater', 'field', 'rome', 'rts', 'campaigns', 'workspace']);
+const isOn = (id, mode) => mode === id || (id === 'theater' && mode === 'field');
 
 export default function App() {
   const st = useField();
@@ -33,7 +40,8 @@ export default function App() {
       const tag = document.activeElement?.tagName;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable) return;
       if (e.defaultPrevented || e.repeat || !e.altKey || !e.ctrlKey || e.metaKey) return;
-      const hit = [...MODES, ...FIELD_LENSES].find((m) => m.key.toLowerCase() === e.key.toLowerCase());
+      const pressed = e.key.toLowerCase();
+      const hit = NAV.find((m) => m.key.toLowerCase() === pressed || m.alias?.toLowerCase() === pressed);
       if (hit) {
         e.preventDefault();
         setMode(hit.id);
@@ -71,14 +79,14 @@ export default function App() {
           <span className="brand-sub">{st.config?.field?.name ?? 'connecting…'}</span>
         </div>
 
-        <nav className="modes segctl" aria-label="Mode">
-          {MODES.map((m) => (
+        <nav className="modes segctl" aria-label="Field view">
+          {NAV.map((m) => (
             <button
               key={m.id}
-              className={`mode segctl-item${m.id === 'theater' ? (FIELD_MODES.has(st.mode) ? ' on' : '') : (st.mode === m.id ? ' on' : '')}`}
+              className={`mode segctl-item${m.gap ? ' segctl-gap' : ''}${isOn(m.id, st.mode) ? ' on' : ''}`}
               onClick={() => setMode(m.id)}
               type="button"
-              aria-current={m.id === 'theater' ? (FIELD_MODES.has(st.mode) ? 'page' : undefined) : (st.mode === m.id ? 'page' : undefined)}
+              aria-current={isOn(m.id, st.mode) ? 'page' : undefined}
               aria-keyshortcuts={`Control+Alt+${m.key}`}
             >
               {m.name}
@@ -86,16 +94,6 @@ export default function App() {
             </button>
           ))}
         </nav>
-
-        {FIELD_MODES.has(st.mode) && (
-          <nav className="field-lenses segctl" aria-label="Field view">
-            {FIELD_LENSES.map((lens) => (
-              <button key={lens.id} className={`segctl-item${st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? ' on' : ''}`} onClick={() => setMode(lens.id)} type="button" aria-current={st.mode === lens.id || (lens.id === 'theater' && st.mode === 'field') ? 'page' : undefined} aria-keyshortcuts={`Control+Alt+${lens.key}`}>
-                {lens.name}<kbd className="segctl-hint">Ctrl+Alt+{lens.key}</kbd>
-              </button>
-            ))}
-          </nav>
-        )}
 
         <div className="topstats" aria-live="polite" aria-atomic="true">
           {waiting > 0 && <span className="stat warn"><i aria-hidden="true" />{waiting} awaiting approval</span>}
@@ -123,15 +121,20 @@ export default function App() {
             </div>
           </div>
         )}
-        {(st.mode === 'theater' || st.mode === 'field') && <TheaterMode />}
+        {(st.mode === 'theater' || st.mode === 'field') && <AtlasMode />}
         {st.mode === 'rts' && (
-          <Suspense fallback={<p role="status" className="stage-status">Loading map…</p>}>
+          <Suspense fallback={<EmptyState status title="Drawing the map…">The canvas renderer is loading. Agents appear on it as soon as it is ready.</EmptyState>}>
             <FieldMode />
+          </Suspense>
+        )}
+        {st.mode === 'rome' && (
+          <Suspense fallback={<EmptyState status title="Raising Rome…">The illustrated operations map is loading.</EmptyState>}>
+            <TheaterMode />
           </Suspense>
         )}
         {st.mode === 'campaigns' && <CampaignMode />}
         {st.mode === 'workspace' && (
-          <Suspense fallback={<p role="status" className="stage-status">Loading project…</p>}>
+          <Suspense fallback={<EmptyState status title="Opening the project…">Files, changes and the terminal are loading.</EmptyState>}>
             <WorkspaceMode />
           </Suspense>
         )}

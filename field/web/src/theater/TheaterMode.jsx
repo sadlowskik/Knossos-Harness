@@ -8,22 +8,18 @@ import { api } from '../net/client.js';
 import { clearActiveAgent, openCity, openSenate, selectAgent, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
-import AtlasMode from '../atlas/AtlasMode.jsx';
 import CityPanel from '../city/CityPanel.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
 import AgentControls from '../hud/AgentControls.jsx';
 import FieldSettings from './FieldSettings.jsx';
 import {
-  applyTypeface,
   identityFor,
   identityHue,
   initials,
-  loadFieldSettings,
-  normalizeFieldSettings,
-  saveFieldSettings,
   verifiedContribution,
 } from './fieldPreferences.js';
+import useFieldSettings from './useFieldSettings.js';
 
 const TERMINAL_STATES = new Set(['done', 'cancelled', 'interrupted', 'error']);
 const ATTENTION_STATES = new Set(['blocked', 'error', 'waiting_permission']);
@@ -297,21 +293,23 @@ function Portrait({ identity, role, size = 'md' }) {
   return <span className={`senator-portrait size-${size}`} style={{ '--identity-hue': identityHue(identity.displayName) }}><UserRound aria-hidden="true" /><b>{initials(identity.displayName)}</b><small>{String(role || 'agent').slice(0, 1).toUpperCase()}</small></span>;
 }
 
-function IdentityMark({ session, identity, settings, selected = false, size = 'md', forMap = false }) {
-  const mode = forMap ? settings.markerMode : settings.identityMode;
-  const showPortrait = settings.theme === 'rome' && mode !== 'model';
-  const showModel = settings.theme === 'atlas' || (mode !== 'person' && mode !== 'portrait');
+/* One identity question, asked once: person, model, or both. It used to be two settings —
+   identityMode for the panels and markerMode for the map markers — answering the same thing. */
+function IdentityMark({ session, identity, settings, selected = false, size = 'md' }) {
+  const mode = settings.identity;
+  const showPortrait = mode !== 'model';
+  const showModel = mode !== 'person';
   return <span className={`identity-mark mode-${mode}${selected ? ' selected' : ''}`}>{showPortrait && <Portrait identity={identity} role={session.role} size={size} />}{showModel && <AgentEmblem identity={identity} size={showPortrait ? 'xs' : size} selected={selected} className={showPortrait ? 'model-overlay' : ''} />}</span>;
 }
 
-function CitySymbol({ resource, slot, tier, isCapital, theme }) {
+function CitySymbol({ resource, slot, tier, isCapital }) {
   const Icon = KIND_ICON[resource.kind] ?? Landmark;
-  return <div className={`field-building kind-${resource.kind} tier-${tier} life-${resource.state}${isCapital ? ' capital-building' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%` }} title={`${resource.label} · ${stateLabel(resource.state)}`}><span className="building-shape" aria-hidden="true"><i /><i /><i /><i /><Icon /></span><b>{resource.label}</b><small>{theme === 'rome' ? 'civic work' : stateLabel(resource.state)}</small></div>;
+  return <div className={`field-building kind-${resource.kind} tier-${tier} life-${resource.state}${isCapital ? ' capital-building' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%` }} title={`${resource.label} · ${stateLabel(resource.state)}`}><span className="building-shape" aria-hidden="true"><i /><i /><i /><i /><Icon /></span><b>{resource.label}</b><small>civic work</small></div>;
 }
 
 function AgentMarker({ session, identity, slot, index = 0, settings, selected, related, onSelect }) {
   const pct = session.progress?.total ? Math.round((session.progress.done / session.progress.total) * 100) : 0;
-  return <button type="button" className={`field-agent-marker state-${session.state}${selected ? ' selected' : ''}${related ? ' related' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }} onClick={(event) => { event.stopPropagation(); onSelect(session.id); }} aria-label={`${identity.displayName}, ${stateLabel(session.state)}`}><IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" forMap />{session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}<span className="marker-label"><b>{identity.displayName}</b><small>{session.stateDetail || stateLabel(session.state)}</small></span></button>;
+  return <button type="button" className={`field-agent-marker state-${session.state}${selected ? ' selected' : ''}${related ? ' related' : ''}`} style={{ left: `${slot[0]}%`, top: `${slot[1]}%`, '--agent-progress': pct, '--agent-delay': `${index * 35}ms` }} onClick={(event) => { event.stopPropagation(); onSelect(session.id); }} aria-label={`${identity.displayName}, ${stateLabel(session.state)}`}><IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" />{session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}<span className="marker-label"><b>{identity.displayName}</b><small>{session.stateDetail || stateLabel(session.state)}</small></span></button>;
 }
 
 function ProceduralSettlement({ name, isCapital, tier }) {
@@ -345,7 +343,7 @@ function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, 
   const maturity = verifiedContribution(cluster, agents);
   const baseKind = cluster?.baseKind ?? cluster?.kind;
   const active = agents.some((agent) => !TERMINAL_STATES.has(agent.state)) || cluster?.resources?.some((item) => item.state === 'running');
-  const useProceduralSettlement = baseKind === 'project' && settings.theme === 'rome';
+  const useProceduralSettlement = baseKind === 'project';
   const actionLabel = baseKind === 'project'
     ? `Open ${cluster?.displayLabel ?? 'project'} City`
     : `Inspect ${cluster?.displayLabel ?? baseKind ?? 'region'}`;
@@ -360,7 +358,7 @@ function Region({ position, cluster, agents, isCapital, selectedId, relatedIds, 
     {isCapital && <div className="capital-label"><i />CAPITAL · {cluster?.displayLabel}</div>}
     {cluster?.damaged && <div className="damage-signal" title={`${cluster.failureCount || 1} unresolved failure`}><i /><i /><i /></div>}
     {cluster && <div className="maturity-pips" role="img" aria-label={`Verified contribution ${maturity.score}%`}>{[1, 2, 3, 4].map((tier) => <i key={tier} className={tier <= maturity.tier ? 'on' : ''} />)}</div>}
-    {(!useProceduralSettlement ? cluster?.resources ?? [] : []).slice(0, CITY_SLOTS.length).map((resource, index) => <CitySymbol key={resource.id} resource={resource} slot={CITY_SLOTS[index]} tier={maturity.tier} isCapital={isCapital && index === 0} theme={settings.theme} />)}
+    {(!useProceduralSettlement ? cluster?.resources ?? [] : []).slice(0, CITY_SLOTS.length).map((resource, index) => <CitySymbol key={resource.id} resource={resource} slot={CITY_SLOTS[index]} tier={maturity.tier} isCapital={isCapital && index === 0} />)}
     {agents.slice(0, AGENT_SLOTS.length).map((session, index) => <AgentMarker key={session.id} session={session} identity={identities.get(session.id)} slot={AGENT_SLOTS[index]} index={index} settings={settings} selected={session.id === selectedId} related={relatedIds.has(session.id)} onSelect={onAgent} />)}
   </section>;
 }
@@ -400,12 +398,12 @@ function AgentInspector({ session, identity, settings, role, agent, trace, colla
   const recent = trace.filter((event) => ['session.tool_use', 'session.tool_result'].includes(event.kind)).slice(-4).reverse();
   const tools = agent?.tools_allow ?? role?.tools_allow ?? [];
   return <aside className="field-side-panel agent-panel" onClick={(event) => event.stopPropagation()}>
-    <header><div className="inspector-identity"><IdentityMark session={session} identity={identity} settings={settings} selected size="lg" /><div><span>{settings.theme === 'rome' ? 'SENATOR' : 'AGENT'}</span><h2>{identity.displayName}</h2></div></div><div><button type="button" onClick={onSettings} aria-label="Open settings"><Settings /></button><button type="button" onClick={onClose} aria-label="Close agent"><X /></button></div></header>
+    <header><div className="inspector-identity"><IdentityMark session={session} identity={identity} settings={settings} selected size="lg" /><div><span>SENATOR</span><h2>{identity.displayName}</h2></div></div><div><button type="button" onClick={onSettings} aria-label="Open settings"><Settings /></button><button type="button" onClick={onClose} aria-label="Close agent"><X /></button></div></header>
     <section><label>Objective</label><p>{session.target?.label ?? session.stateDetail ?? 'Awaiting a specific objective.'}</p></section>
     <section><label>Progress <b>{pct}%</b></label><div className="inspector-progress" role="progressbar" aria-label={`${identity.displayName} progress`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={pct}><i style={{ width: `${pct}%` }} /></div></section>
     <section className="inspector-facts"><label>State</label><p><b>{stateLabel(session.state)}</b>{session.stateDetail ? ` · ${session.stateDetail}` : ''}{session.lastTool?.name ? ` · using ${session.lastTool.name}` : ''}</p><p className="mono">{cost} · context {session.contextPct ?? 0}%{session.error ? ` · ${session.error}` : ''}</p></section>
     <section className="model-line"><label>Model / endpoint</label><div><AgentEmblem identity={identity} size="sm" /><p><b>{identity.endpointAlias}</b><span>{identity.servedModel}</span><small>{identity.hfRepo || identity.source}</small></p></div></section>
-    <section><label>{settings.theme === 'rome' ? 'Authority' : 'Tools'}</label><div className="tool-loadout">{tools.length ? tools.map((tool) => <span key={tool}><ToolIcon name={tool} />{tool}</span>) : <em>No role tool allowlist</em>}</div></section>
+    <section><label>Authority</label><div className="tool-loadout">{tools.length ? tools.map((tool) => <span key={tool}><ToolIcon name={tool} />{tool}</span>) : <em>No role tool allowlist</em>}</div></section>
     <section><label>Working with</label><div className="collaboration-row">{collaborators.length ? collaborators.map((item) => <span key={item.id}><i className={`state-${item.state}`} />{item.name}</span>) : <em>No active links</em>}</div></section>
     <section className="agent-prompt"><label>Prompt</label><p>{prompt || 'No prompt recorded for this session.'}</p>{spawned.systemPrompt && spawned.systemPrompt !== prompt && <details><summary>System instructions</summary><p>{spawned.systemPrompt}</p></details>}</section>
     <section className="conversation-ledger"><label>Conversation</label>{messages.length ? messages.map((event) => <div key={event.id ?? event.seq}><b>{event.data?.role ?? 'agent'}</b><p>{conversationText(event)}</p></div>) : <em>No conversation reported yet.</em>}</section>
@@ -415,8 +413,8 @@ function AgentInspector({ session, identity, settings, role, agent, trace, colla
 }
 
 function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onStart }) {
-  return <section className={`agent-roster${sessions.length ? '' : ' quiet'}`} onClick={(event) => event.stopPropagation()} aria-label={settings.theme === 'rome' ? 'Senate roster' : 'Agent roster'}>
-    <header><i /><span>{settings.theme === 'rome' ? 'SENATE' : 'AGENTS'}{sessions.length ? ` · ${sessions.length}` : ''}</span><i /></header>
+  return <section className={`agent-roster${sessions.length ? '' : ' quiet'}`} onClick={(event) => event.stopPropagation()} aria-label="Senate roster">
+    <header><i /><span>SENATE{sessions.length ? ` · ${sessions.length}` : ''}</span><i /></header>
     <div>{sessions.length ? sessions.map((session) => {
       const identity = identities.get(session.id);
       const pct = session.progress?.total ? Math.round(((session.progress?.done ?? 0) / session.progress.total) * 100) : 0;
@@ -436,15 +434,16 @@ function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onS
   </section>;
 }
 
-function CapitalChooser({ workspaces, current, onChoose, onClose, pending, error, theme }) {
+function CapitalChooser({ workspaces, current, onChoose, onClose, pending, error }) {
   useModalFocus(onClose, 'capital-title');
-  return <div className="capital-veil" onClick={(event) => event.stopPropagation()}><section className="capital-choice" role="dialog" aria-modal="true" aria-labelledby="capital-title"><span className="choice-kicker">{theme === 'rome' ? 'FOUND THE CIVILIZATION' : 'ANCHOR THE WORLD'}</span><h2 id="capital-title">Choose the capital project</h2><p>The capital is the visual anchor and default coordination point. It does not move files, services, or permissions.</p><div className="capital-projects">{workspaces.map((workspace) => <button type="button" key={workspace.id} disabled={pending} onClick={() => onChoose(workspace.id)}><span className="project-sigil">{workspace.name.slice(0, 1).toUpperCase()}</span><span><b>{workspace.name}</b><small>{workspace.path}</small></span><i>{workspace.id === current ? 'CURRENT' : 'CHOOSE'}</i></button>)}</div>{error && <p className="capital-error">{error}</p>}{current && <button type="button" className="choice-cancel" onClick={onClose}>Keep current capital</button>}</section></div>;
+  return <div className="capital-veil" onClick={(event) => event.stopPropagation()}><section className="capital-choice" role="dialog" aria-modal="true" aria-labelledby="capital-title"><span className="choice-kicker">FOUND THE CIVILIZATION</span><h2 id="capital-title">Choose the capital project</h2><p>The capital is the visual anchor and default coordination point. It does not move files, services, or permissions.</p><div className="capital-projects">{workspaces.map((workspace) => <button type="button" key={workspace.id} disabled={pending} onClick={() => onChoose(workspace.id)}><span className="project-sigil">{workspace.name.slice(0, 1).toUpperCase()}</span><span><b>{workspace.name}</b><small>{workspace.path}</small></span><i>{workspace.id === current ? 'CURRENT' : 'CHOOSE'}</i></button>)}</div>{error && <p className="capital-error">{error}</p>}{current && <button type="button" className="choice-cancel" onClick={onClose}>Keep current capital</button>}</section></div>;
 }
 
 export default function TheaterMode() {
   const st = useField();
   const selectedId = st.activeSessionId;
-  const [settings, setSettings] = useState(loadFieldSettings), [selectedRegion, setSelectedRegion] = useState(null), [settingsOpen, setSettingsOpen] = useState(false), [choosingCapital, setChoosingCapital] = useState(false), [pendingCapital, setPendingCapital] = useState(false), [capitalError, setCapitalError] = useState(''), [trace, setTrace] = useState([]);
+  const [settings, setSettings] = useFieldSettings();
+  const [selectedRegion, setSelectedRegion] = useState(null), [settingsOpen, setSettingsOpen] = useState(false), [choosingCapital, setChoosingCapital] = useState(false), [pendingCapital, setPendingCapital] = useState(false), [capitalError, setCapitalError] = useState(''), [trace, setTrace] = useState([]);
   const [starter, setStarter] = useState(null);
   const [citiesOpen, setCitiesOpen] = useState(false);
   const [powerOpen, setPowerOpen] = useState(false);
@@ -477,18 +476,6 @@ export default function TheaterMode() {
     reconcileRef.current = signature;
     api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId }) => ({ clusterKey, label, kind, workspaceId }))).catch(() => { reconcileRef.current = ''; });
   }, [clusters, world.assignments, world.capitalWorkspaceId]);
-  useEffect(() => { saveFieldSettings(settings); }, [settings]);
-  // The typeface choice drives --font-sans. A stored custom blob that no longer parses
-  // quietly reverts to Plex rather than leaving the app on the fallback stack.
-  useEffect(() => {
-    let alive = true;
-    applyTypeface(settings).then((effective) => {
-      if (alive && effective !== settings.typeface) {
-        setSettings((current) => normalizeFieldSettings({ ...current, typeface: effective }));
-      }
-    });
-    return () => { alive = false; };
-  }, [settings.typeface, settings.customFont?.dataUrl]);
   const sessions = useMemo(() => view.sessions.filter((session) => !TERMINAL_STATES.has(session.state)).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).slice(0, 40), [view.sessions]);
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   useEffect(() => { let alive = true; if (!selectedId) { setTrace([]); return () => { alive = false; }; } api.trace(selectedId, 0, 2000).then((result) => { if (alive) setTrace(result.events ?? []); }).catch(() => { if (alive) setTrace([]); }); return () => { alive = false; }; }, [selectedId, selected?.messageCount, selected?.toolCount, selected?.state, selected?.progress?.done]);
@@ -500,17 +487,14 @@ export default function TheaterMode() {
   const collaborators = [...collaboratorIds].map((id) => sessionById.get(id)).filter(Boolean);
   const agentsByRegion = new Map();
   for (const session of sessions) { const frontKey = frontKeyFor(session); const workspaceKey = session.workspaceId ? `workspace:${session.workspaceId}` : `workspace:${world.capitalWorkspaceId}`; const hasDeparted = !['spawning', 'ready'].includes(session.state); const regionId = hasDeparted && positionByKey.has(frontKey) ? frontKey : workspaceKey; if (!agentsByRegion.has(regionId)) agentsByRegion.set(regionId, []); agentsByRegion.get(regionId).push(session); }
-  const capitalPosition = positionByKey.get(`workspace:${world.capitalWorkspaceId}`) ?? positions[0];
   const routeLimit = settings.density === 'quiet' ? 6 : settings.density === 'dense' ? 16 : 11;
   const routes = clusters.map((cluster) => ({ cluster, from: positionByKey.get(cluster.parentKey), to: positionByKey.get(cluster.clusterKey) })).filter((item) => item.from && item.to).slice(0, routeLimit);
-  const active = sessions.filter((item) => !TERMINAL_STATES.has(item.state)), attention = active.filter((item) => ATTENTION_STATES.has(item.state));
   const selectedCluster = selectedRegion ? clusterByRegion.get(selectedRegion) : null, selectedRegionAgents = selectedRegion ? agentsByRegion.get(selectedRegion) ?? [] : [];
   const selectedRole = selected ? st.config?.roles?.find((item) => item.id === selected.role) : null;
   const selectedAgent = selected ? st.config?.agents?.find((item) => item.id === selected.agentId) : null;
   // The global "new agent" shortcut (Ctrl+Alt+N, wired in App.jsx) reaches whichever Field
   // screen is mounted. The Board answers it in AtlasMode; this is Rome's half.
   useEffect(() => {
-    if (settings.theme !== 'rome') return undefined;
     const open = () => {
       const workspace = workspaces.find((item) => item.id === world.capitalWorkspaceId) ?? workspaces[0];
       if (!workspace) return;
@@ -518,26 +502,23 @@ export default function TheaterMode() {
     };
     window.addEventListener('field:start-agent', open);
     return () => window.removeEventListener('field:start-agent', open);
-  }, [settings.theme, workspaces, world.capitalWorkspaceId]);
+  }, [workspaces, world.capitalWorkspaceId]);
   async function chooseCapital(workspaceId) { setPendingCapital(true); setCapitalError(''); try { await api.selectCapital(workspaceId); await api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId: ws }) => ({ clusterKey, label, kind, workspaceId: ws }))); reconcileRef.current = ''; setChoosingCapital(false); } catch (error) { setCapitalError(error.message); } finally { setPendingCapital(false); } }
-  const themeLabel = settings.theme === 'rome' ? 'ROME' : 'ATLAS';
-  if (settings.theme === 'atlas') {
-    return <AtlasMode settings={settings} setSettings={setSettings} />;
-  }
   const startAgent = (event, workspaceId = world.capitalWorkspaceId || workspaces[0]?.id) => {
     const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
     if (!workspace) return;
     setStarter({ workspace, screen: { x: event?.clientX ?? window.innerWidth / 2 - 140, y: event?.clientY ?? 120 } });
   };
-  return <div className={`field-world-shell theme-${settings.theme} density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${selected || settingsOpen ? ' panel-open' : ''}${selected ? ' agent-selected' : ''}${sessions.length ? '' : ' senate-empty'}`} onClick={() => { clearActiveAgent(); setSelectedRegion(null); }}>
+  return <div className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${selected || settingsOpen ? ' panel-open' : ''}${selected ? ' agent-selected' : ''}${sessions.length ? '' : ' senate-empty'}`} onClick={() => { clearActiveAgent(); setSelectedRegion(null); }}>
+    {/* Two controls. Theme became the nav; Models, Cities and Capital are rows in the
+        settings panel, where the rest of the world's configuration already lived. */}
     <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
-      <div><span>{settings.theme === 'rome' ? 'IMPERIUM OPERIS' : 'LIVING OPERATIONS'}</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : workspaces.length ? 'Anchoring the world…' : 'No project open'}</h1></div>
-      <div className="field-status" aria-live="polite" aria-atomic="true"><span><b>{active.length}</b> active</span><span className={attention.length ? 'attention' : ''}><b>{attention.length}</b> {attention.length === 1 ? 'needs you' : 'need you'}</span><span><b>{clusters.filter((item) => (item.baseKind ?? item.kind) === 'workfront').length}</b> fronts</span><span className="mono"><b>${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</b> spent</span></div>
-      <div className="field-quick-settings"><button type="button" className="primary" disabled={!workspaces.length} onClick={(event) => startAgent(event)} aria-label="Start an agent"><Plus /><span>Start an agent</span></button><button type="button" onClick={() => setSettings((current) => ({ ...current, theme: current.theme === 'rome' ? 'atlas' : 'rome' }))}>Theme <b>{themeLabel}</b></button><button type="button" onClick={() => setPowerOpen(true)}><RadioTower />Models</button><button type="button" onClick={() => setCitiesOpen(true)}><Landmark />Cities</button><button type="button" onClick={() => setChoosingCapital(true)}>Capital</button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
+      <div><span>IMPERIUM OPERIS</span><h1>{world.capitalWorkspaceId ? workspaces.find((item) => item.id === world.capitalWorkspaceId)?.name ?? 'Capital' : workspaces.length ? 'Anchoring the world…' : 'No project open'}</h1></div>
+      <div className="field-quick-settings"><button type="button" className="primary" disabled={!workspaces.length} onClick={(event) => startAgent(event)} aria-label="Start an agent"><Plus /><span>Start an agent</span></button><button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button></div>
     </header>
     <main className="field-world-canvas living-world">
       <div className="world-map-base" aria-hidden="true" /><div className="world-contours" aria-hidden="true" />
-      {settings.theme === 'rome' && <><div className="world-sea-label west">ORBIS OPERIS</div><div className="world-sea-label center">VIAE ET OPERA</div><div className="world-sea-label east">FINES ACTIVI</div></>}
+      <div className="world-sea-label west">ORBIS OPERIS</div><div className="world-sea-label center">VIAE ET OPERA</div><div className="world-sea-label east">FINES ACTIVI</div>
       <div className="world-routes">{routes.map(({ cluster, from, to }) => <i key={cluster.clusterKey} className={`route-${cluster.baseKind ?? cluster.kind}`} style={routeStyle(from, to)} />)}</div>
       {positions.map((position) => <Region key={position.id} position={position} cluster={clusterByRegion.get(position.id)} agents={agentsByRegion.get(position.id) ?? []} isCapital={position.clusterKey === `workspace:${world.capitalWorkspaceId}`} selectedId={selectedId} relatedIds={collaboratorIds} identities={identities} settings={settings} onAgent={(id) => { selectAgent(id); setSettingsOpen(false); }} onRegion={(regionId) => { const cluster = clusterByRegion.get(regionId); if ((cluster?.baseKind ?? cluster?.kind) === 'project') openCity(cluster.workspaceId); else setSelectedRegion(regionId); }} focused={selectedRegion === position.id} />)}
       <MaturityCard cluster={selectedCluster} agents={selectedRegionAgents} position={positionByKey.get(selectedRegion)} onClose={() => setSelectedRegion(null)} />
@@ -547,10 +528,19 @@ export default function TheaterMode() {
     {trace.length >= 2000 && <div className="world-notice" role="status">Showing the first 2,000 events. Open History to load the rest.</div>}
     {!workspaces.length && <div className="world-notice" role="status">No project is mounted. Add one under <code>workspaces</code> in <code>field/field.yaml</code> and restart Field.</div>}
     {capitalError && !choosingCapital && <div className="world-notice bad" role="alert">{capitalError}</div>}
-    {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} onOpenModels={() => { setSettingsOpen(false); setPowerOpen(true); }} />}
+    {settingsOpen && <FieldSettings
+      settings={settings}
+      setSettings={setSettings}
+      selected={selected}
+      config={st.config}
+      onClose={() => setSettingsOpen(false)}
+      onOpenModels={() => { setSettingsOpen(false); setPowerOpen(true); }}
+      onOpenCities={() => { setSettingsOpen(false); setCitiesOpen(true); }}
+      onChooseCapital={() => { setSettingsOpen(false); setChoosingCapital(true); }}
+    />}
     {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
-    {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} />}
+    {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} settings={settings} setSettings={setSettings} />}
     {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} onOpenModels={() => { setStarter(null); setPowerOpen(true); }} />}
-    {choosingCapital && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} theme={settings.theme} />}
+    {choosingCapital && <CapitalChooser workspaces={workspaces} current={world.capitalWorkspaceId} onChoose={chooseCapital} onClose={() => setChoosingCapital(false)} pending={pendingCapital} error={capitalError} />}
   </div>;
 }

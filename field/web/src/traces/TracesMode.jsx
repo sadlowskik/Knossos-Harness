@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../net/client.js';
-import { useField } from '../state/store.js';
+import { setMode, useField } from '../state/store.js';
 import VerdictLadder from '../ui/VerdictLadder.jsx';
+import ReplayRail from '../ui/ReplayRail.jsx';
+import { plainState } from '../ui/WorkCard.jsx';
+import EmptyState from '../ui/EmptyState.jsx';
 
 // Traces replay the real event log. The slider does not simulate anything: it folds the
 // same events the Field folded live, up to the chosen point.
@@ -57,7 +60,12 @@ export default function TracesMode() {
   return (
     <div className="trace-layout">
       <div className="trace-list">
-        {subjects.length === 0 && <div className="empty"><b>Nothing has run yet.</b>Start an agent from the Board or Map; its full event history lands here.</div>}
+        {subjects.length === 0 && (
+          <EmptyState
+            title="Nothing has run yet"
+            action={<button type="button" className="btn" onClick={() => setMode('theater')}>Go to the Board</button>}
+          >Start an agent and its full event history lands here, replayable in order.</EmptyState>
+        )}
         {subjects.map((s) => (
           <button
             key={s.id}
@@ -66,7 +74,7 @@ export default function TracesMode() {
             type="button"
           >
             <div className="t1">
-              <span className={`dot ${s.state}`} />
+              <span className={`dot tone-${plainState({ state: s.state }).tone}`} />
               {s.title}
               <span className="label" style={{ marginLeft: 'auto' }}>{s.kind}</span>
             </div>
@@ -77,28 +85,20 @@ export default function TracesMode() {
 
       <div className="trace-main">
         {!subject ? (
-          <div className="empty">
-            <b>Pick a session or assignment on the left.</b>
-            Every event it produced is replayable in order: drag the slider to scrub.
-          </div>
+          <EmptyState title="Pick a session on the left">
+            Every event it produced is replayable in order: drag the scrubber to move through it.
+          </EmptyState>
         ) : (
           <>
-            <div className="replay">
-              <span className="label">replay</span>
-              <input
-                type="range"
-                min={1}
-                max={Math.max(1, events.length)}
-                value={pos}
-                onChange={(e) => setPos(Number(e.target.value))}
-              />
-              <span className="pos mono">
-                {pos} / {events.length} · {visible.length ? new Date(visible[visible.length - 1].ts).toLocaleTimeString() : '—'}
-              </span>
-              <button className="btn" onClick={() => setPos(events.length)} type="button">End</button>
-            </div>
+            <ReplayRail
+              min={1}
+              max={Math.max(1, events.length)}
+              value={pos}
+              onChange={setPos}
+              detail={visible.length ? new Date(visible[visible.length - 1].ts).toLocaleTimeString() : '—'}
+            />
 
-            <div className="replay" style={{ borderBottom: '1px solid var(--line)' }}>
+            <div className="replay-stats">
               <Stat k="state" v={folded.state} />
               <Stat k="tools" v={folded.tools} />
               <Stat k="edits" v={folded.edits} />
@@ -114,8 +114,8 @@ export default function TracesMode() {
               </div>
             )}
 
-            <div style={{ flex: '1 1 auto', overflow: 'auto', minHeight: 0 }}>
-              {loading && <div className="empty">loading trace…</div>}
+            <div className="trace-events">
+              {loading && <EmptyState status title="Loading the trace…">Folding the event log up to the point you chose.</EmptyState>}
               {visible.map((e) => (
                 <div className={`evt ${e.kind.replace('.', '-')}`} key={e.seq}>
                   <span className="t">{new Date(e.ts).toLocaleTimeString()}</span>
@@ -134,9 +134,9 @@ export default function TracesMode() {
 
 function Stat({ k, v }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 56 }}>
+    <div className="replay-stat">
       <span className="label">{k}</span>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--body)' }}>{v}</span>
+      <span className="mono">{v}</span>
     </div>
   );
 }

@@ -11,7 +11,9 @@ const EMPTY = {
   totals: { costUsd: 0 },
 };
 
-const MODE_IDS = new Set(['theater', 'field', 'rts', 'campaigns', 'workspace', 'routines', 'traces']);
+// 'field' is the historical alias for the Board ('theater'). 'rome' is the operations
+// map, which used to hide behind a `theme` setting instead of being a destination.
+const MODE_IDS = new Set(['theater', 'field', 'rome', 'rts', 'campaigns', 'workspace', 'routines', 'traces']);
 const requestedMode = typeof location === 'undefined'
   ? null
   : new URLSearchParams(location.search).get('mode');

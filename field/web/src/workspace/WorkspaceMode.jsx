@@ -16,7 +16,10 @@ export default function WorkspaceMode() {
 
   const [wsId, setWsId] = useState(st.activeWorkspaceId);
   const [openPath, setOpenPath] = useState(null);
+  // Two destinations. Markdown and diff are not peers of the file: they are ways of
+  // looking at the one that is open, so they live in a segment inside the file pane.
   const [centerTab, setCenterTab] = useState('file');
+  const [fileView, setFileView] = useState('source');
   const [rightTab, setRightTab] = useState('terminal');
   const [leftTab, setLeftTab] = useState('files');
 
@@ -46,6 +49,15 @@ export default function WorkspaceMode() {
   }, [workspaces, wsId]);
 
   const ws = st.snap.workspaces.find((w) => w.id === wsId);
+  // Rendered is offered for Markdown; Diff only for a path git actually reports as changed.
+  const canRender = Boolean(openPath && openPath.toLowerCase().endsWith('.md'));
+  const canDiff = Boolean(openPath && (ws?.git?.files ?? []).some((f) => f.path === openPath));
+  const view = (fileView === 'rendered' && !canRender) || (fileView === 'diff' && !canDiff) ? 'source' : fileView;
+  const VIEWS = [
+    { id: 'source', label: 'Source', on: true },
+    { id: 'rendered', label: 'Rendered', on: canRender },
+    { id: 'diff', label: 'Diff', on: canDiff },
+  ].filter((item) => item.on);
 
   if (!workspaces.length) {
     return <div className="empty"><b>No project is mounted.</b>Add a folder under <code>workspaces</code> in field/field.yaml and restart Field.</div>;
@@ -90,7 +102,7 @@ export default function WorkspaceMode() {
               <Changes
                 wsId={wsId}
                 openPath={openPath}
-                onOpen={(p) => { setOpenPath(p); setCenterTab('diff'); }}
+                onOpen={(p) => { setOpenPath(p); setCenterTab('file'); setFileView('diff'); }}
               />
             )
             : (
@@ -100,7 +112,8 @@ export default function WorkspaceMode() {
                 openPath={openPath}
                 onOpen={(p) => {
                   setOpenPath(p);
-                  setCenterTab(p.toLowerCase().endsWith('.md') ? 'markdown' : 'file');
+                  setCenterTab('file');
+                  setFileView(p.toLowerCase().endsWith('.md') ? 'rendered' : 'source');
                 }}
               />
             )}
@@ -110,26 +123,38 @@ export default function WorkspaceMode() {
       <div className="pane" style={{ flex: '1 1 auto' }}>
         <div className="pane-head">
           <div className="tabs">
-            {['file', 'markdown', 'diff', 'transcript'].map((t) => (
+            {[['file', 'File'], ['transcript', 'Transcript']].map(([t, label]) => (
               <button
                 key={t}
                 className={`tab${centerTab === t ? ' on' : ''}`}
                 onClick={() => setCenterTab(t)}
                 type="button"
-              >{t}</button>
+              >{label}</button>
             ))}
           </div>
-          <span className="grow" />
-          <span className="label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span className="grow pane-head-path label">
             {centerTab === 'transcript' ? (focusSession?.name ?? 'no agent selected') : (openPath ?? '—')}
           </span>
+          {centerTab === 'file' && VIEWS.length > 1 && (
+            <div className="viewctl" role="group" aria-label="File view">
+              {VIEWS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`viewctl-item${view === item.id ? ' on' : ''}`}
+                  aria-pressed={view === item.id}
+                  onClick={() => setFileView(item.id)}
+                >{item.label}</button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="pane-body">
           {centerTab === 'transcript'
             ? <Transcript session={focusSession} />
-            : centerTab === 'diff'
+            : view === 'diff'
               ? <Diff wsId={wsId} path={openPath} />
-              : <FileView wsId={wsId} path={openPath} markdown={centerTab === 'markdown'} />}
+              : <FileView wsId={wsId} path={openPath} markdown={view === 'rendered'} />}
         </div>
       </div>
 

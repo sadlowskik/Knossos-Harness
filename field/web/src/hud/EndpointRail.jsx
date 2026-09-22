@@ -1,6 +1,9 @@
 import { useField } from '../state/store.js';
 
-export default function EndpointRail() {
+/* The rail keeps status and spend; the modal owns the detail. An endpoint used to be
+   described in three places — this rail, a Models tab in settings, and the PowerSources
+   modal — so the rows are buttons now and all three lead to the same one surface. */
+export default function EndpointRail({ onOpen = null }) {
   const st = useField();
   const sessions = st.snap.sessions.filter(
     (s) => !['done', 'cancelled', 'interrupted'].includes(s.state),
@@ -12,18 +15,23 @@ export default function EndpointRail() {
       {st.snap.endpoints.map((e) => {
         const users = sessions.filter((s) => s.endpointId === e.id);
         return (
-          <div key={e.id} className={`ep ${e.status}`} title={e.detail ?? ''}>
+          <button
+            key={e.id}
+            type="button"
+            className={`ep ${e.status}`}
+            title={e.detail ? `${e.detail} — open in Models` : 'Open in Models'}
+            onClick={() => onOpen?.(e.id)}
+            disabled={!onOpen}
+          >
             <span className={`dot ${e.status}`} />
             <span className="ep-name">{e.name}</span>
-            <span className="ep-meta mono">
-              {e.latencyMs != null ? `${e.latencyMs}ms` : e.status}
-            </span>
+            <span className="ep-meta mono">{e.status}</span>
             {users.length > 0 && (
               <span className="ep-load mono" title={`${users.length} session(s) on this endpoint`}>
                 ×{users.length}
               </span>
             )}
-          </div>
+          </button>
         );
       })}
 

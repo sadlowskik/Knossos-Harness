@@ -1,4 +1,7 @@
-const STORAGE_KEY = 'knossos.field.presentation.v3';
+/* v4 dropped `theme` (the Board / Rome choice is navigation, not a preference) and
+   folded identityMode + markerMode into one `identity`. The key is bumped so a stale
+   v3 blob carrying `theme: 'rome'` cannot resurrect a branch that no longer exists. */
+const STORAGE_KEY = 'knossos.field.presentation.v4';
 
 // The sans stacks the typeface setting switches between. --font-mono is never touched:
 // numbers, paths and tool names stay on IBM Plex Mono whatever the operator picks.
@@ -8,11 +11,10 @@ const PLEX_SANS_STACK = '"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", 
 const SYSTEM_SANS_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
 export const DEFAULT_FIELD_SETTINGS = Object.freeze({
-  theme: 'atlas',
   typeface: 'plex',
   customFont: { name: '', dataUrl: '' },
-  identityMode: 'both',
-  markerMode: 'both',
+  // person | model | both — one answer, used by the Board cards and the Rome markers.
+  identity: 'both',
   emblemSource: 'auto',
   density: 'balanced',
   motion: true,
@@ -44,19 +46,28 @@ function safeCustomFont(value) {
   return dataUrl ? { name, dataUrl } : { name: '', dataUrl: '' };
 }
 
+// identityMode ('portrait'|'model'|'both') and markerMode ('person'|'model'|'both') asked
+// the same three-way question twice. Read both once, here, so a v3 blob still lands
+// somewhere sensible; afterwards only `identity` exists.
+function migratedIdentity(input) {
+  const raw = input.identity ?? input.markerMode ?? input.identityMode;
+  const value = raw === 'portrait' ? 'person' : raw;
+  return ['person', 'model', 'both'].includes(value) ? value : DEFAULT_FIELD_SETTINGS.identity;
+}
+
 export function normalizeFieldSettings(value = {}) {
   const input = safeObject(value);
+  // The removed keys are destructured away so a stored blob cannot smuggle them back in.
+  const { theme: _theme, identityMode: _identityMode, markerMode: _markerMode, ...rest } = input;
   const customFont = safeCustomFont(input.customFont);
   const typeface = ['plex', 'system', 'custom'].includes(input.typeface) ? input.typeface : DEFAULT_FIELD_SETTINGS.typeface;
   return {
     ...DEFAULT_FIELD_SETTINGS,
-    ...input,
-    theme: ['rome', 'atlas'].includes(input.theme) ? input.theme : DEFAULT_FIELD_SETTINGS.theme,
+    ...rest,
     // "custom" without a usable blob is just the default.
     typeface: typeface === 'custom' && !customFont.dataUrl ? DEFAULT_FIELD_SETTINGS.typeface : typeface,
     customFont,
-    identityMode: ['portrait', 'model', 'both'].includes(input.identityMode) ? input.identityMode : DEFAULT_FIELD_SETTINGS.identityMode,
-    markerMode: ['person', 'model', 'both'].includes(input.markerMode) ? input.markerMode : DEFAULT_FIELD_SETTINGS.markerMode,
+    identity: migratedIdentity(input),
     emblemSource: ['auto', 'huggingface', 'endpoint', 'upload', 'initials'].includes(input.emblemSource) ? input.emblemSource : DEFAULT_FIELD_SETTINGS.emblemSource,
     density: ['quiet', 'balanced', 'dense'].includes(input.density) ? input.density : DEFAULT_FIELD_SETTINGS.density,
     motion: input.motion !== false,
@@ -151,16 +162,28 @@ function hfAvatar(repo = '') {
   return owner ? `https://huggingface.co/avatars/${encodeURIComponent(owner)}.svg` : '';
 }
 
+const OX_ALPHA = /glm[-_ ]?5[._ -]?3.*flash|ox[-_ ]?alpha/i;
+
+/* Which modelRegistry entry describes this endpoint. The naming fields used to live in
+   a Models tab of the settings panel; they now sit beside the endpoint in PowerSources,
+   keyed by endpoint id — except the built-in OX Alpha teacher, which keeps its name. */
+export function registryKeyFor(endpoint = {}) {
+  const haystack = `${endpoint.model ?? ''} ${endpoint.id ?? ''} ${endpoint.name ?? ''}`;
+  return OX_ALPHA.test(haystack) ? 'ox-alpha' : String(endpoint.id ?? '');
+}
+
 export function identityFor(session, endpoints = [], settings = DEFAULT_FIELD_SETTINGS) {
   const endpoint = endpoints.find((item) => item.id === session?.endpointId) ?? {};
   const key = agentPreferenceKey(session);
   const override = settings.agentOverrides?.[key] ?? {};
   const rawModel = override.servedModel || session?.model || endpoint.model || 'unassigned';
-  const oxAlpha = /glm[-_ ]?5[._ -]?3.*flash|ox[-_ ]?alpha/i.test(`${rawModel} ${endpoint.id ?? ''} ${endpoint.name ?? ''}`);
-  const teacher = settings.modelRegistry?.['ox-alpha'] ?? DEFAULT_FIELD_SETTINGS.modelRegistry['ox-alpha'];
-  const servedModel = oxAlpha ? teacher.servedModel : rawModel;
-  const endpointAlias = override.endpointAlias || (oxAlpha ? teacher.endpointAlias : endpoint.name || endpoint.id || servedModel);
-  const hfRepo = override.hfRepo || (oxAlpha ? teacher.hfRepo : inferredRepo(servedModel, endpoint));
+  const oxAlpha = OX_ALPHA.test(`${rawModel} ${endpoint.id ?? ''} ${endpoint.name ?? ''}`);
+  const registryKey = oxAlpha ? 'ox-alpha' : String(endpoint.id ?? '');
+  const registered = settings.modelRegistry?.[registryKey]
+    ?? (oxAlpha ? DEFAULT_FIELD_SETTINGS.modelRegistry['ox-alpha'] : {});
+  const servedModel = override.servedModel || registered.servedModel || rawModel;
+  const endpointAlias = override.endpointAlias || registered.endpointAlias || endpoint.name || endpoint.id || servedModel;
+  const hfRepo = override.hfRepo || registered.hfRepo || inferredRepo(servedModel, endpoint);
   const source = settings.emblemSource;
   const uploaded = override.iconDataUrl || override.iconUrl || '';
   const fromEndpoint = endpointIcon(endpoint);
@@ -178,9 +201,9 @@ export function identityFor(session, endpoints = [], settings = DEFAULT_FIELD_SE
     hfRepo,
     iconUrl,
     source: uploaded ? 'custom' : fromEndpoint ? 'endpoint' : hfRepo ? 'huggingface' : 'initials',
-    distillationRole: oxAlpha ? teacher.distillationRole : override.distillationRole || '',
-    studentTarget: oxAlpha ? teacher.studentTarget : override.studentTarget || '',
-    collectTeacherTraces: oxAlpha ? teacher.collectTeacherTraces : !!override.collectTeacherTraces,
+    distillationRole: registered.distillationRole || override.distillationRole || '',
+    studentTarget: registered.studentTarget || override.studentTarget || '',
+    collectTeacherTraces: registered.collectTeacherTraces ?? !!override.collectTeacherTraces,
   };
 }
 

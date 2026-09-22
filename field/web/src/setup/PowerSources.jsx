@@ -1,6 +1,41 @@
-import { useEffect, useState } from 'react';
-import { Cpu, Plus, Trash2, Wifi, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Cpu, Plus, Trash2, Wifi, X } from 'lucide-react';
 import { api } from '../net/client.js';
+import { normalizeFieldSettings, registryKeyFor } from '../theater/fieldPreferences.js';
+
+/* How an endpoint is named wherever an agent shows it: the alias, the model it really
+   serves, its Hugging Face repo, and — for a teacher endpoint — the student it feeds. */
+function EndpointNaming({ endpoint, settings, setSettings }) {
+  const key = registryKeyFor(endpoint);
+  const entry = settings?.modelRegistry?.[key] ?? {};
+  const patch = (change) => setSettings((current) => normalizeFieldSettings({
+    ...current,
+    modelRegistry: { ...current.modelRegistry, [key]: { ...current.modelRegistry?.[key], ...change } },
+  }));
+  const field = (label, name, placeholder) => (
+    <label className="psrc-field">
+      <span className="psrc-field-label">{label}</span>
+      <input className="mono" value={entry[name] ?? ''} placeholder={placeholder} onChange={(event) => patch({ [name]: event.target.value })} />
+    </label>
+  );
+  return (
+    <div className="psrc-naming">
+      {field('Alias', 'endpointAlias', endpoint.name || endpoint.id)}
+      {field('Model served', 'servedModel', endpoint.model || 'as reported')}
+      {field('HF repository', 'hfRepo', 'owner/model')}
+      {field('Student target', 'studentTarget', 'none')}
+      <label className="psrc-check">
+        <input
+          type="checkbox"
+          checked={!!entry.collectTeacherTraces}
+          onChange={(event) => patch({ collectTeacherTraces: event.target.checked, distillationRole: event.target.checked ? 'teacher' : '' })}
+        />
+        <span>Collect traces from this endpoint as distillation source data</span>
+      </label>
+      <p className="psrc-help">Naming is stored on this device. It changes what agents are labelled, not what they run on.</p>
+    </div>
+  );
+}
 
 const KINDS = [
   { value: 'anthropic', label: 'Anthropic (Claude)' },
@@ -10,9 +45,14 @@ const EMPTY = { id: '', name: '', kind: 'anthropic', model: '', base_url: '', ke
 const STATUS_LABEL = { up: 'reachable', down: 'unreachable', unknown: 'not tested' };
 const statusLabel = (status) => STATUS_LABEL[status] ?? status ?? 'not tested';
 
-// Power sources = the models behind your units. Keys are write-only: they are sent once,
-// stored locally, and never returned to the UI.
-export default function PowerSources({ onClose }) {
+/* Power sources = the models behind your units. Keys are write-only: they are sent once,
+   stored locally, and never returned to the UI.
+
+   This is also the only place an endpoint is described. The endpoint rail beneath the Map
+   keeps status and spend and opens this modal on the row you clicked; the naming fields
+   (alias, model served, HF repo, distillation) used to be a separate Models tab in the
+   settings panel and now sit beside the endpoint they describe. */
+export default function PowerSources({ onClose, focus = null, settings = null, setSettings = null }) {
   const [list, setList] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
@@ -20,6 +60,10 @@ export default function PowerSources({ onClose }) {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [backend, setBackend] = useState('');
+  const [openRow, setOpenRow] = useState(focus);
+  const focusRef = useRef(null);
+
+  useEffect(() => { focusRef.current?.scrollIntoView({ block: 'nearest' }); }, [list.length]);
 
   async function load() {
     try {
@@ -75,17 +119,34 @@ export default function PowerSources({ onClose }) {
         <div className="psrc-body">
           <section className="psrc-list" aria-label="Configured models">
             {list.map((e) => (
-              <div key={e.id} className={`psrc-row status-${e.status}`}>
-                <i className={`psrc-dot status-${e.status ?? 'unknown'}`} aria-hidden="true" />
-                <div className="psrc-row-text">
-                  <b>{e.name}</b>
-                  <small className="mono">{e.kind}{e.model ? ' · ' + e.model : ''}{e.base_url ? ' · ' + e.base_url : ''}</small>
-                  <small>{e.source === 'user' ? 'Added by you' : 'Built in'} · {e.hasKey ? 'key set' : 'no key'} · {statusLabel(e.status)}</small>
+              <div
+                key={e.id}
+                className={`psrc-row status-${e.status}${focus === e.id ? ' focused' : ''}`}
+                ref={focus === e.id ? focusRef : null}
+              >
+                <div className="psrc-row-main">
+                  <i className={`psrc-dot status-${e.status ?? 'unknown'}`} aria-hidden="true" />
+                  <div className="psrc-row-text">
+                    <b>{e.name}</b>
+                    <small className="mono">{e.kind}{e.model ? ' · ' + e.model : ''}{e.base_url ? ' · ' + e.base_url : ''}</small>
+                    <small>{e.source === 'user' ? 'Added by you' : 'Built in'} · {e.hasKey ? 'key set' : 'no key'} · {statusLabel(e.status)}</small>
+                  </div>
+                  <div className="psrc-row-actions">
+                    {setSettings && (
+                      <button
+                        type="button"
+                        className={`btn ghost psrc-expand${openRow === e.id ? ' on' : ''}`}
+                        aria-expanded={openRow === e.id}
+                        onClick={() => setOpenRow(openRow === e.id ? null : e.id)}
+                      ><ChevronDown aria-hidden="true" /> Naming</button>
+                    )}
+                    <button type="button" className="btn ghost" onClick={() => test(e.id)} disabled={testing === e.id}><Wifi aria-hidden="true" /> {testing === e.id ? 'Testing…' : 'Test'}</button>
+                    {e.source === 'user' && <button type="button" className="btn ghost danger" onClick={() => remove(e.id)} aria-label={`Remove ${e.id}`}><Trash2 aria-hidden="true" /></button>}
+                  </div>
                 </div>
-                <div className="psrc-row-actions">
-                  <button type="button" className="btn ghost" onClick={() => test(e.id)} disabled={testing === e.id}><Wifi aria-hidden="true" /> {testing === e.id ? 'Testing…' : 'Test'}</button>
-                  {e.source === 'user' && <button type="button" className="btn ghost danger" onClick={() => remove(e.id)} aria-label={`Remove ${e.id}`}><Trash2 aria-hidden="true" /></button>}
-                </div>
+                {setSettings && openRow === e.id && (
+                  <EndpointNaming endpoint={e} settings={settings} setSettings={setSettings} />
+                )}
               </div>
             ))}
             {!list.length && (

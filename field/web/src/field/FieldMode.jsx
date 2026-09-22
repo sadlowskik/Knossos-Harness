@@ -12,6 +12,9 @@ import UnitInspector from './UnitInspector.jsx';
 import EndpointRail from '../hud/EndpointRail.jsx';
 import PermissionRequests from '../hud/PermissionRequests.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
+import EmptyState from '../ui/EmptyState.jsx';
+import WorkCard, { MetaRow, StatusPill, plainState } from '../ui/WorkCard.jsx';
+import useFieldSettings from '../theater/useFieldSettings.js';
 
 const HIT_RADIUS = 13;
 
@@ -46,6 +49,8 @@ export default function FieldMode() {
     ? st.snap.sessions.find((s) => s.id === inspectId) ?? null
     : null;
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [modelsFocus, setModelsFocus] = useState(null);
+  const [settings, setSettings] = useFieldSettings();
   const workspaces = st.snap.workspaces.filter((w) => w.mounted);
   const liveSessions = st.snap.sessions.filter((s) => !TERMINAL.has(s.state));
   const hasModel = (st.snap.endpoints?.length || st.config?.endpoints?.length) > 0;
@@ -478,17 +483,17 @@ export default function FieldMode() {
 
       {!liveSessions.length && !menu && (
         <div className="field-empty" onPointerDown={(e) => e.stopPropagation()}>
-          <span className="atlas-empty-mark" aria-hidden="true" />
-          <b>{workspaces.length ? 'No agents on the field yet' : 'No project open'}</b>
-          {workspaces.length ? (
-            <p>Start an agent on a project and it appears here, walking to the files it touches. Right-click any project or folder for more.</p>
-          ) : (
-            <p>Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field.</p>
-          )}
-          <div className="atlas-empty-actions">
-            {workspaces.length > 0 && <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>}
-            {!hasModel && <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Set up a model</button>}
-          </div>
+          <EmptyState
+            title={workspaces.length ? 'No agents on the field yet' : 'No project open'}
+            action={<>
+              {workspaces.length > 0 && <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>}
+              {!hasModel && <button type="button" className="btn ghost" onClick={() => { setModelsFocus(null); setModelsOpen(true); }}>Set up a model</button>}
+            </>}
+          >
+            {workspaces.length
+              ? 'Start an agent on a project and it appears here, walking to the files it touches. Right-click any project or folder for more.'
+              : <>Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field.</>}
+          </EmptyState>
         </div>
       )}
 
@@ -498,7 +503,7 @@ export default function FieldMode() {
 
       <PermissionRequests />
       <SelectionHUD />
-      <EndpointRail />
+      <EndpointRail onOpen={(id) => { setModelsFocus(id); setModelsOpen(true); }} />
 
       {inspectSession && (
         <UnitInspector session={inspectSession} onClose={() => setInspectId(null)} />
@@ -510,19 +515,15 @@ export default function FieldMode() {
           target={menu.target}
           initialPane={menu.pane ?? null}
           onClose={() => setMenu(null)}
-          onOpenModels={() => { setMenu(null); setModelsOpen(true); }}
+          onOpenModels={() => { setMenu(null); setModelsFocus(null); setModelsOpen(true); }}
         />
       )}
-      {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}
+      {modelsOpen && <PowerSources onClose={() => { setModelsOpen(false); setModelsFocus(null); }} focus={modelsFocus} settings={settings} setSettings={setSettings} />}
     </div>
   );
 }
 
 const TERMINAL = new Set(['done', 'cancelled', 'interrupted', 'error']);
-const STATE_WORD = {
-  waiting_permission: 'needs approval', blocked: 'blocked', error: 'failed', thinking: 'thinking',
-  working: 'working', paused: 'paused', spawning: 'starting', ready: 'ready', idle: 'idle',
-};
 
 function ago(ts, now) {
   if (!ts) return 'no activity yet';
@@ -534,7 +535,8 @@ function ago(ts, now) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-// A project card over the map: what the canvas cannot say in nine-pixel type.
+/* A project card over the map. It is the same .work-card the Board uses — same facts,
+   same state words, same tones — compacted to 24px agent rows and no transcript. */
 function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSelect }) {
   const last = Math.max(
     workspace.lastTs ?? 0,
@@ -542,41 +544,57 @@ function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSele
   );
   const attention = sessions.filter((s) => ['waiting_permission', 'blocked', 'error'].includes(s.state)).length;
   const changed = workspace.git?.files?.length ?? workspace.changeCount ?? 0;
+  // The card's own tone is the worst thing happening on the project.
+  const tone = attention ? 'attention' : sessions.length ? 'working' : 'idle';
   return (
-    <section className={`field-card${sessions.length ? '' : ' idle'}${attention ? ' attention' : ''}`} aria-label={`${workspace.name} project`}>
-      <header>
-        <div className="field-card-title">
-          <button type="button" className="field-card-name" onClick={onOpen} title={`${workspace.path} — open files`}>{workspace.name}</button>
-          {/* The one filled button on the Map belongs to the empty state, not to every
-              card; starting an agent here is a quiet icon action. */}
-          <button
-            type="button"
-            className="btn quiet-add"
-            aria-label={`Start an agent on ${workspace.name}`}
-            title={`Start an agent on ${workspace.name}`}
-            onClick={onStart}
-          ><Plus aria-hidden="true" /></button>
-        </div>
-        <span className="field-card-git mono" title={workspace.git?.branch ?? ''}>
-          {workspace.git?.branch ?? 'no git'}
-          {changed
-            ? <>{' · '}<button type="button" className="field-card-changes" onClick={() => openChanges(workspace.id)} title="Review, accept or revert the changes">{changed} changed</button></>
-            : ' · clean'}
-        </span>
-      </header>
-      <div className="field-card-agents">
-        {sessions.length ? sessions.slice(0, 4).map((s) => (
-          <button type="button" key={s.id} className="field-card-agent" onClick={() => onSelect([s.id])} title={s.lastTool?.summary ?? s.stateDetail ?? ''}>
-            <span className={`dot ${s.state}`} aria-hidden="true" />
-            <b>{s.name ?? s.id.slice(0, 6)}</b>
-            <small>{STATE_WORD[s.state] ?? s.state}{s.lastTool?.name ? ` · ${s.lastTool.name}` : ''}</small>
-          </button>
-        )) : <span className="field-card-none">No agent on this project</span>}
-        {sessions.length > 4 && <button type="button" className="field-card-more" onClick={() => onSelect(sessions.map((s) => s.id))}>+{sessions.length - 4} more</button>}
+    <WorkCard
+      compact
+      role="group"
+      tone={tone}
+      needsYou={attention > 0}
+      hollow={!sessions.length}
+      ariaLabel={`${workspace.name} project`}
+      title={workspace.name}
+      onTitleClick={onOpen}
+      titleTitle={`${workspace.path} — open files`}
+      pill={<StatusPill compact state={{ label: sessions.length ? `${sessions.length} working` : 'idle', tone }} />}
+      action={(
+        /* The one filled button on the Map belongs to the empty state, not to every
+           card; starting an agent here is a quiet icon action. */
+        <button
+          type="button"
+          className="btn quiet-add"
+          aria-label={`Start an agent on ${workspace.name}`}
+          title={`Start an agent on ${workspace.name}`}
+          onClick={onStart}
+        ><Plus aria-hidden="true" /></button>
+      )}
+      meta={(
+        <MetaRow
+          className="work-card-context"
+          items={[
+            { key: 'branch', value: workspace.git?.branch ?? 'no git' },
+            changed
+              ? { key: 'changed', value: `${changed} changed`, onClick: () => openChanges(workspace.id), title: 'Review, accept or revert the changes' }
+              : { key: 'clean', value: workspace.git ? 'clean' : null },
+            { key: 'when', value: ago(last, now) },
+          ]}
+        />
+      )}
+    >
+      <div className="work-rows">
+        {sessions.length ? sessions.slice(0, 4).map((s) => {
+          const state = plainState(s);
+          return (
+            <button type="button" key={s.id} className={`work-row tone-${state.tone}`} onClick={() => onSelect([s.id])} title={s.lastTool?.summary ?? s.stateDetail ?? ''}>
+              <i aria-hidden="true" />
+              <b>{s.name ?? s.id.slice(0, 6)}</b>
+              <small>{state.label}{s.lastTool?.name ? ` · ${s.lastTool.name}` : ''}</small>
+            </button>
+          );
+        }) : <span className="work-rows-none">No agent on this project</span>}
+        {sessions.length > 4 && <button type="button" className="btn plain work-rows-more" onClick={() => onSelect(sessions.map((s) => s.id))}>+{sessions.length - 4} more</button>}
       </div>
-      <footer>
-        <span className="field-card-when">{sessions.length ? `${sessions.length} working` : 'idle'} · {ago(last, now)}</span>
-      </footer>
-    </section>
+    </WorkCard>
   );
 }

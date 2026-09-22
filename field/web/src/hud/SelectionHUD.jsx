@@ -1,12 +1,6 @@
 import { api } from '../net/client.js';
 import { openInWorkspace, selectOnly, useField } from '../state/store.js';
-
-const STATE_LABEL = {
-  spawning: 'spawning', ready: 'ready', idle: 'idle', thinking: 'thinking',
-  working: 'working', waiting_permission: 'awaiting approval', blocked: 'blocked',
-  error: 'error', interrupted: 'interrupted', paused: 'paused', done: 'done',
-  cancelled: 'cancelled',
-};
+import { plainState } from '../ui/WorkCard.jsx';
 
 export default function SelectionHUD() {
   const st = useField();
@@ -31,7 +25,7 @@ export default function SelectionHUD() {
       {single ? (
         <div className="hud-body">
           <Row k="role" v={single.role} />
-          <Row k="state" v={STATE_LABEL[single.state] ?? single.state} accent={single.state === 'working'} />
+          <Row k="state" v={plainState(single).label} accent={plainState(single).tone === 'working'} />
           <Row k="endpoint" v={`${endpointOf(single.endpointId)?.name ?? single.endpointId ?? '—'}`} />
           <Row k="model" v={single.model ?? '—'} mono />
           <Row k="thinking" v={single.thinking ?? '—'} />
@@ -65,7 +59,7 @@ export default function SelectionHUD() {
         <div className="hud-list">
           {selected.map((s) => (
             <button key={s.id} className="hud-row" onClick={() => selectOnly([s.id])} type="button">
-              <span className={`dot ${s.state}`} />
+              <span className={`dot tone-${plainState(s).tone}`} />
               <span className="hud-row-name">{s.name}</span>
               <span className="hud-row-role label">{s.role}</span>
               <span className="mono hud-row-ctx">{s.contextPct}%</span>
