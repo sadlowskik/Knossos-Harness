@@ -41,7 +41,6 @@ export default function AtlasMode() {
 
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
   const endpoints = st.snap.endpoints?.length ? st.snap.endpoints : st.config?.endpoints ?? [];
-  const pendingCount = st.snap.permissions?.length ?? 0;
 
   const startAgent = (workspace, e, { pane = 'spawn', agentId = null } = {}) => setStarter({
     workspace,
@@ -82,12 +81,6 @@ export default function AtlasMode() {
   const columns = focused ? 1 : Math.min(3, panels.length || 1);
   const projectOf = (session) => workspaces.find((item) => item.id === session.workspaceId) ?? null;
 
-  const counts = useMemo(() => {
-    const map = new Map();
-    for (const session of all) map.set(session.workspaceId, (map.get(session.workspaceId) ?? 0) + 1);
-    return map;
-  }, [all]);
-
   return (
     <div className="atlas-board">
       {/* One row: which project you are looking at, the primary action, the gear. */}
@@ -95,12 +88,13 @@ export default function AtlasMode() {
         {workspaces.length > 1 && all.length > 0 && (
           <label className="convo-filter">
             <span className="label">project</span>
+            {/* The per-project tallies that used to hang off each option said the same
+                thing the panels below already say, in a place you had to open a menu to
+                read. The names are the filter; the conversations are the count. */}
             <select value={project} onChange={(e) => { setProject(e.target.value); setFocusedId(null); }}>
-              <option value="all">All projects · {all.length}</option>
+              <option value="all">All projects</option>
               {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}{counts.get(workspace.id) ? ` · ${counts.get(workspace.id)}` : ' · none'}
-                </option>
+                <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
               ))}
             </select>
           </label>
@@ -122,15 +116,9 @@ export default function AtlasMode() {
       </header>
 
       <div className="atlas-scroll">
-        {pendingCount > 0 && (
-          <section className="atlas-approvals" aria-label="Approvals waiting">
-            <h2 className="atlas-section-title">
-              <i aria-hidden="true" />
-              {pendingCount === 1 ? 'One request needs your decision' : `${pendingCount} requests need your decision`}
-            </h2>
-            <PermissionRequests />
-          </section>
-        )}
+        {/* The approvals block owns its own heading now, so it can stay on screen for
+            the moment after a decision instead of vanishing mid-click. */}
+        <PermissionRequests />
 
         {workspaces.length > 0 && endpoints.length === 0 && (
           <section className="atlas-approvals atlas-nudge" aria-label="No model yet">

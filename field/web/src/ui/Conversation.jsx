@@ -13,15 +13,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Maximize2, Minimize2, Paperclip, RotateCcw, X } from 'lucide-react';
 import { api } from '../net/client.js';
-import { openChanges, openInWorkspace, selectAgent, useField } from '../state/store.js';
+import { openChanges, openInWorkspace, selectAgent, setMode, useField } from '../state/store.js';
 import { MAX_SESSION_FILES, identityFor, sessionFilesFor, withSessionFiles } from '../theater/fieldPreferences.js';
 import useFieldSettings from '../theater/useFieldSettings.js';
 import AgentControls from '../hud/AgentControls.jsx';
-import { isPrivilegedTool } from '../hud/PermissionRequests.jsx';
 import SessionTranscript from './Transcript.jsx';
 import FilePicker from './FilePicker.jsx';
 import VerdictLadder from './VerdictLadder.jsx';
-import { AgentMark, MetaRow, StatusPill, plainState } from './WorkCard.jsx';
+import { AgentMark, MetaRow, StatusPill, plainActivity, plainState } from './WorkCard.jsx';
 
 export const TERMINAL_STATES = new Set(['done', 'cancelled', 'interrupted', 'error']);
 export const ATTENTION_STATES = new Set(['blocked', 'error', 'waiting_permission']);
@@ -85,15 +84,6 @@ export function sortConversations(sessions = [], permissions = []) {
   });
 }
 
-function summarize(toolName, input) {
-  if (!input || typeof input !== 'object') return String(input ?? toolName);
-  if (typeof input.command === 'string') return input.command;
-  if (typeof input.file_path === 'string') return input.file_path;
-  if (typeof input.path === 'string') return input.path;
-  if (typeof input.url === 'string') return input.url;
-  return toolName;
-}
-
 const baseName = (path) => String(path).split('/').filter(Boolean).at(-1) ?? path;
 
 export default function Conversation({
@@ -114,11 +104,17 @@ export default function Conversation({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [sentFiles, setSentFiles] = useState(null);
   const inputRef = useRef(null);
 
   const sessionId = session?.id ?? null;
-  useEffect(() => { setText(''); setNote(null); setSentFiles(null); setPickerOpen(false); }, [sessionId]);
+  useEffect(() => {
+    setText(''); setNote(null); setSentFiles(null);
+    setPickerOpen(false); setFilesOpen(false); setDetailOpen(false); setReviewing(false);
+  }, [sessionId]);
 
   const endpoints = st.snap.endpoints?.length ? st.snap.endpoints : st.config?.endpoints ?? [];
   const identity = useMemo(
@@ -148,6 +144,18 @@ export default function Conversation({
   const changed = project?.git?.files?.length ?? project?.changeCount ?? 0;
   const current = normalizePath(session.focusPath);
   const errorText = session.error ?? session.lastError ?? null;
+  const activity = plainActivity(session, { connected });
+  const verdict = session.lastVerdict ?? null;
+
+  /* One number, and only when it is worth a number: a few tenths of a cent is noise, a
+     budget you are spending against is not. The exact figure stays under Details. */
+  const spend = Number(session.costUsd ?? 0);
+  const showSpend = spend >= 0.01 || Boolean(session.budgetUsd) || session.budgetExhausted;
+
+  /* The second decision moment. Changes on the project's branch are the thing the
+     operator came to accept, so they get a card of their own rather than a cell in a
+     fact row. */
+  const decide = Boolean(project?.git?.branch && changed > 0);
 
   /* Who this agent is actually working with. The selection HUD on the canvas Map and the
      senate chamber in Plans each showed a version of this; both screens are gone, so the
@@ -202,12 +210,16 @@ export default function Conversation({
 
   const head = (
     <header className="convo-head">
-      <button type="button" className="convo-who" onClick={() => selectAgent(session.id)} title="Select this agent">
+      {/* The model used to be printed under every name. It is one fact about an agent,
+          not the headline, so it moved into Details and stayed here as the tooltip. */}
+      <button
+        type="button"
+        className="convo-who"
+        onClick={() => selectAgent(session.id)}
+        title={`${name} — ${identity?.endpointAlias ?? session.model ?? 'no model'}`}
+      >
         <AgentMark identity={identity} size="sm" />
-        <span className="convo-who-text">
-          <b>{name}</b>
-          <small className="work-model">{identity?.endpointAlias ?? session.model ?? 'no model'}</small>
-        </span>
+        <span className="convo-who-text"><b>{name}</b></span>
       </button>
       <StatusPill state={state} compact />
       {showProject && project && (
@@ -244,13 +256,9 @@ export default function Conversation({
     return (
       <article className={shell} role="listitem" aria-label={`${name}, ${state.label}`}>
         {head}
-        <p className="convo-oneline">
-          {!connected ? 'Not connected to the Field server.' : null}
-          {connected && (errorText ? errorText : (lastTool ? `last tool ${lastTool}` : state.label))}
-          {' · '}{cost}{session.budgetUsd ? ` / ${Number(session.budgetUsd).toFixed(2)}` : ''}
-          {elapsed != null ? ` · ${elapsed < 1 ? '<1m' : `${elapsed}m`}` : ''}
-          {attached.length ? ` · ${attached.length} file${attached.length === 1 ? '' : 's'} in scope` : ''}
-        </p>
+        {/* Collapsed used to be four mono facts on one line. It is now the same sentence
+            the open panel leads with; the facts are one expand away. */}
+        <p className="convo-oneline">{activity}</p>
       </article>
     );
   }
@@ -260,7 +268,11 @@ export default function Conversation({
       {head}
 
       {/* What this conversation is working on: the operator's attachments, plus the file
-          the agent is actually touching right now, which is never silently the same. */}
+          the agent is actually touching right now, which is never silently the same.
+
+          The strip used to be permanently open, usually saying "none attached yet". It
+          now opens from the paperclip beside the composer, which carries the count. */}
+      {filesOpen && (
       <div className="convo-files">
         <span className="convo-files-label">
           <Paperclip aria-hidden="true" />files
@@ -308,24 +320,24 @@ export default function Conversation({
           )}
         </span>
       </div>
+      )}
 
+      {/* The full request — tool, input, diff — is on the approval card at the top of
+          the board. Restating it here was the same decision printed twice. */}
       {permissions.length > 0 && (
-        <div className="convo-notices">
-          {permissions.map((permission) => (
-            <div className="atlas-perm" key={permission.id} role="note">
-              <span className="atlas-perm-label">
-                <i aria-hidden="true" />
-                {isPrivilegedTool(permission.toolName, permission.input) ? 'Privileged approval' : 'Approval'} · <code>{permission.toolName}</code>
-              </span>
-              <code className="atlas-perm-input">{summarize(permission.toolName, permission.input)}</code>
-              <button
-                type="button"
-                className="atlas-perm-jump"
-                onClick={() => document.querySelector('.atlas-approvals')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
-              >Decide at the top of the board</button>
-            </div>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="convo-waiting"
+          onClick={() => {
+            // Atlas has the card on screen; from Rome's folder sheet, go to it.
+            const card = document.querySelector('.perm');
+            if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            else setMode('atlas');
+          }}
+        >
+          <i aria-hidden="true" />
+          {permissions.length === 1 ? 'Waiting on your approval' : `Waiting on ${permissions.length} approvals`}
+        </button>
       )}
 
       <p className="atlas-objective convo-objective">
@@ -345,34 +357,55 @@ export default function Conversation({
       />
 
       <footer className="convo-foot">
-        <MetaRow
-          className="work-meta-foot"
-          items={[
-            showProject && project && { key: 'project', label: 'project', value: project.name, title: project.path },
-            project?.git?.branch && changed
-              ? { key: 'changed', label: 'changed', value: `${changed} files`, onClick: () => openChanges(project.id), title: 'Review, accept or revert the changes' }
-              : null,
-            session.role && { key: 'role', label: 'role', value: session.role },
-            lastTool && { key: 'tool', label: 'tool', value: lastTool },
-            session.toolCount != null && {
-              key: 'tools', label: 'tools',
-              value: `${session.toolCount}${session.editCount ? ` · ${session.editCount} edits` : ''}`,
-            },
-            pct != null && { key: 'progress', label: 'progress', value: `${pct}%` },
-            elapsed != null && { key: 'elapsed', label: 'elapsed', value: elapsed < 1 ? '<1m' : `${elapsed}m` },
-            session.contextPct != null && { key: 'context', label: 'context', value: `${session.contextPct}%` },
-            delegated.length > 0 && { key: 'delegated', label: 'delegated', value: delegated.join(', ') },
-            working.length > 0 && { key: 'working-with', label: 'working with', value: working.join(', '), title: 'Agents this one is talking to or has delegated to' },
-            {
-              key: 'cost',
-              label: session.budgetExhausted ? 'budget' : 'cost',
-              tone: session.budgetExhausted ? 'failed' : null,
-              title: session.budgetExhausted ? 'budget exhausted; the agent is paused' : 'spent / budget',
-              value: `${cost}${session.budgetUsd ? ` / ${Number(session.budgetUsd).toFixed(2)}` : ''}${session.budgetExhausted ? ' · exhausted' : ''}`,
-            },
-          ]}
-        />
-        {session.lastVerdict && <VerdictLadder verdict={session.lastVerdict} compact />}
+        {/* One line saying what is happening, one bar for how far along, one number for
+            what it has cost — in place of the nine-cell fact row that used to open the
+            footer. Every cell of that row is still below, under Details. */}
+        <div className="convo-now">
+          <p className="convo-now-text">{activity}</p>
+          {showSpend && (
+            <span
+              className={`convo-spend mono${session.budgetExhausted ? ' spent-out' : ''}`}
+              title={session.budgetExhausted ? 'Budget exhausted; the agent is paused.' : 'Spent so far'}
+            >
+              {spend >= 0.01 ? `$${spend.toFixed(2)}` : cost}
+              {session.budgetUsd ? <small>{` of $${Number(session.budgetUsd).toFixed(2)}`}</small> : null}
+            </span>
+          )}
+        </div>
+        {pct != null && (
+          <div
+            className="convo-bar"
+            style={{ '--pct': `${pct}%` }}
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${pct}% of the way through`}
+          ><i aria-hidden="true" /></div>
+        )}
+
+        {/* Decision moment: changes the operator has to accept or throw away. */}
+        {decide && (
+          <div className={`decide${reviewing ? ' flashed' : ''}`} role="group" aria-label="Changes waiting for you">
+            <span className="decide-count mono">{changed}</span>
+            <span className="decide-text">
+              <b>{changed === 1 ? 'file changed' : 'files changed'}</b>
+              <small>{project.name} · {project.git.branch}</small>
+            </span>
+            {verdict && (
+              <span className={`decide-verdict ${verdict.passed ? 'passed' : 'failed'}`}>
+                {verdict.passed ? 'verified' : 'not verified'}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn decide-go"
+              onClick={() => { setReviewing(true); openChanges(project.id); setTimeout(() => setReviewing(false), 900); }}
+            >Review the changes</button>
+            {reviewing && <span className="decide-said" role="status">Opened in the workspace.</span>}
+          </div>
+        )}
+
         {errorText && <p className="convo-error" role="alert">{errorText}</p>}
         {!connected && (
           <p className="convo-error" role="status">
@@ -381,11 +414,9 @@ export default function Conversation({
         )}
 
         {terminal ? (
+          /* What it finished with is already the line at the top of this footer, so
+             what is left here is the two things you can do about it. */
           <div className="convo-ended">
-            <p>
-              This conversation {session.state === 'error' ? 'failed' : session.state === 'done' ? 'finished' : 'was stopped'}
-              {session.result ? ` — ${String(session.result).slice(0, 200)}` : '.'}
-            </p>
             {onStartSimilar && (
               <button type="button" className="btn sm" onClick={() => onStartSimilar(session)}>
                 <RotateCcw aria-hidden="true" />
@@ -415,12 +446,23 @@ export default function Conversation({
                 onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
               />
               <div className="convo-composer-row">
+                <button
+                  type="button"
+                  className={`convo-clip${filesOpen ? ' on' : ''}`}
+                  aria-expanded={filesOpen}
+                  aria-label={attached.length
+                    ? `Files in scope: ${attached.length}. Show the list.`
+                    : 'Choose the files this agent should work on'}
+                  title="Files in scope"
+                  onClick={() => setFilesOpen((open) => !open)}
+                >
+                  <Paperclip aria-hidden="true" />
+                  {attached.length > 0 && <b className="mono">{attached.length}</b>}
+                </button>
                 <span className="convo-composer-hint">
                   {contextPending
                     ? `The next message carries ${attached.length} file${attached.length === 1 ? '' : 's'} in scope.`
-                    : attached.length
-                      ? 'These files were already sent as context.'
-                      : 'No files in scope.'}
+                    : ''}
                 </span>
                 <button
                   type="button"
@@ -433,6 +475,50 @@ export default function Conversation({
           </>
         )}
         {note && <p className={`agent-controls-note ${note.tone}`} role="status">{note.text}</p>}
+
+        {/* Nothing was deleted. Everything the footer used to shout — the verification
+            ladder, the budget, the tool and edit counts, elapsed, context, role,
+            delegations, collaborators, the project path — is here, one tap down. */}
+        <button
+          type="button"
+          className="convo-more"
+          aria-expanded={detailOpen}
+          onClick={() => setDetailOpen((open) => !open)}
+        >{detailOpen ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}Details</button>
+        {detailOpen && (
+          <div className="convo-detail">
+            <MetaRow
+              className="work-meta-foot"
+              items={[
+                showProject && project && { key: 'project', label: 'project', value: project.name, title: project.path },
+                { key: 'model', label: 'model', value: identity?.endpointAlias ?? session.model ?? 'no model' },
+                project?.git?.branch && changed
+                  ? { key: 'changed', label: 'changed', value: `${changed} files`, onClick: () => openChanges(project.id), title: 'Review, accept or revert the changes' }
+                  : null,
+                session.role && { key: 'role', label: 'role', value: session.role },
+                lastTool && { key: 'tool', label: 'tool', value: lastTool },
+                session.toolCount != null && {
+                  key: 'tools', label: 'tools',
+                  value: `${session.toolCount}${session.editCount ? ` · ${session.editCount} edits` : ''}`,
+                },
+                pct != null && { key: 'progress', label: 'progress', value: `${pct}%` },
+                elapsed != null && { key: 'elapsed', label: 'elapsed', value: elapsed < 1 ? '<1m' : `${elapsed}m` },
+                session.contextPct != null && { key: 'context', label: 'context', value: `${session.contextPct}%` },
+                delegated.length > 0 && { key: 'delegated', label: 'delegated', value: delegated.join(', ') },
+                working.length > 0 && { key: 'working-with', label: 'working with', value: working.join(', '), title: 'Agents this one is talking to or has delegated to' },
+                {
+                  key: 'cost',
+                  label: session.budgetExhausted ? 'budget' : 'cost',
+                  tone: session.budgetExhausted ? 'failed' : null,
+                  title: session.budgetExhausted ? 'budget exhausted; the agent is paused' : 'spent / budget',
+                  value: `${cost}${session.budgetUsd ? ` / ${Number(session.budgetUsd).toFixed(2)}` : ''}${session.budgetExhausted ? ' · exhausted' : ''}`,
+                },
+                attached.length > 0 && { key: 'scope', label: 'in scope', value: `${attached.length} file${attached.length === 1 ? '' : 's'}` },
+              ]}
+            />
+            {verdict && <VerdictLadder verdict={verdict} compact />}
+          </div>
+        )}
       </footer>
     </article>
   );

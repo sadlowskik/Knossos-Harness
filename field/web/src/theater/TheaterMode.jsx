@@ -34,6 +34,7 @@ import FieldSettings from './FieldSettings.jsx';
 import FolderDetail from './FolderDetail.jsx';
 import TimeControl from './TimeControl.jsx';
 import { sessionsInScope, TERMINAL_STATES } from '../ui/Conversation.jsx';
+import { plainActivity } from '../ui/WorkCard.jsx';
 import { identityFor, identityHue, initials, verifiedContribution } from './fieldPreferences.js';
 import useFieldSettings from './useFieldSettings.js';
 import {
@@ -167,7 +168,8 @@ function AgentMarker({ session, identity, x, y, index = 0, settings, selected, o
     {session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}
     <span className="marker-label">
       <b>{identity.displayName}</b>
-      <small>{session.focusPath ? session.focusPath : session.stateDetail || stateLabel(session.state)}</small>
+      {/* A sentence on hover, not an absolute path in uppercase mono. */}
+      <small>{plainActivity(session)}</small>
     </span>
   </button>;
 }
@@ -224,22 +226,29 @@ function City({ position, workspace, isCapital, tier, active, focused, agents, o
  */
 function District({ district, heat, agents, attention, focused, onOpen, onStart }) {
   const Icon = KIND_ICON[LANDMARK_KIND[classify(district.dir)]] ?? Landmark;
+  const facts = `${weightLabel(district)} · ${heat.label}`;
   return <div
-    className={`district heat-${heat.id}${focused ? ' focused' : ''}${attention ? ' attention' : ''}`}
+    className={`district heat-${heat.id}${focused ? ' focused' : ''}${attention > 0 ? ' attention' : ''}`}
     style={{ left: `${district.x}%`, top: `${district.y}%`, '--district-weight': district.weight.toFixed(3) }}
   >
+    {/* The plaque used to carry a file count and "n here" in mono under the name. The
+        agents are already drawn standing in the district and the file count is on hover
+        and in the folder sheet, so what the plaque says now is a badge when the place
+        needs you — which is the only thing you must read from across the map. */}
+    {attention > 0 && (
+      <span className="district-badge mono" aria-hidden="true">{attention}</span>
+    )}
     <button
       type="button"
       className="district-open"
       onClick={(event) => { event.stopPropagation(); onOpen(district.dir); }}
-      title={`${district.dir} — ${weightLabel(district)} · ${heat.label}`}
-      aria-label={`Open ${district.dir}: ${weightLabel(district)}, ${heat.label}`}
+      title={`${district.dir} — ${facts}`}
+      aria-label={attention > 0
+        ? `Open ${district.dir}: ${attention} ${attention === 1 ? 'agent needs' : 'agents need'} you. ${facts}`
+        : `Open ${district.dir}: ${facts}`}
     >
       <span className="building-shape" aria-hidden="true"><i /><i /><i /><i /><Icon /></span>
-      <span className="district-plaque">
-        <b>{district.name}</b>
-        <small className="mono">{district.files == null ? '…' : district.files}{agents > 0 ? ` · ${agents} here` : ''}</small>
-      </span>
+      <span className="district-plaque"><b>{district.name}</b></span>
     </button>
     <button
       type="button"
@@ -580,7 +589,7 @@ export default function TheaterMode() {
                 district={district}
                 heat={heat}
                 agents={here.length}
-                attention={here.some((session) => ATTENTION_STATES.has(session.state) || session.pendingPermission)}
+                attention={here.filter((session) => ATTENTION_STATES.has(session.state) || session.pendingPermission).length}
                 focused={place?.workspaceId === workspace.id && place.dir === district.dir}
                 onOpen={(dir) => openFolder(workspace.id, dir)}
                 onStart={(dir, event) => startAgent(workspace.id, dir, event)}

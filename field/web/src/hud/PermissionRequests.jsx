@@ -14,17 +14,43 @@ export function isPrivilegedTool(toolName, input) {
   return false;
 }
 
+const leaf = (path) => String(path ?? '').replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? '';
+
+/* What the agent is asking for, as the end of a sentence that starts with its name.
+
+   The card used to open with a flag, a name · role pair, a "wants to run" label and a
+   tool identifier, then the project name and its absolute path, before you reached the
+   thing you were actually deciding on. This is that stack, said once. */
+function askPhrase(request) {
+  const context = request.context;
+  if (context?.kind === 'diff') return context.path ? `edit ${leaf(context.path)}` : 'edit a file';
+  if (context?.kind === 'command') return 'run a command';
+  if (typeof request.input?.command === 'string') return 'run a command';
+  const path = context?.path ?? request.input?.file_path ?? request.input?.path;
+  if (typeof path === 'string' && path) return `work on ${leaf(path)}`;
+  if (typeof request.input?.url === 'string') {
+    try { return `read ${new URL(request.input.url).hostname}`; } catch { return 'read a web page'; }
+  }
+  return `use ${request.toolName}`;
+}
+
 export default function PermissionRequests() {
   const st = useField();
   const [busy, setBusy] = useState({});
   const [armed, setArmed] = useState({});
+  const [why, setWhy] = useState({});
+  // The beat. A decided request leaves the snapshot immediately, so the card that
+  // replaces it is held here for a moment: you see the decision land.
+  const [settled, setSettled] = useState([]);
   const pending = st.snap.permissions ?? [];
-  if (!pending.length) return null;
+  if (!pending.length && !settled.length) return null;
 
   const decide = async (id, decision) => {
     setBusy((b) => ({ ...b, [id]: true }));
     try {
       await api.decide(id, decision, decision === 'deny' ? 'Denied by the Field operator.' : undefined);
+      setSettled((rows) => [...rows, { id, word: decision === 'deny' ? 'Denied' : 'Allowed' }]);
+      setTimeout(() => setSettled((rows) => rows.filter((row) => row.id !== id)), 1600);
     } catch (e) {
       console.error(e);
     } finally {
@@ -34,64 +60,92 @@ export default function PermissionRequests() {
   };
 
   return (
-    <div className="perms">
-      {pending.map((p) => {
-        const session = st.snap.sessions.find((s) => s.id === p.sessionId);
-        const workspace = st.snap.workspaces.find((w) => w.id === session?.workspaceId);
-        const detail = summarize(p.toolName, p.input);
-        const privileged = isPrivilegedTool(p.toolName, p.input);
-        return (
-          <div className={`perm${privileged ? ' privileged' : ''}`} key={p.id} role="group" aria-label={`Approval request: ${p.toolName}`}>
-            <div className="perm-top">
-              <span className="perm-flag label">
-                <i aria-hidden="true" />
-                {privileged ? 'Privileged · needs your approval' : 'Needs your approval'}
-              </span>
-              <button
-                className="perm-who"
-                type="button"
-                onClick={() => selectOnly([p.sessionId])}
-                title="Select this agent"
-              >
-                {session?.name ?? p.sessionId.slice(0, 6)} · {session?.role ?? '—'}
-              </button>
-            </div>
-            <div className="perm-tool"><span className="perm-tool-label">wants to run</span><code className="mono">{p.toolName}</code></div>
-            {workspace && <div className="perm-ws mono">{workspace.name} · {workspace.path}</div>}
-            <PermissionContext context={p.context} fallback={detail} />
-            {(session?.lastSay || session?.stateDetail) && (
-              <p className="perm-why"><span className="perm-tool-label">agent said</span>{String(session.lastSay ?? session.stateDetail).slice(0, 240)}</p>
-            )}
-            {privileged && !armed[p.id] && (
-              <p className="perm-warn">This can write files, run a shell, or change the project. Review it before allowing.</p>
-            )}
-            <div className="perm-actions">
-              <button
-                className="btn danger"
-                disabled={busy[p.id]}
-                onClick={() => decide(p.id, 'deny')}
-                type="button"
-              >Deny</button>
-              {privileged && !armed[p.id] ? (
+    <section className="atlas-approvals" aria-label="Approvals waiting">
+      {pending.length > 0 && (
+        <h2 className="atlas-section-title">
+          <i aria-hidden="true" />
+          {pending.length === 1 ? 'One request needs you' : `${pending.length} requests need you`}
+        </h2>
+      )}
+      <div className="perms">
+        {settled.map((row) => (
+          <p className={`perm-settled ${row.word.toLowerCase()}`} key={`settled-${row.id}`} role="status">
+            <i aria-hidden="true" />{row.word}
+          </p>
+        ))}
+        {pending.map((p) => {
+          const session = st.snap.sessions.find((s) => s.id === p.sessionId);
+          const workspace = st.snap.workspaces.find((w) => w.id === session?.workspaceId);
+          const detail = summarize(p.toolName, p.input);
+          const privileged = isPrivilegedTool(p.toolName, p.input);
+          const name = session?.name ?? p.sessionId.slice(0, 6);
+          const said = session?.lastSay ?? session?.stateDetail ?? null;
+          return (
+            <div className={`perm${privileged ? ' privileged' : ''}`} key={p.id} role="group" aria-label={`Approval request: ${p.toolName}`}>
+              <p className="perm-ask">
                 <button
-                  className="btn"
-                  disabled={busy[p.id]}
-                  onClick={() => setArmed((a) => ({ ...a, [p.id]: true }))}
+                  className="perm-who"
                   type="button"
-                >Review, then allow</button>
-              ) : (
+                  onClick={() => selectOnly([p.sessionId])}
+                  title="Select this agent"
+                >{name}</button>
+                {' wants to '}
+                <b>{askPhrase(p)}</b>
+                <code className="mono" title={`Tool: ${p.toolName}`}>{p.toolName}</code>
+              </p>
+
+              <PermissionContext context={p.context} fallback={detail} />
+
+              {privileged && !armed[p.id] && (
+                <p className="perm-warn">This can write files, run a shell, or change the project. Review it before allowing.</p>
+              )}
+
+              <div className="perm-actions">
+                {/* The project, the folder it runs in and whatever the agent last said
+                    are the second question, so they are behind the second question. */}
                 <button
-                  className="btn primary"
-                  disabled={busy[p.id]}
-                  onClick={() => decide(p.id, 'allow')}
                   type="button"
-                >{privileged ? 'Allow privileged' : 'Allow'}</button>
+                  className="perm-why-toggle"
+                  aria-expanded={Boolean(why[p.id])}
+                  onClick={() => setWhy((w) => ({ ...w, [p.id]: !w[p.id] }))}
+                >Why?</button>
+                <span className="grow" />
+                <button
+                  className="btn danger"
+                  disabled={busy[p.id]}
+                  onClick={() => decide(p.id, 'deny')}
+                  type="button"
+                >Deny</button>
+                {privileged && !armed[p.id] ? (
+                  <button
+                    className="btn"
+                    disabled={busy[p.id]}
+                    onClick={() => setArmed((a) => ({ ...a, [p.id]: true }))}
+                    type="button"
+                  >Review, then allow</button>
+                ) : (
+                  <button
+                    className="btn primary"
+                    disabled={busy[p.id]}
+                    onClick={() => decide(p.id, 'allow')}
+                    type="button"
+                  >{privileged ? 'Allow privileged' : 'Allow'}</button>
+                )}
+              </div>
+
+              {why[p.id] && (
+                <div className="perm-more">
+                  {workspace && <p className="perm-ws mono">{workspace.name} · {workspace.path}</p>}
+                  {session?.role && <p className="perm-why"><span className="perm-tool-label">role</span>{session.role}</p>}
+                  {said && <p className="perm-why"><span className="perm-tool-label">agent said</span>{String(said).slice(0, 240)}</p>}
+                  {!workspace && !session?.role && !said && <p className="perm-why">Nothing else is known about this request.</p>}
+                </div>
               )}
             </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

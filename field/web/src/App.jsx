@@ -23,6 +23,7 @@ export default function App() {
   const st = useField();
   const [loggedOut, setLoggedOut] = useState(false);
   const [logoutError, setLogoutError] = useState(null);
+  const [tallyOpen, setTallyOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -82,13 +83,35 @@ export default function App() {
           ))}
         </nav>
 
+        {/* One signal, not six chips.
+
+            The topbar used to print: awaiting approval, active, sessions, spent,
+            reserved, and costs unconfirmed — six counters competing for the same corner
+            of the eye, five of which were ledger. What is left is the one thing that
+            decides whether you look: a badge with a number when something needs you,
+            otherwise how many agents are working. The ledger is one tap below. */}
         <div className="topstats" aria-live="polite" aria-atomic="true">
-          {waiting > 0 && <span className="stat warn"><i aria-hidden="true" />{waiting} awaiting approval</span>}
-          <span className="stat"><i aria-hidden="true" />{live.length} active</span>
-          <span className="stat quiet">{realSessionCount} {realSessionCount === 1 ? 'session' : 'sessions'}</span>
-          <span className="stat quiet mono">${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</span>
-          {reservedUsd > 0 && <span className="stat quiet mono">${reservedUsd.toFixed(2)} reserved</span>}
-          {unknownCosts > 0 && <span className="stat warn"><i aria-hidden="true" />{unknownCosts} costs unconfirmed</span>}
+          <button
+            type="button"
+            className={`tally${waiting > 0 ? ' warn' : ''}${tallyOpen ? ' on' : ''}`}
+            aria-expanded={tallyOpen}
+            onClick={() => setTallyOpen((open) => !open)}
+          >
+            {waiting > 0
+              ? <><span className="tally-badge mono">{waiting}</span>{waiting === 1 ? 'needs you' : 'need you'}</>
+              : <><i aria-hidden="true" />{live.length ? `${live.length} working` : 'all quiet'}</>}
+          </button>
+          {tallyOpen && (
+            <div className="tally-sheet" role="group" aria-label="Field totals">
+              <p><span className="label">working</span><b className="mono">{live.length}</b></p>
+              <p><span className="label">sessions</span><b className="mono">{realSessionCount}</b></p>
+              <p><span className="label">spent</span><b className="mono">${(st.snap.totals?.costUsd ?? 0).toFixed(3)}</b></p>
+              {reservedUsd > 0 && <p><span className="label">reserved</span><b className="mono">${reservedUsd.toFixed(2)}</b></p>}
+              {unknownCosts > 0 && (
+                <p className="bad"><span className="label">unconfirmed</span><b className="mono">{unknownCosts}</b></p>
+              )}
+            </div>
+          )}
         </div>
 
         <button type="button" className="topbar-signout" onClick={async () => {

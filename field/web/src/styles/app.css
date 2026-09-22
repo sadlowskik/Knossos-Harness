@@ -1920,3 +1920,178 @@ button.convo-file:hover { border-color: var(--edge-2); color: var(--text-1); }
 @media (max-width: 760px) {
   .routines-panel .rt-meta { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------------ the loop
+
+   Fewer, larger signals. Everything in this block exists because something that used to
+   be printed in the first second is now a badge, a bar, a sentence or a card — and the
+   facts it replaced live one tap behind it. Nothing here introduces a colour, a radius,
+   a font or a motion duration that is not already a token above. */
+
+/* ---- topbar: one signal in place of six counters ------------------------------- */
+
+.topstats { position: relative; }
+.tally {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  height: 26px; padding: 0 10px;
+  border: 1px solid var(--edge); border-radius: var(--radius-pill);
+  background: var(--surface-1); color: var(--text-2);
+  font-size: var(--fs-small); cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.tally:hover, .tally.on { background: var(--surface-2); color: var(--text-1); border-color: var(--edge-2); }
+.tally i { width: 6px; height: 6px; border-radius: 50%; background: var(--st-working); flex: none; }
+.tally.warn { color: var(--st-attention); border-color: rgba(245, 184, 74, .45); background: var(--st-attention-soft); }
+.tally-badge {
+  display: grid; place-items: center; flex: none;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--st-attention); color: var(--accent-ink);
+  font-size: var(--fs-micro); font-weight: 600;
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+.tally-sheet {
+  position: absolute; z-index: 60; right: 0; top: calc(100% + 8px);
+  min-width: 190px; padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--edge); border-radius: var(--radius-lg);
+  background: var(--surface-1); box-shadow: var(--shadow-lg);
+  animation: rise-in var(--dur) var(--ease);
+}
+.tally-sheet p { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); margin: 0; padding: 3px 0; }
+.tally-sheet b { color: var(--text-1); font-weight: 500; }
+.tally-sheet p.bad b { color: var(--st-attention); }
+
+/* ---- a conversation, leading with what is happening ---------------------------- */
+
+.convo-now { display: flex; align-items: baseline; gap: var(--sp-3); min-width: 0; }
+.convo-now-text {
+  flex: 1; min-width: 0; margin: 0;
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-1);
+  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.convo-spend { flex: none; font-size: var(--fs-h2); font-weight: 600; color: var(--text-1); }
+.convo-spend small { font-size: var(--fs-micro); font-weight: 400; color: var(--text-3); }
+.convo-spend.spent-out, .convo-spend.spent-out small { color: var(--st-failed); }
+
+.convo-bar { height: 4px; border-radius: var(--radius-pill); background: var(--surface-3); overflow: hidden; }
+.convo-bar i { display: block; height: 100%; width: var(--pct, 0%); background: var(--st-working); transition: width var(--dur-panel) var(--ease); }
+
+.convo-waiting {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  margin: var(--sp-2) 0 0; padding: 7px 14px;
+  border: 0; border-top: 1px solid rgba(245, 184, 74, .3); border-bottom: 1px solid rgba(245, 184, 74, .3);
+  background: var(--st-attention-soft); color: var(--st-attention);
+  font: 600 var(--fs-small) var(--font-sans); text-align: left; cursor: pointer;
+}
+.convo-waiting i { width: 7px; height: 7px; border-radius: 50%; background: var(--st-attention); flex: none; animation: pulse-ring 1.8s ease-out infinite; }
+.convo-waiting:hover { background: rgba(245, 184, 74, .2); }
+
+/* ---- decision moment: changes waiting to be accepted --------------------------- */
+
+.decide {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--edge-2); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  animation: rise-in var(--dur-panel) var(--ease);
+}
+.decide-count { flex: none; font-size: var(--fs-h1); font-weight: 600; color: var(--text-1); line-height: 1; }
+.decide-text { display: grid; min-width: 0; flex: 1; }
+.decide-text b { font: var(--fw-h2) var(--fs-small)/var(--lh-small) var(--font-sans); color: var(--text-1); }
+.decide-text small { overflow: hidden; color: var(--text-3); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+.decide-verdict { flex: none; padding: 1px 8px; border-radius: var(--radius-pill); font-size: var(--fs-micro); font-weight: 600; }
+.decide-verdict.passed { background: var(--st-done-soft); color: var(--st-done); }
+.decide-verdict.failed { background: var(--st-failed-soft); color: var(--st-failed); }
+.btn.decide-go { flex: none; border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.btn.decide-go:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+.decide-said { flex: 1 0 100%; color: var(--st-done); font-size: var(--fs-micro); }
+.decide.flashed { border-color: var(--st-done); animation: decide-beat 700ms var(--ease); }
+@keyframes decide-beat {
+  0% { box-shadow: 0 0 0 0 var(--st-done-soft); }
+  40% { box-shadow: 0 0 0 5px var(--st-done-soft); }
+  100% { box-shadow: 0 0 0 0 rgba(93, 201, 138, 0); }
+}
+
+/* ---- files in scope, behind the paperclip -------------------------------------- */
+
+.convo-clip {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  height: 24px; padding: 0 8px;
+  border: 1px solid var(--edge); border-radius: var(--radius);
+  background: transparent; color: var(--text-3); cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.convo-clip svg { width: 13px; height: 13px; }
+.convo-clip b { font-size: var(--fs-micro); font-weight: 600; }
+.convo-clip:hover, .convo-clip.on { background: var(--surface-2); color: var(--text-1); }
+
+/* ---- Details: everything the footer used to shout ------------------------------ */
+
+.convo-more {
+  display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
+  border: 0; padding: 2px 0; background: none;
+  color: var(--text-3); font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--font-mono);
+  letter-spacing: var(--ls-label); text-transform: uppercase; cursor: pointer;
+}
+.convo-more svg { width: 12px; height: 12px; }
+.convo-more:hover { color: var(--text-1); }
+.convo-detail { display: flex; flex-direction: column; gap: var(--sp-2); animation: rise-in var(--dur) var(--ease); }
+
+/* ---- decision moment: an approval ---------------------------------------------- */
+
+.perm-ask { margin: 0 0 10px; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--text-2); }
+.perm-ask b { color: var(--text-1); font-weight: 600; }
+.perm-ask .perm-who { padding: 0; font-size: var(--fs-body); font-weight: 600; color: var(--accent-text); }
+.perm-ask code { margin-left: 8px; color: var(--text-4); font-size: var(--fs-micro); }
+.perm-actions { align-items: center; }
+.perm-why-toggle {
+  border: 0; padding: 2px 0; background: none; color: var(--text-3);
+  font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--font-mono);
+  letter-spacing: var(--ls-label); text-transform: uppercase; cursor: pointer;
+}
+.perm-why-toggle:hover { color: var(--text-1); }
+.perm-more { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--edge); animation: rise-in var(--dur) var(--ease); }
+.perm-more .perm-ws { margin: 0; }
+.perm-settled {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--edge); border-left: 3px solid var(--st-done);
+  border-radius: var(--radius-lg); background: var(--surface-1);
+  color: var(--st-done); font: 600 var(--fs-body) var(--font-sans);
+  animation: rise-in var(--dur) var(--ease);
+}
+.perm-settled i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.perm-settled.denied { border-left-color: var(--st-idle); color: var(--text-3); }
+
+/* ---- Rome: a district says it needs you by looking like it ---------------------- */
+
+.district-badge {
+  position: absolute; z-index: 15; left: 50%; top: -6px;
+  display: grid; place-items: center; transform: translateX(6px);
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--st-attention); color: var(--accent-ink);
+  font-size: var(--fs-micro); font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .55);
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+
+.folder-head h2 { display: flex; align-items: center; gap: var(--sp-2); }
+.folder-badge {
+  display: grid; place-items: center; flex: none;
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--st-attention); color: var(--accent-ink);
+  font-size: var(--fs-small); font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.folder-facts { border: 0; padding: 2px 0; background: none; cursor: pointer; text-align: left; }
+.folder-facts:hover { color: var(--world-ink); }
+.folder-weight { margin: 4px 0 0; color: var(--world-muted); font-size: var(--fs-small); }
+.folder-sub-count { flex: none; padding: 0 6px; border-radius: var(--radius-pill); background: var(--world-line); color: var(--world-ink); font-size: var(--fs-micro); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tally, .convo-clip, .convo-bar i, .btn.decide-go { transition: none; }
+  .tally-badge, .district-badge, .convo-waiting i, .decide, .decide.flashed,
+  .tally-sheet, .convo-detail, .perm-more, .perm-settled { animation: none; }
+}

@@ -14,7 +14,7 @@
    It replaced four things that each showed a slice of this: the city command hub, the
    senate roster, the region maturity inspector and the Project screen. */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, Folder, Maximize2, Minimize2, Plus, X } from 'lucide-react';
 import { useField } from '../state/store.js';
 import Conversation, { conversationNeedsYou, sortConversations, TERMINAL_STATES } from '../ui/Conversation.jsx';
@@ -38,6 +38,7 @@ export default function FolderDetail({
 }) {
   const st = useField();
   const scrollRef = useRef(null);
+  const [weightOpen, setWeightOpen] = useState(false);
   const now = st.snap.now ?? Date.now();
   const permissions = st.snap.permissions ?? [];
   const here = sortConversations(sessions, permissions);
@@ -87,12 +88,29 @@ export default function FolderDetail({
           </button>
         </nav>
 
-        <h2>{dirName(dir)}</h2>
-        <p className={`folder-facts heat-${heat.id}`}>
-          <span className="mono">{weightLabel(weight ?? { files: null })}</span>
+        <h2>
+          {dirName(dir)}
+          {/* The one thing about this folder you must read first: whether it wants you. */}
+          {needing > 0 && (
+            <span className="folder-badge mono" role="status" aria-label={
+              needing === 1 ? 'One conversation needs you' : `${needing} conversations need you`
+            }>{needing}</span>
+          )}
+        </h2>
+
+        {/* "128 files · 6 folders · 3 changed today" was a second sentence of arithmetic
+            above the conversations. What is left is how alive the place is; the weight
+            is one tap behind it. */}
+        <button
+          type="button"
+          className={`folder-facts heat-${heat.id}`}
+          aria-expanded={weightOpen}
+          onClick={() => setWeightOpen((open) => !open)}
+        >
           <i aria-hidden="true" />
           <span>{heat.label}</span>
-        </p>
+        </button>
+        {weightOpen && <p className="folder-weight mono">{weightLabel(weight ?? { files: null })}</p>}
 
         <div className="folder-head-actions">
           <button
@@ -100,11 +118,6 @@ export default function FolderDetail({
             className={`btn${primary ? ' primary' : ''}`}
             onClick={(event) => onStart(dir, event)}
           ><Plus aria-hidden="true" />Start an agent here</button>
-          {needing > 0 && (
-            <span className="folder-needs" role="status">
-              {needing === 1 ? 'One conversation needs you' : `${needing} conversations need you`}
-            </span>
-          )}
         </div>
       </header>
 
@@ -146,14 +159,21 @@ export default function FolderDetail({
           {(subfolders ?? []).map((sub) => {
             const subHeat = staleness(sub.lastTs, now, sub.agents ?? 0);
             return (
+              /* Each row used to carry its own file count, folder count and staleness
+                 sentence — forty of them under every folder. The row is now a name, a
+                 heat dot, and a count when someone is in there; the rest is the
+                 tooltip, and all of it is on the folder itself once you walk in. */
               <div key={sub.dir} className={`folder-sub heat-${subHeat.id}`}>
-                <button type="button" className="folder-sub-open" onClick={() => onNavigate(sub.dir)}>
+                <button
+                  type="button"
+                  className="folder-sub-open"
+                  onClick={() => onNavigate(sub.dir)}
+                  title={`${sub.dir} — ${weightLabel(sub)} · ${subHeat.label}`}
+                  aria-label={`Open ${sub.name}: ${weightLabel(sub)}, ${subHeat.label}`}
+                >
                   <Folder aria-hidden="true" />
-                  <span className="folder-sub-text">
-                    <b>{sub.name}</b>
-                    <small className="mono">{weightLabel(sub)}</small>
-                  </span>
-                  <small className="folder-sub-heat">{subHeat.label}</small>
+                  <span className="folder-sub-text"><b>{sub.name}</b></span>
+                  {(sub.agents ?? 0) > 0 && <small className="folder-sub-count mono">{sub.agents}</small>}
                 </button>
                 <button
                   type="button"

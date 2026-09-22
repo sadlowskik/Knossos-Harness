@@ -24,6 +24,51 @@ export function plainState(session) {
   return { label: 'idle', tone: 'idle' };
 }
 
+/* What the agent is doing right now, as one plain sentence.
+
+   This replaced the fact row the footer used to lead with — tool, progress, elapsed,
+   context, spent — which asked the operator to read five labelled numbers and assemble
+   the sentence themselves. The numbers are all still there, one tap down under
+   "Details"; this is the thing you actually wanted to know. */
+
+const TOOL_VERB = [
+  [/(edit|write|str_?replace|notebook|patch|create)/i, 'Editing'],
+  [/(bash|shell|powershell|terminal|exec|command|run)/i, 'Running a command'],
+  [/(grep|search|glob|find|list|ls)/i, 'Searching'],
+  [/(read|view|open|cat)/i, 'Reading'],
+  [/(fetch|web|http|browser|navigate|url)/i, 'Looking something up'],
+  [/(task|agent|delegate|spawn|subagent)/i, 'Delegating to another agent'],
+];
+
+const leaf = (path) => String(path ?? '').replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? '';
+
+export function plainActivity(session, { connected = true } = {}) {
+  if (!connected) return 'Not connected to the Field server.';
+  if (!session) return 'Nothing is running.';
+  const state = session.state ?? 'idle';
+  if (state === 'waiting_permission' || session.pendingPermission) return 'Waiting for you to approve something.';
+  if (state === 'blocked') return session.stateDetail ? String(session.stateDetail).slice(0, 160) : 'Blocked, waiting on you.';
+  if (state === 'error') return String(session.error ?? session.lastError ?? 'It ran into an error.').slice(0, 160);
+  if (state === 'done') return session.result ? String(session.result).slice(0, 160) : 'Finished.';
+  if (state === 'cancelled' || state === 'interrupted') return 'Stopped.';
+  if (state === 'paused') return session.budgetExhausted ? 'Paused — it spent its budget.' : 'Paused.';
+  if (state === 'thinking') return 'Thinking it through.';
+
+  const tool = typeof session.lastTool === 'string' ? session.lastTool : session.lastTool?.name;
+  const file = leaf(session.focusPath);
+  if (tool) {
+    const verb = TOOL_VERB.find(([pattern]) => pattern.test(tool))?.[1];
+    if (verb === 'Running a command') return 'Running a command.';
+    if (verb) return file ? `${verb} ${file}.` : `${verb}.`;
+    return file ? `Working on ${file}.` : `Using ${tool}.`;
+  }
+  if (file) return `Working on ${file}.`;
+  if (['spawning', 'starting'].includes(state)) return 'Starting up.';
+  if (['running', 'working', 'active'].includes(state)) return 'Working.';
+  if (state === 'ready') return 'Ready for an assignment.';
+  return 'Idle.';
+}
+
 /** The state word in its tone. The only place a session state is spelled out. */
 export function StatusPill({ session, state = null, compact = false }) {
   const shown = state ?? plainState(session);
