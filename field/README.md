@@ -1,16 +1,24 @@
 # Knossos Field
 
-A real multi-agent operating environment, controlled with the interaction language of a
-real-time strategy game.
+Every other agent tool is a chat log. Knossos gives your agents a map.
 
-Field is not a visualization of agents. Every unit on the canvas is a live harness
-process (`claude` for Anthropic endpoints, Knossos for Cameo and other
-OpenAI-compatible endpoints). Every region is a directory that exists on disk. Every route is a tool call that
-actually happened. Right-clicking a folder and assigning four agents to it sends real
-orders into four real harness sessions, and the cost meter at the bottom of the screen is
-money that has actually been spent.
+You see where they are working, what ground nobody has touched, what needs your
+decision, and you watch a project visibly grow as verified work lands. It is a
+real-time strategy interface over a real coding harness.
 
-Nothing on the Field moves unless something real moved.
+Nothing on the map is decoration. Every unit is a live harness process. Every
+district is a directory that exists on disk. Every mark of activity is a tool
+call that actually happened, and the money counter is money that has actually
+been spent. A settlement grows because verified work landed in it; a district
+goes dark because nobody has touched it. The game layer never invents signal.
+
+Underneath: children run inside a workspace jail on Linux and macOS,
+consequential actions stop at a permission gate, budgets are reserved before
+work starts, and an independent verifier decides whether a change is done
+rather than the model's own claim.
+
+Read [PRODUCT.md](PRODUCT.md) for what it should feel like and
+[ROADMAP.md](ROADMAP.md) for what is built and what is next.
 
 ---
 
