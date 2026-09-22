@@ -46,3 +46,53 @@ body {
 ::-webkit-scrollbar-thumb:active { background-clip: content-box; background-color: #8D98A8; }
 
 button, input, select, textarea { font: inherit; color: inherit; }
+
+/* ---- native controls, drawn ------------------------------------------------------
+
+   A `<select>`, a checkbox, a radio or a range left at `appearance: auto` renders the
+   platform's own control: Windows' grey select, the OS accent blue on a range. On a
+   dark warm surface that is the single loudest foreign object on the screen, and it is
+   the one thing a token system cannot reach. Every native control gets `appearance:
+   none` here, once, and a drawn replacement; components restyle the box around them
+   with `background-color`, never the `background` shorthand, so the caret survives. */
+
+select {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 26px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-3) 50%),
+    linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+select::-ms-expand { display: none; }
+
+input[type="range"] { appearance: none; -webkit-appearance: none; background: transparent; }
+
+input[type="checkbox"], input[type="radio"] {
+  appearance: none; -webkit-appearance: none;
+  display: inline-grid; place-content: center;
+  width: 15px; height: 15px; margin: 0; flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45);
+  cursor: pointer;
+}
+input[type="radio"] { border-radius: 50%; }
+input[type="checkbox"]::before, input[type="radio"]::before {
+  content: ''; width: 7px; height: 7px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform var(--dur) var(--ease);
+}
+input[type="radio"]::before { border-radius: 50%; }
+input[type="checkbox"]:checked, input[type="radio"]:checked { border-color: var(--accent); }
+input[type="checkbox"]:checked::before, input[type="radio"]:checked::before { transform: scale(1); }
+input[type="checkbox"]:disabled, input[type="radio"]:disabled { opacity: .5; cursor: not-allowed; }
+
+@media (prefers-reduced-motion: reduce) {
+  input[type="checkbox"]::before, input[type="radio"]::before { transition: none; }
+}

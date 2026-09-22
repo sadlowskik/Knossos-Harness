@@ -290,7 +290,7 @@ function CampaignReplayRail({ campaign, onReplay }) {
       max={last}
       value={Math.min(cursor, last)}
       onChange={setCursor}
-      detail={event ? eventLabel(event) : 'before start'}
+      label={event ? eventLabel(event) : 'before start'}
     />
   );
 }

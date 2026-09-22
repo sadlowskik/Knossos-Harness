@@ -15,11 +15,11 @@
    senate roster, the region maturity inspector and the Project screen. */
 
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Folder, Maximize2, Minimize2, Plus, X } from 'lucide-react';
+import { Folder, Maximize2, Minimize2, Plus, X } from 'lucide-react';
 import { useField } from '../state/store.js';
 import Conversation, { conversationNeedsYou, sortConversations, TERMINAL_STATES } from '../ui/Conversation.jsx';
 import FolderWorkspace from './FolderWorkspace.jsx';
-import { crumbsFor, dirName, staleness, weightLabel } from './districts.js';
+import { dirName, staleness, weightLabel } from './districts.js';
 
 export default function FolderDetail({
   workspace,
@@ -44,8 +44,8 @@ export default function FolderDetail({
   const here = sortConversations(sessions, permissions);
   const live = here.filter((session) => !TERMINAL_STATES.has(session.state));
   const heat = staleness(weight?.lastTs ?? 0, now, live.length);
-  const crumbs = crumbsFor(dir);
   const needing = here.filter((session) => conversationNeedsYou(session, permissions)).length;
+  const subCount = subfolders?.length ?? 0;
 
   // A new folder starts at its own top, not wherever the last one was left.
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, [dir]);
@@ -64,16 +64,10 @@ export default function FolderDetail({
       aria-label={`Folder ${dir || workspace.name}`}
     >
       <header className="folder-head">
-        <nav className="folder-crumbs" aria-label="Folder path">
-          <button type="button" className="folder-crumb" onClick={() => onNavigate('')}>{workspace.name}</button>
-          {crumbs.slice(1).map((crumb, index) => (
-            <span key={crumb.dir}>
-              <ChevronRight aria-hidden="true" />
-              {index === crumbs.length - 2
-                ? <b className="mono">{crumb.name}</b>
-                : <button type="button" className="folder-crumb mono" onClick={() => onNavigate(crumb.dir)}>{crumb.name}</button>}
-            </span>
-          ))}
+        {/* The path was printed here as a second breadcrumb under the one in the bar —
+            `field` six times on one screen between the two of them. The bar owns the
+            path now; this row owns the two things you do to the sheet itself. */}
+        <nav className="folder-crumbs" aria-label="This folder">
           <span className="grow" />
           <button
             type="button"
@@ -144,19 +138,18 @@ export default function FolderDetail({
               onStartSimilar={(ended) => onStart(dir, null, ended.agentId ?? null)}
             />
           ))}
-          {!here.length && (
-            <p className="folder-quiet">
-              No one is working in <code>{dir || workspace.name}</code>. Start an agent here, or open a
-              subfolder below to see who is further down.
-            </p>
-          )}
+          {/* The heat chip above, this paragraph and the primary button all said the
+              same thing: nobody is working here, start one. The chip says it and the
+              button does it; the sentence is gone. */}
         </section>
 
         <section className="folder-subs" aria-label="Subfolders">
-          <h3 className="label">Inside this folder</h3>
           {subfolders === null && <p className="folder-quiet">Reading the folder…</p>}
-          {subfolders?.length === 0 && <p className="folder-quiet">No subfolders — this is the bottom of the map here.</p>}
-          {(subfolders ?? []).map((sub) => {
+          {/* Forty rows of folder names under every folder was most of the words on the
+              screen. It is a count until you ask for it. */}
+          {subCount > 0 && <details className="folder-subs-list">
+            <summary>{subCount === 1 ? '1 subfolder' : `${subCount} subfolders`}</summary>
+            {subfolders.map((sub) => {
             const subHeat = staleness(sub.lastTs, now, sub.agents ?? 0);
             return (
               /* Each row used to carry its own file count, folder count and staleness
@@ -177,13 +170,15 @@ export default function FolderDetail({
                 </button>
                 <button
                   type="button"
-                  className="btn sm ghost"
+                  className="btn sm ghost icon"
                   title={`Start an agent scoped to ${sub.dir}`}
+                  aria-label={`Start an agent scoped to ${sub.dir}`}
                   onClick={(event) => onStart(sub.dir, event)}
-                ><Plus aria-hidden="true" />agent</button>
+                ><Plus aria-hidden="true" /></button>
               </div>
             );
-          })}
+            })}
+          </details>}
         </section>
       </div>
       )}

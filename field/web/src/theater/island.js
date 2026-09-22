@@ -391,13 +391,26 @@ export function generateIsland({ id, regions = [], frame }) {
   // --- what the renderer draws -------------------------------------------------------
   const tiles = [];
   const hatches = [];
+  /* The bounding box of the land, in the same percent-of-canvas coordinates everything
+     else on the plate uses. The settlement drawn on top is scaled against it, so a
+     capital stays a fraction of its island rather than a fraction of its frame — the
+     frame is an allowance, the land is what you can see. */
+  let landMinX = Infinity; let landMinY = Infinity;
+  let landMaxX = -Infinity; let landMaxY = -Infinity;
   const byRegion = regions.map(() => ({ area: 0, x: 0, y: 0, d: '' }));
   for (let i = 0; i < cells.length; i += 1) {
     if (!isLand[i]) continue;
     const elevation = Math.min(1, ((depth[i] < 0 ? 1 : depth[i]) / maxDepth) * 0.78
       + 0.42 * fbm(relief, centroids[i].x * 0.09, centroids[i].y * 0.09, 2));
     const region = regions[owner[i]];
-    const d = pathOf(outlines[i].map(toPct));
+    const corners = outlines[i].map(toPct);
+    for (const [px, py] of corners) {
+      if (px < landMinX) landMinX = px;
+      if (px > landMaxX) landMaxX = px;
+      if (py < landMinY) landMinY = py;
+      if (py > landMaxY) landMaxY = py;
+    }
+    const d = pathOf(corners);
     tiles.push({ d, region: region?.key ?? '', elevation });
     const bucket = byRegion[owner[i]];
     if (bucket) {
@@ -455,6 +468,11 @@ export function generateIsland({ id, regions = [], frame }) {
     // drawn on top has to shrink with it or the town is larger than the island.
     rx,
     ry,
+    // The land's own extent, percent of canvas. Falls back to the frame when nothing
+    // came out as land at all, so callers never divide by zero.
+    bbox: Number.isFinite(landMinX)
+      ? { x: landMinX, y: landMinY, w: landMaxX - landMinX, h: landMaxY - landMinY }
+      : { x: frame.cx - rx, y: frame.cy - ry, w: rx * 2, h: ry * 2 },
     cellCount: cells.length,
     landCount: tiles.length,
     tiles,

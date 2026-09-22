@@ -23,16 +23,19 @@
    One orange (#FF7A1A), one radius scale, one font stack, one type scale. */
 
 :root {
-  /* surfaces, three levels plus a hover/raised step */
-  --surface-0: #0F1113;
-  --surface-1: #15181B;
-  --surface-2: #1C2024;
-  --surface-3: #232830;
+  /* Surfaces, three levels plus a hover/raised step. The previous set stepped 1.06,
+     1.09 and 1.11 against the level below — arithmetic, not a visible step. Each of
+     these is at least 1.15:1 against the one under it, measured composited, which is
+     the point at which a panel on a panel reads as two objects. */
+  --surface-0: #080A0D;
+  --surface-1: #181C20;
+  --surface-2: #222933;
+  --surface-3: #2D343E;
 
-  /* edges: three steps and nothing else. The old hairline was #262B31 on #15181B — a
-     1.26:1 step, technically present and visually absent. These read: ~1.44:1 for an
-     internal divider, ~1.95:1 for the edge of an object, ~2.97:1 for hover and focus. */
-  --border-subtle: #30353C;
+  /* edges: three steps and nothing else. A pass that claimed to fix the hairline left
+     --border-subtle at #30353C, a 1.44:1 step on --surface-1 and still invisible. The
+     subtle step is 1.60:1 now, which is the floor a border has to clear to be a line. */
+  --border-subtle: #3A4048;
   --border:        #414852;
   --border-strong: #5A6371;
   --edge:      var(--border);
@@ -130,7 +133,9 @@
   --fs-body:    13px; --lh-body:    1.5;
   --fs-small:   12px; --lh-small:   1.45;
   --fs-micro:   11px; --lh-micro:   1.4;
-  --fs-label:   10px; --lh-label:   1.2;  --ls-label:   .1em;    --fw-label:   600;
+  /* 11px is the floor, and the label step was 10px under a rule that claims to enforce
+     it. Uppercase mono at 11px is the smallest thing that ships. */
+  --fs-label:   11px; --lh-label:   1.25; --ls-label:   .1em;    --fw-label:   600;
   --fs-data:    12px; --lh-data:    1.45;
 
   /* motion: 160ms for a state change, 220ms for a panel that travels */
@@ -138,7 +143,9 @@
   --dur-panel: 220ms;
   --ease: cubic-bezier(.2, .7, .2, 1);
 
-  --topbar-h: 48px;
+  /* One bar. It was this plus Rome's 68px page header, 116px of chrome before a pixel
+     of map — 21% of a 720px window once the time rail is counted. */
+  --topbar-h: 44px;
   --rail-h: 44px;
 
   /* ---- aliases. The old graphite/ember names, pointed at the one system above. */
@@ -249,11 +256,44 @@
   background: var(--surface-1); transform: rotate(45deg) scale(.72);
 }
 .brand-name { font-weight: var(--fw-h2); font-size: var(--fs-h2); line-height: var(--lh-h2); letter-spacing: var(--ls-h2); color: var(--text-1); }
-.brand-sub {
+
+/* ---- where you are, in the one bar ----------------------------------------------
+   Rome fills it with the open folder's path, Atlas with the project filter. It
+   replaced Rome's 68px page title, which named the project a third time after the
+   island's plaque and the brand's subtitle. */
+.crumbs {
+  display: flex; align-items: center; gap: 2px;
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
   font-size: var(--fs-small); color: var(--text-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
 }
-.brand-sub::before { content: '/'; margin-right: 8px; color: var(--edge-2); }
+.crumb-step { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.crumb-step svg { width: 13px; height: 13px; flex: none; color: var(--text-4); }
+.crumb-step b {
+  padding: 0 4px; color: var(--text-1); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.crumb-step button {
+  height: var(--ctl-h-sm); padding: 0 6px;
+  border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-3);
+  font: 400 var(--fs-small) var(--font-sans); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.crumb-step button:hover { color: var(--text-1); background: var(--surface-2); }
+.crumb-pick { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+/* The caret and `appearance: none` come from the base control rules in tokens.css. */
+.crumb-pick select {
+  height: var(--ctl-h); padding-left: 9px;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius);
+  background-color: var(--surface-2); color: var(--text-1);
+  font: 500 var(--fs-small) var(--font-sans); cursor: pointer;
+  max-width: 220px; text-overflow: ellipsis;
+}
+.crumb-pick select:hover { border-color: var(--border); }
+
+.topbar-primary { flex: none; margin-left: auto; }
+.topbar-gear { flex: none; }
 
 /* The one segmented control. There used to be two rows of these — modes above, lenses
    below — saying the same seven things twice over. `.segctl-gap` is the single hairline
@@ -318,16 +358,6 @@
 .topstats .stat.quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--text-3); padding: 0 6px; }
 .topstats .stat.warn { color: var(--st-attention); border-color: rgba(245, 184, 74, .35); background: var(--st-attention-soft); }
 .topstats .stat.warn i { background: var(--st-attention); animation: pulse-dot 1.8s ease-in-out infinite; }
-.topbar-signout {
-  flex: none; height: var(--ctl-h); padding: 0 12px;
-  border: 0; border-radius: var(--radius);
-  background: transparent; color: var(--text-3);
-  font: 500 var(--fs-small) var(--font-sans); cursor: pointer;
-  transition: color var(--dur) var(--ease), background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
-}
-.topbar-signout:hover { color: var(--text-1); background: var(--surface-2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
-.topbar-signout:active { box-shadow: var(--shadow-pressed); }
-
 .stage { flex: 1 1 auto; position: relative; min-height: 0; }
 .stage-alert { margin: var(--sp-4); font-family: var(--font-sans); font-size: var(--fs-body); color: var(--text-2); }
 .stage-alert { color: var(--st-failed); }
@@ -354,16 +384,16 @@
 
 @media (max-width: 1100px) {
   .topbar { height: auto; min-height: var(--topbar-h); flex-wrap: wrap; row-gap: 6px; gap: 8px 10px; padding: 6px 12px; }
-  .brand-sub { max-width: 120px; }
   .segctl-item { padding: 0 9px; font-size: var(--fs-small); }
   .topstats { flex-wrap: wrap; overflow: visible; }
   .topstats .stat.quiet { display: none; }
+  .crumb-step button { max-width: 120px; }
 }
 @media (max-width: 760px) {
-  .brand-sub { display: none; }
+  .brand-name { display: none; }
   .segctl { max-width: 100%; overflow-x: auto; }
   .segctl-hint { display: none; }
-  .topbar-signout { margin-left: auto; }
+  .topbar-primary span { display: none; }
 }
 
 /* shared talk / pause / stop controls */
@@ -511,7 +541,7 @@
 
 .fld { display: flex; flex-direction: column; gap: 6px; }
 .fld select, .fld textarea, .fld input {
-  background: var(--surface-0);
+  background-color: var(--surface-0);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .4);
@@ -524,7 +554,7 @@
 }
 .fld select, .fld input { height: var(--ctl-h); }
 .fld textarea { font-family: var(--sans); line-height: 1.4; padding: 6px 8px; }
-.fld select:hover, .fld textarea:hover, .fld input:hover { background: var(--surface-1); }
+.fld select:hover, .fld textarea:hover, .fld input:hover { background-color: var(--surface-1); }
 .fld select:focus, .fld textarea:focus, .fld input:focus {
   border-color: var(--accent);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 3px var(--accent-soft);
@@ -832,7 +862,45 @@
 .campaign-meters button:hover { color: var(--amber); border-color: var(--ember); }
 .campaign-meters .history-status { color: var(--amber); }
 
-/* Plans reuses .replay-rail; this only widens its gutters to match the page. */
+/* ---- the one scrubber ------------------------------------------------------------
+
+   It was a raw `<input type="range">` with no class on it: the platform's blue, the
+   platform's track, the platform's thumb, on a warm dark bar. It is a drawn control
+   now — a 4px track in the subtle border colour, the part behind the thumb filled in
+   the working colour, and a 14px thumb in the primary text colour carrying the resting
+   shadow, which is the same object language every other control on the screen uses. */
+.replay-rail { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rail-slider {
+  appearance: none; -webkit-appearance: none;
+  flex: 1 1 auto; min-width: 0; height: 14px; margin: 0;
+  background: transparent; cursor: pointer;
+}
+.rail-slider::-webkit-slider-runnable-track {
+  height: 4px; border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--st-working) 0 var(--rail-fill, 100%), var(--border-subtle) var(--rail-fill, 100%) 100%);
+}
+.rail-slider::-moz-range-track { height: 4px; border-radius: var(--radius-pill); background: var(--border-subtle); }
+.rail-slider::-moz-range-progress { height: 4px; border-radius: var(--radius-pill); background: var(--st-working); }
+.rail-slider::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 14px; height: 14px; margin-top: -5px;
+  border: 0; border-radius: 50%;
+  background: var(--text-1);
+  box-shadow: var(--shadow-resting);
+}
+.rail-slider::-moz-range-thumb {
+  width: 14px; height: 14px; border: 0; border-radius: 50%;
+  background: var(--text-1); box-shadow: var(--shadow-resting);
+}
+.rail-slider:hover::-webkit-slider-thumb { box-shadow: var(--shadow-hovered); }
+.rail-slider:hover::-moz-range-thumb { box-shadow: var(--shadow-hovered); }
+.rail-slider:disabled { cursor: not-allowed; opacity: .5; }
+/* One label: `Live`, or when you are. Not `live 3811 / 3811 now End`. */
+.rail-label {
+  flex: none; color: var(--text-1);
+  font: 500 var(--fs-small)/1 var(--font-mono); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .replay-rail.campaign-replay { padding-left: 18px; padding-right: 18px; }
 .history-readonly { align-self: center; color: var(--st-attention); font-size: var(--fs-micro); text-transform: uppercase; }
 .agent-brief { display: grid; gap: 4px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: rgba(255,122,26,.025); }
@@ -888,7 +956,7 @@
 .formation-retreat { border: 0; background: transparent; color: var(--ghost); cursor: pointer; }
 .formation-retreat:hover:not(:disabled) { color: #E29B86; }
 .formation-order { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; padding: 6px; border-top: 1px solid var(--line); background: rgba(255,255,255,.012); }
-.formation-order textarea, .formation-order select { min-width: 0; min-height: var(--ctl-h); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: inset 0 1px 2px rgba(0,0,0,.4); padding: 6px 8px; resize: vertical; background: var(--surface-0); color: var(--body); font: var(--fs-micro) var(--mono); }
+.formation-order textarea, .formation-order select { min-width: 0; min-height: var(--ctl-h); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: inset 0 1px 2px rgba(0,0,0,.4); padding: 6px 8px; resize: vertical; background-color: var(--surface-0); color: var(--body); font: var(--fs-micro) var(--mono); }
 .formation-order textarea:focus, .formation-order select:focus { border-color: var(--accent); box-shadow: inset 0 1px 2px rgba(0,0,0,.4), 0 0 0 3px var(--accent-soft); outline: none; }
 .formation-order button { align-self: stretch; padding: 0 10px; border: 1px solid rgba(255,122,26,.4); border-radius: var(--radius-sm); background: rgba(255,122,26,.1); color: var(--amber); font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--mono); letter-spacing: var(--ls-label); text-transform: uppercase; cursor: pointer; }
 .formation-order button:hover:not(:disabled) { background: rgba(255,122,26,.2); border-color: rgba(255,122,26,.6); }
@@ -974,7 +1042,11 @@
   overflow: hidden;
   isolation: isolate;
   color: var(--world-ink);
-  background: #0d0e0b;
+  /* The shell and the plate were adjacent rather than related: a near-neutral #0D0E0B
+     behind a warm parchment map, so the paper looked pasted onto the app. The shell is
+     warm-dark now, of the same family as the plate, and the plate's own edge carries a
+     cold-to-warm transition ring instead of a cut. */
+  background: #14120D;
   font-family: var(--sans);
 }
 /* Atmosphere, stated at full strength so the numbers are readable. It used to be a .72
@@ -991,34 +1063,11 @@
   background: repeating-linear-gradient(0deg, rgba(255,255,255,.0025) 0 1px, transparent 1px 3px);
 }
 
-.field-world-header {
-  position: absolute;
-  z-index: 40;
-  inset: 0 0 auto;
-  height: 68px;
-  display: grid;
-  grid-template-columns: minmax(210px, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 0 22px;
-  border-bottom: 0;
-  background: linear-gradient(180deg, rgba(24, 21, 16, .97), rgba(13, 12, 9, .86));
-  /* elevation, not a hairline */
-  box-shadow:
-    inset 0 1px 0 rgba(233, 222, 200, .09),
-    0 1px 0 rgba(0, 0, 0, .7),
-    0 14px 30px rgba(0, 0, 0, .4);
-  backdrop-filter: blur(14px);
-}
-.field-world-header > div:first-child { min-width: 0; }
-.field-world-header > div:first-child > span, .choice-kicker { display: block; color: var(--world-accent); font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--mono); letter-spacing: .23em; }
-.field-world-header h1 {
-  margin: 3px 0 0; overflow: hidden; color: var(--world-ink);
-  font: var(--fw-display) var(--fs-display)/var(--lh-display) var(--font-display);
-  letter-spacing: var(--ls-display); text-overflow: ellipsis; white-space: nowrap;
-}
-.field-quick-settings { justify-self: end; display: flex; align-items: center; gap: 6px; }
-.field-quick-settings button, .field-side-panel button {
+/* Rome's page header is gone. It was 68px carrying a display-size project title that
+   the island's own plaque already said, plus the two buttons and the gear that now sit
+   in the one topbar. `.choice-kicker` kept its type from here, so it states it. */
+.choice-kicker { display: block; color: var(--world-accent); font: var(--fw-label) var(--fs-label)/var(--lh-label) var(--mono); letter-spacing: .23em; }
+.field-side-panel button {
   border: 1px solid color-mix(in srgb, var(--world-line), #ddc395 14%);
   border-radius: var(--radius);
   background: linear-gradient(180deg, rgba(233, 222, 200, .07), rgba(233, 222, 200, .025));
@@ -1029,18 +1078,14 @@
   cursor: pointer;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
-.field-quick-settings button { display: inline-flex; min-height: var(--ctl-h); align-items: center; gap: 6px; padding: 0 12px; }
-.field-quick-settings button:hover {
+.field-side-panel button:hover {
   border-color: color-mix(in srgb, var(--world-accent), transparent 40%);
   background: linear-gradient(180deg, rgba(233, 222, 200, .12), rgba(233, 222, 200, .05));
   box-shadow: inset 0 1px 0 rgba(233, 222, 200, .12), 0 2px 4px rgba(0, 0, 0, .5), 0 8px 18px rgba(0, 0, 0, .34);
   color: var(--world-ink);
 }
-.field-quick-settings button:active { box-shadow: var(--shadow-pressed); background: rgba(0, 0, 0, .2); }
-.field-quick-settings button:disabled { opacity: 1; background: rgba(233, 222, 200, .02); border-color: var(--world-line); color: var(--world-dim); box-shadow: none; cursor: not-allowed; }
-.field-quick-settings b { margin-left: 4px; color: var(--world-accent); }
-.field-quick-settings .settings-gear { display: grid; width: var(--ctl-h); padding: 0; place-items: center; }
-.field-quick-settings svg { width: 13px; }
+.field-side-panel button:active { box-shadow: var(--shadow-pressed); background: rgba(0, 0, 0, .2); }
+.field-side-panel button:disabled { opacity: 1; background: rgba(233, 222, 200, .02); border-color: var(--world-line); color: var(--world-dim); box-shadow: none; cursor: not-allowed; }
 
 /* ---- Power sources ----
    These three rules used to inherit their shell from the city command hub's stylesheet.
@@ -1126,9 +1171,9 @@
 }
 .psrc-form input.mono { font-family: var(--font-mono); font-size: var(--fs-body); }
 .psrc-form input::placeholder { color: var(--text-3); }
-.psrc-form input:hover, .psrc-form select:hover { background: var(--surface-2); }
-.psrc-form input:focus, .psrc-form select:focus { outline: none; border-color: var(--accent); background: var(--surface-1); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35), 0 0 0 3px var(--accent-soft); }
-.psrc-form input:disabled, .psrc-form select:disabled { background: var(--surface-1); border-color: var(--border-subtle); color: var(--text-4); box-shadow: none; cursor: not-allowed; }
+.psrc-form input:hover, .psrc-form select:hover { background-color: var(--surface-2); }
+.psrc-form input:focus, .psrc-form select:focus { outline: none; border-color: var(--accent); background-color: var(--surface-1); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35), 0 0 0 3px var(--accent-soft); }
+.psrc-form input:disabled, .psrc-form select:disabled { background-color: var(--surface-1); border-color: var(--border-subtle); color: var(--text-4); box-shadow: none; cursor: not-allowed; }
 .psrc-help { font-size: var(--fs-small); line-height: 1.4; color: var(--text-3); }
 .psrc-msg { margin: 0; padding: 8px 10px; border-radius: var(--radius); font-size: var(--fs-small); line-height: 1.45; }
 .psrc-msg.bad { background: var(--st-failed-soft); color: #FFB3A8; }
@@ -1146,7 +1191,7 @@
    roster along the bottom; the roster is gone, because the folder you open is where the
    agents working in it now live. */
 .field-world-shell { --sheet-w: 360px; }
-.field-world-canvas { position: absolute; inset: 68px 0 0; overflow: hidden; transition: right var(--dur-panel) var(--ease); }
+.field-world-canvas { position: absolute; inset: 0; overflow: hidden; transition: right var(--dur-panel) var(--ease); }
 .field-world-shell.folder-open { --sheet-w: min(600px, 52vw); }
 .field-world-shell.panel-open .field-world-canvas { right: var(--sheet-w); }
 .world-map-base {
@@ -1201,7 +1246,6 @@
   background: radial-gradient(ellipse, rgba(111,84,47,.23), rgba(66,53,35,.08) 54%, transparent 74%);
   box-shadow: inset 0 0 35px rgba(205,159,81,.04), 0 0 40px rgba(0,0,0,.08);
 }
-.living-world .capital-label { top: -3px; padding: 3px 6px; border: 1px solid rgba(211,169,99,.16); background: rgba(17,13,9,.72); box-shadow: 0 5px 14px rgba(0,0,0,.3); }
 .city-group:nth-of-type(even) .region-influence { border-radius: 57% 43% 51% 49% / 44% 57% 43% 56%; transform: rotate(2deg); }
 .field-region:hover .region-influence, .field-region.focused .region-influence, .field-region:focus-within .region-influence { border-color: rgba(220,177,105,.32); background-color: rgba(146,98,45,.08); }
 .field-region.active .region-influence::after { content: ''; position: absolute; inset: 24%; border-radius: 50%; box-shadow: 0 0 28px rgba(229,151,61,.24); }
@@ -1209,8 +1253,6 @@
 @keyframes living-pulse { 50% { opacity: .35; transform: scale(1.2); } }
 /* How many agents are inside this project but not inside any district drawn for it. */
 .city-crowd { position: absolute; z-index: 11; right: 4%; top: 2px; padding: 1px 5px; border: 1px solid var(--world-line); background: rgba(13,11,8,.82); color: var(--world-accent); font-size: var(--fs-micro); }
-.capital-label { position: absolute; z-index: 11; left: 50%; top: 7%; display: flex; align-items: center; gap: 5px; color: #f0c880; font: 700 var(--fs-label)/var(--lh-label) var(--mono); letter-spacing: .12em; white-space: nowrap; text-shadow: 0 1px 1px #0a0907, 0 2px 7px rgba(8, 7, 5, .95); transform: translateX(-50%); }
-.capital-label i { width: 5px; height: 5px; border: 1px solid #e5bb72; transform: rotate(45deg); }
 .field-region.kind-project .field-building { display: none; }
 .settlement-site { position: absolute; z-index: 7; inset: -2% -7% -16%; pointer-events: none; isolation: isolate; transform: rotate(var(--site-rotation)); transform-origin: 50% 64%; transition: filter .22s ease, transform .22s ease; }
 .field-region.capital .settlement-site { inset: -7% -13% -20%; }
@@ -1311,7 +1353,6 @@
 @keyframes agent-deploy { from { opacity: .15; transform: translate(-85%,-95%) scale(.7); filter: blur(2px); } to { opacity: 1; transform: translate(-50%,-50%) scale(var(--agent-scale, 1)); filter: none; } }
 .field-agent-marker::after { content: ''; position: absolute; top: 37px; width: 23px; height: 4px; border: 1px solid rgba(0,0,0,.55); border-radius: 3px; background: linear-gradient(90deg, var(--world-green) calc(var(--agent-progress) * 1%), rgba(22,20,17,.88) 0); }
 .field-agent-marker:hover, .field-agent-marker.selected { --agent-scale: 1.06; z-index: 18; }
-.field-agent-marker.state-blocked .agent-emblem, .field-agent-marker.state-error .agent-emblem, .field-agent-marker.state-waiting_permission .agent-emblem { box-shadow: 0 0 0 2px rgba(194,85,57,.65), 0 7px 15px rgba(0,0,0,.48); }
 
 .marker-equipment { position: absolute; z-index: 16; top: 25px; left: calc(50% - 21px); display: grid; width: 15px; height: 15px; border: 1px solid #786647; border-radius: 50%; background: #252019; color: #d2a964; place-items: center; box-shadow: 0 3px 6px rgba(0,0,0,.5); }
 .marker-equipment svg { width: 8px; height: 8px; }
@@ -1321,24 +1362,28 @@
 .field-agent-marker:hover .marker-label, .field-agent-marker.selected .marker-label, .field-agent-marker:focus-visible .marker-label { display: grid; }
 .marker-label b { color: var(--world-ink); font: 600 var(--fs-small) var(--mono); }.marker-label small { color: var(--world-muted); font: var(--fs-micro) var(--mono); text-transform: uppercase; }
 
-.identity-mark { position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; }
-.agent-emblem, .senator-portrait { position: relative; display: inline-grid; place-items: center; overflow: hidden; border: 1px solid hsl(var(--identity-hue) 32% 53% / .82); background: linear-gradient(145deg, hsl(var(--identity-hue) 30% 28%), #181714 70%); color: #f1e7d5; box-shadow: 0 7px 15px rgba(0,0,0,.48); }
-.agent-emblem { border-radius: 8px; }.senator-portrait { border-radius: 50% 50% 43% 43%; }
-.agent-emblem img { width: 100%; height: 100%; object-fit: cover; }
-.agent-emblem > b, .senator-portrait > b { font: 700 var(--fs-micro) var(--mono); letter-spacing: -.04em; }
-.agent-emblem.size-xs > b { font-size: var(--fs-label); }
-.agent-emblem > small { position: absolute; right: 1px; bottom: 1px; padding: 0 2px; background: rgba(5,5,5,.8); color: #ddd4c4; font: 600 var(--fs-label)/var(--lh-label) var(--mono); letter-spacing: var(--ls-label); }
-/* the source tag has no room on the 16px overlay; the title attribute carries it */
-.agent-emblem.size-xs > small { display: none; }
-.senator-portrait svg { position: absolute; inset: 10%; width: 80%; height: 80%; opacity: .18; }
-.senator-portrait > small { position: absolute; left: 50%; bottom: 0; min-width: 12px; border-radius: 5px 5px 0 0; background: #6b482d; color: #f0d39d; font: 600 var(--fs-label)/var(--lh-label) var(--mono); text-align: center; transform: translateX(-50%); }
+/* One unit, one mark: an initial disc in the identity's own hue, and a ring that says
+   what state the unit is in. It replaced a portrait, a role letter and a model emblem
+   stacked on one 29px disc — three glyphs, two of which repeated the third. */
+.unit-mark {
+  position: relative; display: inline-grid; place-items: center; flex: 0 0 auto;
+  overflow: hidden; border-radius: 50%;
+  border: 1px solid hsl(var(--identity-hue) 32% 53% / .82);
+  background: linear-gradient(145deg, hsl(var(--identity-hue) 34% 32%), #181714 74%);
+  color: #f6EFE2;
+  box-shadow: 0 0 0 2px var(--unit-ring, transparent), 0 7px 15px rgba(0,0,0,.48);
+}
+.unit-mark img { width: 100%; height: 100%; object-fit: cover; }
+.unit-mark > b { font: 700 var(--fs-h2) var(--font-sans); letter-spacing: 0; }
+.unit-mark.size-xs > b { font-size: var(--fs-label); }
+.unit-mark.size-sm > b { font-size: var(--fs-body); }
 .size-xs { width: 16px; height: 16px; }.size-sm { width: 29px; height: 29px; }.size-md { width: 37px; height: 37px; }.size-lg { width: 45px; height: 45px; }
-.identity-mark .model-overlay { position: absolute; right: -5px; bottom: -3px; z-index: 2; border: 2px solid #17140f; }
-.agent-emblem.selected, .identity-mark.selected > .senator-portrait { outline: 2px solid var(--world-accent); outline-offset: 2px; }
-
-.field-quick-settings button.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.field-quick-settings button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-ink); }
-.field-quick-settings button.primary:disabled { opacity: .45; cursor: not-allowed; }
+/* The ring is the one fact the map is for. One accent means "this needs you". */
+.unit-mark { --unit-ring: rgba(108,180,245,.72); }
+.unit-mark.state-idle, .unit-mark.state-spawning { --unit-ring: rgba(138,146,156,.6); }
+.unit-mark.state-blocked, .unit-mark.state-error, .unit-mark.state-waiting_permission { --unit-ring: var(--st-attention); }
+.unit-mark.state-done { --unit-ring: rgba(93,201,138,.7); }
+.unit-mark.selected { outline: 2px solid var(--world-accent); outline-offset: 3px; }
 .world-notice {
   position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 22;
   max-width: min(520px, calc(100% - 32px)); padding: 8px 14px; border-radius: var(--radius-lg);
@@ -1382,8 +1427,6 @@
 .folder-crumbs > span { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
 .folder-crumbs svg { width: 11px; height: 11px; flex: none; opacity: .6; }
 .folder-crumbs b { overflow: hidden; color: var(--world-ink); text-overflow: ellipsis; white-space: nowrap; }
-.folder-crumb { max-width: 150px; overflow: hidden; border: 0; padding: 2px 3px; border-radius: var(--radius-sm); background: none; color: var(--world-muted); cursor: pointer; text-overflow: ellipsis; white-space: nowrap; }
-.folder-crumb:hover { color: var(--world-ink); text-decoration: underline; }
 .folder-head h2 { margin: 6px 0 4px; color: var(--world-ink); font: 600 var(--fs-h1)/var(--lh-h1) var(--disp); letter-spacing: var(--ls-h1); }
 .folder-facts { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--world-muted); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 .folder-facts i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--world-dim); }
@@ -1400,6 +1443,27 @@
 .folder-quiet code { padding: 1px 5px; border-radius: var(--radius-sm); background: var(--surface-2); font: var(--fs-micro) var(--font-mono); color: var(--text-1); }
 .folder-subs { display: grid; gap: 4px; }
 .folder-subs h3 { margin: 0 0 4px; color: var(--world-accent); }
+/* The subfolder list is a count until it is asked for: forty folder names under every
+   folder was most of the words on the screen and none of the decisions. */
+.folder-subs-list { display: grid; gap: 4px; }
+.folder-subs-list > summary {
+  display: flex; align-items: center; gap: 6px;
+  min-height: var(--ctl-h-sm); padding: 0 6px; margin-bottom: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--world-muted); font-size: var(--fs-small);
+  list-style: none; cursor: pointer;
+}
+.folder-subs-list > summary::-webkit-details-marker { display: none; }
+.folder-subs-list > summary::before {
+  content: ''; width: 0; height: 0; flex: none;
+  border: 4px solid transparent; border-left-color: currentColor;
+  transition: transform var(--dur) var(--ease);
+}
+.folder-subs-list[open] > summary::before { transform: rotate(90deg) translateX(-1px); }
+.folder-subs-list > summary:hover { color: var(--world-ink); background: var(--raised); }
+@media (prefers-reduced-motion: reduce) {
+  .folder-subs-list > summary::before { transition: none; }
+}
 /* outer 6 - 2px of padding = 4 for the button inside it */
 .folder-sub { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 1px solid var(--world-line); border-radius: var(--radius); padding: 2px 8px 2px 2px; background: linear-gradient(180deg, rgba(233,222,200,.045), rgba(233,222,200,.012)); box-shadow: inset 0 1px 0 rgba(233,222,200,.05); }
 .folder-sub-open { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; min-height: var(--ctl-h); border: 0; padding: 0 6px; border-radius: var(--radius-sm); background: none; color: var(--world-ink); cursor: pointer; text-align: left; transition: background var(--dur) var(--ease); }
@@ -1429,7 +1493,7 @@
 .settings-choice { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; }
 .settings-choice button { min-height: var(--ctl-h-lg); }
 .settings-choice button.on { border-color: var(--world-accent); background: color-mix(in srgb,var(--world-accent),transparent 84%); color: var(--world-ink); box-shadow: inset 0 1px 0 rgba(233,222,200,.1), 0 1px 2px rgba(0,0,0,.5); }
-.settings-panel select, .settings-panel input { width: 100%; min-height: var(--ctl-h); border: 1px solid color-mix(in srgb, var(--world-line), #ddc395 14%); border-radius: var(--radius); padding: 0 8px; outline: 0; background: rgba(0,0,0,.34); box-shadow: inset 0 1px 2px rgba(0,0,0,.5); color: var(--world-ink); font: var(--fs-small) var(--mono); transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
+.settings-panel select, .settings-panel input { width: 100%; min-height: var(--ctl-h); border: 1px solid color-mix(in srgb, var(--world-line), #ddc395 14%); border-radius: var(--radius); padding: 0 8px; outline: 0; background-color: rgba(0,0,0,.34); box-shadow: inset 0 1px 2px rgba(0,0,0,.5); color: var(--world-ink); font: var(--fs-small) var(--mono); transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 .settings-panel select:focus, .settings-panel input:focus { border-color: var(--world-accent); box-shadow: inset 0 1px 2px rgba(0,0,0,.5), 0 0 0 3px color-mix(in srgb, var(--world-accent), transparent 82%); }
 .settings-field { display: grid; grid-template-columns: 102px 1fr; align-items: center; gap: 8px; margin-top: 7px; }.settings-field > span { color: var(--world-muted); font: var(--fs-micro) var(--mono); }
 .settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.settings-toggle > div > label { margin-bottom: 4px; }.settings-toggle p { margin: 0; color: var(--world-dim); font-size: var(--fs-small); }
@@ -1462,19 +1526,11 @@
 @keyframes orbit-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1050px) {
-  .field-world-header { grid-template-columns: 1fr auto; }
   .field-world-shell.folder-open { --sheet-w: min(520px, 58vw); }
 }
 @media (max-width: 760px) {
-  .field-world-header { height: 58px; padding: 0 10px; }
-  .field-world-header h1 { font-size: var(--fs-h1); }
-  .field-quick-settings button:nth-child(2) { display: none; }
-  .field-quick-settings button { min-width: 42px; min-height: 36px; padding-inline: 7px; }
-  .field-quick-settings button.primary span { display: none; }
-  .field-world-canvas { top: 58px; }
-  .field-side-panel { top: 58px; width: min(360px,100%); }
+  .field-side-panel { width: min(360px,100%); }
   .field-world-shell.folder-open { --sheet-w: 100%; }
-  .folder-sheet { top: 58px; }
   .field-world-shell.panel-open .field-world-canvas { right: 0; opacity: .35; }
   .district-plaque b { font-size: var(--fs-micro); }
   .district { transform: translate(-50%,-50%) scale(calc(.5 + .42 * var(--district-weight, .5))); }
@@ -1486,11 +1542,6 @@
 /* The sizes that used to be re-declared here, on eighteen selectors, now live on the
    rules themselves, in --fs-micro / --fs-label. Ornament may stay small; anything
    actionable is floored at 12px where it is declared, not patched afterwards. */
-
-@media (max-width: 760px) {
-  .field-world-header { grid-template-columns: minmax(90px, 1fr) auto; gap: 8px; }
-  .field-quick-settings { gap: 4px; }
-}
 
 /* ------------------------------------------------------------------ atlas board */
 
@@ -1511,21 +1562,9 @@
   opacity: .14; mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
 }
-/* One ~44px row. The kicker said "Board" under a nav that already says Board, the
-   heading said "Agents and projects" over a grid of agents and projects, and the live
-   counters were the topbar's counters a second time. */
-.atlas-head {
-  position: relative; z-index: 6;
-  flex: none;
-  min-height: 44px;
-  display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3);
-  padding: 0 var(--sp-5);
-  /* elevation, not a hairline */
-  border-bottom: 0;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
-  box-shadow: var(--shadow-header);
-}
-.atlas-actions { display: flex; align-items: center; gap: 8px; }
+/* Atlas had a 44px action row of its own under the topbar, so switching between Rome
+   and Atlas changed the chrome height by 68px. Both screens fill the one bar now; the
+   project filter went into its breadcrumb slot, and the primary and the gear with it. */
 
 .atlas-scroll { position: relative; z-index: 1; flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-5); }
 
@@ -1665,12 +1704,12 @@
 .convo-filter { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .convo-filter select {
   height: var(--ctl-h); max-width: 260px; padding: 0 8px;
-  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background-color: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius);
   box-shadow: var(--shadow-resting);
   color: var(--text-1); font: 500 var(--fs-small) var(--font-sans);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease), background var(--dur) var(--ease);
 }
-.convo-filter select:hover { background: var(--surface-3); box-shadow: var(--shadow-hovered); }
+.convo-filter select:hover { background-color: var(--surface-3); box-shadow: var(--shadow-hovered); }
 
 /* One wide column for a single conversation, two or three when there are more. Below
    1000px a second column would be two unreadable columns, so there is one. */
@@ -1850,9 +1889,6 @@ button.convo-file:hover { background: color-mix(in srgb, var(--surface-3) 82%, #
 .convo-offline { margin: 0; text-align: center; font-size: var(--fs-small); color: var(--st-failed); }
 
 @media (max-width: 760px) {
-  .atlas-head { padding: 12px 16px; gap: 10px; }
-  .atlas-title { flex-basis: 100%; }
-  .atlas-actions { margin-left: auto; }
   .atlas-scroll { padding: 16px; gap: 16px; }
   .atlas-perm { margin-left: 14px; margin-right: 14px; }
   .atlas-line { grid-template-columns: 48px minmax(0, 1fr); }
@@ -1862,7 +1898,7 @@ button.convo-file:hover { background: color-mix(in srgb, var(--surface-3) 82%, #
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .work-pill, .convo, .convo-who, .segctl, .segctl-item, .segctl-hint, .viewctl-item, .btn, .topstats .stat, .topbar-signout, .psrc-row, .psrc-close, .psrc-form input, .psrc-form select,
+  .work-pill, .convo, .convo-who, .segctl, .segctl-item, .segctl-hint, .viewctl-item, .btn, .topstats .stat, .psrc-row, .psrc-close, .psrc-form input, .psrc-form select,
   .ctx-item, .seg button, .fld select, .fld textarea, .fld input, .front-state button, .campaign-action,
   .convo-file, .convo-filter select, .agent-controls textarea, .convo-composer textarea,
   .formation-order textarea, .formation-order select, .capital-projects button, .tab { transition: none; }
@@ -2055,15 +2091,6 @@ button.convo-file:hover { background: color-mix(in srgb, var(--surface-3) 82%, #
     0 -1px 0 var(--st-attention),
     0 -14px 30px rgba(0, 0, 0, .36);
 }
-.time-badge {
-  flex: none;
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 24px; padding: 0 10px;
-  border-radius: var(--radius-pill);
-  background: var(--st-attention-soft); color: var(--st-attention);
-  font: 600 var(--fs-micro) var(--font-sans); font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 .time-live { flex: none; }
 /* Looking at an earlier moment should look like it: the territory cools and the markers
    stop pulsing, because nothing on it is happening any more. */
@@ -2075,7 +2102,7 @@ button.convo-file:hover { background: color-mix(in srgb, var(--surface-3) 82%, #
 
 @media (max-width: 760px) {
   .time-rail { padding: 0 10px; gap: 6px; }
-  .time-rail .replay-rail-label, .time-rail .replay-rail-detail { display: none; }
+  .time-rail .rail-label { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 }
 
 /* ------------------------------------------------------------------ plans, on the territory

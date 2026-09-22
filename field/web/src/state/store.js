@@ -52,6 +52,18 @@ let state = {
   camera: { x: 0, y: 0, z: 0.85 },
   lastEventBySession: {},
   error: null,
+  /* The one bar. Rome and Atlas used to each carry a header of their own under the
+     topbar — 68px and 44px of chrome that changed height when you switched tabs — and
+     between them they said the project's name three times. There is one bar now, in
+     App.jsx, and the mounted screen fills these slots. Data only: a crumb or the gear
+     is a window event back to the screen, so nothing here holds a closure. */
+  chrome: {
+    crumbs: [],          // [{ key, label, dir }] — last one is where you are
+    picker: null,        // { value, options: [{ value, label }], label } — Atlas's filter
+    primaryHint: '',     // why Start an agent is unavailable, or ''
+    primaryQuiet: false, // something deeper owns the primary: a folder sheet, an overlay
+    primaryDisabled: false,
+  },
 };
 
 const listeners = new Set();
@@ -130,6 +142,17 @@ export function addSelection(ids) {
 export function clearSelection() { setState({ selection: [] }); }
 
 export function setMode(mode) { setState({ mode: normalizeMode(mode) }); }
+
+// ---------------------------------------------------------------- the one bar
+
+const CHROME_EMPTY = { crumbs: [], picker: null, primaryHint: '', primaryDisabled: false, primaryQuiet: false };
+
+/** The mounted screen says what the topbar should carry. Identical between screens. */
+export function setChrome(patch) {
+  const next = { ...CHROME_EMPTY, ...patch };
+  const same = JSON.stringify(next) === JSON.stringify(state.chrome);
+  if (!same) setState({ chrome: next });
+}
 
 // ---------------------------------------------------------------- going to Rome
 

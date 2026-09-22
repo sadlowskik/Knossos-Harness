@@ -20,11 +20,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen, Box, Container, Database, GitBranch, Globe2,
-  Landmark, Network, Plus, RadioTower, Settings, ShieldCheck,
-  Target, UserRound, Wrench,
+  Landmark, Network, Plus, RadioTower, ShieldCheck, Wrench,
 } from 'lucide-react';
 import { api } from '../net/client.js';
-import { clearActiveAgent, romeRequestHandled, selectAgent, useField } from '../state/store.js';
+import { clearActiveAgent, romeRequestHandled, selectAgent, setChrome, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
@@ -39,7 +38,7 @@ import { plainActivity } from '../ui/WorkCard.jsx';
 import { identityFor, identityHue, initials, verifiedContribution } from './fieldPreferences.js';
 import useFieldSettings from './useFieldSettings.js';
 import {
-  districtsAt, folderRollup, markerRing, normalizeDir, parentOf,
+  crumbsFor, districtsAt, folderRollup, markerRing, normalizeDir, parentOf,
   staleness, standingPlaces, weightLabel,
 } from './districts.js';
 import { frameFor, islandFor } from './island.js';
@@ -138,26 +137,28 @@ function spokeStyle(from, to) {
   };
 }
 
-function AgentEmblem({ identity, size = 'md', selected = false, className = '' }) {
+/* One unit, one mark.
+
+   A marker used to stack three glyphs that said the same thing: a portrait with the
+   agent's two-letter initials, a role letter over it, and an emblem with the model's
+   two-letter initials beside that — a two-letter code, a letter and the code again on a
+   28px disc. It is one disc now: a single initial, coloured from whichever identity the
+   operator chose to see, and a ring that carries the one fact the map is for, which is
+   what state the unit is in. Everything else about it is one tap away in the folder. */
+function UnitMark({ session, identity, settings, selected = false, size = 'md' }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [identity.iconUrl]);
-  const hue = identityHue(`${identity.servedModel}:${identity.endpointAlias}`);
-  return <span className={`agent-emblem size-${size}${selected ? ' selected' : ''} ${className}`} style={{ '--identity-hue': hue }} title={`${identity.endpointAlias} · ${identity.servedModel}`}>
-    {identity.iconUrl && !failed ? <img src={identity.iconUrl} alt="" onError={() => setFailed(true)} /> : <b>{initials(identity.endpointAlias || identity.servedModel)}</b>}
-    <small>{identity.source === 'huggingface' ? 'HF' : identity.source === 'endpoint' ? 'EP' : identity.source === 'custom' ? 'UP' : ''}</small>
+  const model = settings.identity === 'model';
+  const name = model ? (identity.endpointAlias || identity.servedModel) : identity.displayName;
+  const icon = settings.identity === 'person' ? null : identity.iconUrl;
+  useEffect(() => setFailed(false), [icon]);
+  return <span
+    className={`unit-mark size-${size} state-${session.state}${selected ? ' selected' : ''}`}
+    style={{ '--identity-hue': identityHue(model ? `${identity.servedModel}:${identity.endpointAlias}` : identity.displayName) }}
+  >
+    {icon && !failed
+      ? <img src={icon} alt="" onError={() => setFailed(true)} />
+      : <b>{initials(name).slice(0, 1)}</b>}
   </span>;
-}
-
-function Portrait({ identity, role, size = 'md' }) {
-  return <span className={`senator-portrait size-${size}`} style={{ '--identity-hue': identityHue(identity.displayName) }}><UserRound aria-hidden="true" /><b>{initials(identity.displayName)}</b><small>{String(role || 'agent').slice(0, 1).toUpperCase()}</small></span>;
-}
-
-/* One identity question, asked once: person, model, or both. */
-function IdentityMark({ session, identity, settings, selected = false, size = 'md' }) {
-  const mode = settings.identity;
-  const showPortrait = mode !== 'model';
-  const showModel = mode !== 'person';
-  return <span className={`identity-mark mode-${mode}${selected ? ' selected' : ''}`}>{showPortrait && <Portrait identity={identity} role={session.role} size={size} />}{showModel && <AgentEmblem identity={identity} size={showPortrait ? 'xs' : size} selected={selected} className={showPortrait ? 'model-overlay' : ''} />}</span>;
 }
 
 function AgentMarker({ session, identity, x, y, index = 0, settings, selected, onSelect }) {
@@ -169,7 +170,7 @@ function AgentMarker({ session, identity, x, y, index = 0, settings, selected, o
     onClick={(event) => { event.stopPropagation(); onSelect(session); }}
     aria-label={`${identity.displayName}, ${stateLabel(session.state)}${session.focusPath ? `, on ${session.focusPath}` : ''}`}
   >
-    <IdentityMark session={session} identity={identity} settings={settings} selected={selected} size="sm" />
+    <UnitMark session={session} identity={identity} settings={settings} selected={selected} size="sm" />
     {session.lastTool?.name && <span className="marker-equipment" title={`Using ${session.lastTool.name}`}><ToolIcon name={session.lastTool.name} /></span>}
     <span className="marker-label">
       <b>{identity.displayName}</b>
@@ -179,7 +180,22 @@ function AgentMarker({ session, identity, x, y, index = 0, settings, selected, o
   </button>;
 }
 
-function ProceduralSettlement({ name, isCapital, tier }) {
+/* `.settlement-site` is inset -7% on each side of the region box, and -13% for the
+   capital, so a module's width — a percentage of that site — is a percentage of 1.14 or
+   1.26 region boxes. */
+const SITE_OVERHANG = { town: 1.14, capital: 1.26 };
+
+/* A capital should read as 14–18% of the island it stands on. It was 34.6%: the art was
+   sized against the region box, and the region box is a small allowance inside a much
+   larger island, so the town outgrew the ground. The cap is computed against the land's
+   real bounding box and applied to every module. */
+function moduleCapFor(landWidth, position, isCapital) {
+  const site = (position?.w ?? 0) * (isCapital ? SITE_OVERHANG.capital : SITE_OVERHANG.town);
+  if (!landWidth || !site) return 100;
+  return Math.max(18, Math.min(100, (landWidth * 0.18) / site * 100));
+}
+
+function ProceduralSettlement({ name, isCapital, tier, moduleCap = 100 }) {
   const plan = settlementPlan(name, isCapital, tier);
   const tierLabel = ['I', 'I', 'II', 'III', 'IV'][tier] ?? 'I';
   return <div
@@ -192,7 +208,7 @@ function ProceduralSettlement({ name, isCapital, tier }) {
     <span className="settlement-road road-a" aria-hidden="true" />
     <span className="settlement-road road-b" aria-hidden="true" />
     {isCapital && tier >= 3
-      ? <img className="settlement-capital" src="/assets/living-rome/capital-tier-3.webp" alt="" aria-hidden="true" decoding="async" />
+      ? <img className="settlement-capital" src="/assets/living-rome/capital-tier-3.webp" alt="" aria-hidden="true" decoding="async" style={{ maxWidth: `${moduleCap}%` }} />
       : plan.modules.map((module, index) => <img
         key={module.id}
         className={`settlement-module module-${module.id}${index === 0 ? ' primary' : ' support'}`}
@@ -200,14 +216,15 @@ function ProceduralSettlement({ name, isCapital, tier }) {
         alt=""
         aria-hidden="true"
         decoding="async"
-        style={{ left: `${module.x}%`, top: `${module.y}%`, width: `${module.size}%`, zIndex: 9 + index, '--module-rotation': `${module.rotate}deg` }}
+        style={{ left: `${module.x}%`, top: `${module.y}%`, width: `${Math.min(module.size, moduleCap)}%`, zIndex: 9 + index, '--module-rotation': `${module.rotate}deg` }}
       />)}
     <span className="settlement-plaque" aria-hidden="true"><i>{isCapital ? '◆' : plan.seed.token.slice(0, 2)}</i><b>{name}</b><small>{tierLabel}</small></span>
   </div>;
 }
 
 /** The city: one mounted project, drawn as the settlement it always was. */
-function City({ position, workspace, isCapital, tier, active, focused, agents, onOpen }) {
+function City({ position, workspace, isCapital, tier, active, focused, agents, landWidth, onOpen }) {
+  const moduleCap = moduleCapFor(landWidth, position, isCapital);
   return <section
     className={`field-region settled kind-project${active ? ' active' : ''}${isCapital ? ' capital' : ''}${focused ? ' focused' : ''}`}
     style={{ left: `${position.x}%`, top: `${position.y}%`, width: `${position.w}%`, height: `${position.h}%` }}
@@ -219,10 +236,10 @@ function City({ position, workspace, isCapital, tier, active, focused, agents, o
       aria-label={`Open ${workspace.name} at its project root`}
       onClick={(event) => { event.stopPropagation(); onOpen(''); }}
     />
-    <ProceduralSettlement name={workspace.name} isCapital={isCapital} tier={tier} />
-    {/* The island's name is the project's name. It used to be prefixed "CAPITAL ·", which
-        is a word from the costume rather than a thing on the screen. */}
-    {isCapital && <div className="capital-label"><i />{workspace.name}</div>}
+    {/* The plaque under the settlement is where the project is named, once. A second
+        `capital-label` chip used to print the same name a few pixels away, and the page
+        header a third time; both are gone. */}
+    <ProceduralSettlement name={workspace.name} isCapital={isCapital} tier={tier} moduleCap={moduleCap} />
     {agents > 0 && <span className="city-crowd mono" aria-hidden="true">{agents}</span>}
   </section>;
 }
@@ -407,7 +424,7 @@ export default function TheaterMode() {
       const centre = { x: frame.cx, y: frame.cy };
       return {
         workspace, frame, island: null, heat: new Map(), level, tier, loading: true,
-        position: settlementBox(frame, centre), cityCentre: centre,
+        position: settlementBox(frame, centre), cityCentre: centre, landWidth: frame.rx * 2,
         districts: [], standing: standingPlaces(mine, []),
       };
     }
@@ -431,12 +448,14 @@ export default function TheaterMode() {
     const heat = new Map(laid.map((district) => [
       district.dir, staleness(district.lastTs, now, (standing.get(district.dir) ?? []).length).id,
     ]));
+    const position = settlementBox(island, island.site);
     return {
       workspace,
       frame,
       island,
       heat,
-      position: settlementBox(island, island.site),
+      position,
+      landWidth: island.bbox?.w ?? island.rx * 2,
       cityCentre: { x: island.site.x, y: island.site.y },
       level,
       districts: laid,
@@ -563,41 +582,47 @@ export default function TheaterMode() {
 
   const capital = workspaces.find((item) => item.id === world.capitalWorkspaceId);
   const panelOpen = Boolean(open) || settingsOpen || plansOpen;
-  // One primary per screen, and it belongs to the innermost thing you opened: the plans
-  // overlay's "Create a plan", the folder's "Start an agent here", or this header.
-  const headerIsPrimary = !open && !plansOpen && !replaying;
+
+  /* The bar belongs to App now. Rome fills it with where you are — the project, then the
+     open folder's path — and says when starting an agent is unavailable. There is no
+     page title: the island's plaque already carries the project's name. */
+  const here = workspaces.find((item) => item.id === place?.workspaceId) ?? capital;
+  const crumbKey = `${here?.id ?? ''}|${place?.dir ?? ''}|${replaying}|${workspaces.length}|${plansOpen}`;
+  useEffect(() => {
+    const root = here?.name ?? (workspaces.length ? 'Opening the project…' : 'No project open');
+    const steps = place ? crumbsFor(place.dir).slice(1) : [];
+    setChrome({
+      crumbs: [
+        { key: 'root', label: root, dir: '' },
+        ...steps.map((step) => ({ key: step.dir, label: step.name, dir: step.dir })),
+      ],
+      primaryDisabled: !workspaces.length || replaying,
+      // One primary per screen, and it belongs to the innermost thing you opened.
+      primaryQuiet: Boolean(place) || plansOpen,
+      primaryHint: replaying ? 'You are looking at an earlier moment. Go back to live to start an agent.' : '',
+    });
+  }, [crumbKey]);
+
+  // The breadcrumb and the gear are in the bar; both come back as events, the same way
+  // Ctrl+Alt+N already did.
+  useEffect(() => {
+    const onNavigate = (event) => {
+      const id = place?.workspaceId ?? world.capitalWorkspaceId ?? workspaces[0]?.id;
+      if (id) openFolder(id, event.detail?.dir ?? '');
+    };
+    const onSettings = () => setSettingsOpen(true);
+    window.addEventListener('field:navigate', onNavigate);
+    window.addEventListener('field:open-settings', onSettings);
+    return () => {
+      window.removeEventListener('field:navigate', onNavigate);
+      window.removeEventListener('field:open-settings', onSettings);
+    };
+  }, [place, workspaces, world.capitalWorkspaceId]);
 
   return <div
     className={`field-world-shell density-${settings.density}${settings.motion ? ' motion-on' : ' motion-off'}${panelOpen ? ' panel-open' : ''}${open ? ' folder-open' : ''}${expanded ? ' folder-expanded' : ''}${plansOpen ? ' plans-open' : ''}${replaying ? ' replaying' : ''}`}
     onClick={() => { setPlace(null); setExpanded(false); setRequest(null); clearActiveAgent(); }}
   >
-    <header className="field-world-header" onClick={(event) => event.stopPropagation()}>
-      {/* The project's name, in plain words. The kicker over it used to read IMPERIUM
-          OPERIS, which named nothing an operator could click. */}
-      <div>
-        <h1>{capital?.name ?? (workspaces.length ? 'Opening the project…' : 'No project open')}</h1>
-      </div>
-      <div className="field-quick-settings">
-        <button
-          type="button"
-          className={plansOpen ? 'on' : ''}
-          aria-pressed={plansOpen}
-          onClick={() => setPlansOpen((value) => !value)}
-          aria-label={plansOpen ? 'Hide the plans drawn on this territory' : 'Show the plans drawn on this territory'}
-        ><Target aria-hidden="true" /><span>Plans{(view.campaigns?.length ?? 0) > 0 ? ` · ${view.campaigns.length}` : ''}</span></button>
-        <button
-          type="button"
-          className={headerIsPrimary ? 'primary' : ''}
-          disabled={!workspaces.length || replaying}
-          title={replaying ? 'You are looking at an earlier moment. Go back to live to start an agent.' : undefined}
-          onClick={(event) => startAgent(world.capitalWorkspaceId ?? workspaces[0]?.id, '', event)}
-          aria-label="Start an agent on the capital project"
-          aria-keyshortcuts="Control+Alt+N"
-        ><Plus aria-hidden="true" /><span>Start an agent</span></button>
-        <button type="button" className="settings-gear" onClick={() => setSettingsOpen(true)} aria-label="Open Field settings"><Settings /></button>
-      </div>
-    </header>
-
     <main className="field-world-canvas living-world">
       <IslandPlate plates={plates} />
 
@@ -607,7 +632,7 @@ export default function TheaterMode() {
         )))}
       </div>
 
-      {map.map(({ workspace, position, cityCentre, level, districts, standing, tier, loading }) => {
+      {map.map(({ workspace, position, cityCentre, level, districts, standing, tier, loading, landWidth }) => {
         const atCity = standing.get('') ?? [];
         return <div key={workspace.id} className="city-group">
           <City
@@ -618,6 +643,7 @@ export default function TheaterMode() {
             active={districts.some((district) => (standing.get(district.dir) ?? []).length > 0) || atCity.length > 0}
             focused={place?.workspaceId === workspace.id}
             agents={atCity.length}
+            landWidth={landWidth}
             onOpen={(dir) => openFolder(workspace.id, dir)}
           />
 
@@ -731,6 +757,8 @@ export default function TheaterMode() {
       onClose={() => setSettingsOpen(false)}
       onOpenModels={() => { setSettingsOpen(false); setPowerOpen(true); }}
       onChooseCapital={() => { setSettingsOpen(false); setChoosingCapital(true); }}
+      onOpenPlans={() => { setSettingsOpen(false); setPlansOpen(true); }}
+      planCount={view.campaigns?.length ?? 0}
     />}
     {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} settings={settings} setSettings={setSettings} />}
     {starter && <ContextMenu

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, MapPin, RadioTower, Upload, X } from 'lucide-react';
+import { Check, LogOut, MapPin, RadioTower, Target, Upload, X } from 'lucide-react';
 import { api } from '../net/client.js';
 import ToolIcon from '../ui/ToolIcon.jsx';
 import RoutinesPanel from '../routines/RoutinesPanel.jsx';
@@ -32,7 +32,7 @@ export function ChoiceGroup({ value, options, onChange }) {
    whole panel moved in here rather than keeping a nav button alive for it. */
 export default function FieldSettings({
   settings, setSettings, selected, config, onClose,
-  onOpenModels = null, onChooseCapital = null,
+  onOpenModels = null, onChooseCapital = null, onOpenPlans = null, planCount = 0,
   standalone = false,
 }) {
   const [tab, setTab] = useState('field');
@@ -45,7 +45,20 @@ export default function FieldSettings({
   const roleTools = role?.tools_allow ?? [];
   const selectedTools = override.toolsAllow ?? configuredAgent?.tools_allow ?? roleTools;
   // Rome hands in its world handlers; the Board does not have a world to configure.
-  const worldRows = [onOpenModels, onChooseCapital].some(Boolean);
+  const worldRows = [onOpenModels, onChooseCapital, onOpenPlans].some(Boolean);
+
+  /* Signing out was the sixth thing in the topbar. It is a rare, consequential act, so
+     it is here, one tap behind the gear, and App keeps the screen it leaves behind. */
+  async function signOut() {
+    try {
+      await api.logout();
+      window.dispatchEvent(new CustomEvent('field:signed-out'));
+    } catch {
+      window.dispatchEvent(new CustomEvent('field:signout-failed', {
+        detail: 'Sign out failed. Check the Field server and try again.',
+      }));
+    }
+  }
 
   function patchSettings(patch) { setSettings((current) => normalizeFieldSettings({ ...current, ...patch })); }
   function patchAgent(patch) { if (key) patchSettings({ agentOverrides: { ...settings.agentOverrides, [key]: { ...override, ...patch } } }); }
@@ -136,8 +149,13 @@ export default function FieldSettings({
             <label>{onChooseCapital ? 'World' : 'Models'}</label>
             {onOpenModels && <button type="button" className="btn ghost" onClick={onOpenModels}><RadioTower aria-hidden="true" />Models<small>Cameo boxes, Ollama, provider keys</small></button>}
             {onChooseCapital && <button type="button" className="btn ghost" onClick={onChooseCapital}><MapPin aria-hidden="true" />Capital<small>The project the world is anchored on</small></button>}
+            {onOpenPlans && <button type="button" className="btn ghost" onClick={onOpenPlans}><Target aria-hidden="true" />Plans<small>{planCount ? `${planCount} drawn on this territory` : 'Drawn over the folders they cover'}</small></button>}
           </section>
         )}
+        <section className="settings-rows">
+          <label>Session</label>
+          <button type="button" className="btn ghost" onClick={signOut}><LogOut aria-hidden="true" />Sign out<small>Field keeps running; this browser loses its session</small></button>
+        </section>
         <section>
           <label>World density</label>
           <ChoiceGroup value={settings.density} options={[{ value: 'quiet', label: 'Quiet' }, { value: 'balanced', label: 'Balanced' }, { value: 'dense', label: 'Dense' }]} onChange={(density) => patchSettings({ density })} />

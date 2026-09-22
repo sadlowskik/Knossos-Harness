@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { api } from './net/client.js';
+import { ChevronRight, Plus, Settings } from 'lucide-react';
 import { setMode, useField } from './state/store.js';
 import AtlasMode from './atlas/AtlasMode.jsx';
 import EmptyState from './ui/EmptyState.jsx';
@@ -19,11 +19,26 @@ const NAV = [
   { id: 'atlas', name: 'Atlas', key: 'A' },
 ];
 
+const fire = (name, detail = null) => window.dispatchEvent(new CustomEvent(name, { detail }));
+
 export default function App() {
   const st = useField();
   const [loggedOut, setLoggedOut] = useState(false);
   const [logoutError, setLogoutError] = useState(null);
   const [tallyOpen, setTallyOpen] = useState(false);
+
+  // Signing out lives in the settings sheet now, one tap behind the gear, because the
+  // bar has room for the five things an operator looks at and not for a sixth.
+  useEffect(() => {
+    const done = () => setLoggedOut(true);
+    const failed = (event) => setLogoutError(event.detail ?? 'Sign out failed. Check the Field server and try again.');
+    window.addEventListener('field:signed-out', done);
+    window.addEventListener('field:signout-failed', failed);
+    return () => {
+      window.removeEventListener('field:signed-out', done);
+      window.removeEventListener('field:signout-failed', failed);
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -58,13 +73,21 @@ export default function App() {
 
   if (loggedOut) return <main className="stage"><p role="status">Signed out. Restart Field and open its new bootstrap URL to sign in again.</p></main>;
 
+  /* The one bar. It was three: this one, Rome's 68px page header and Atlas's 44px action
+     row, which between them printed the project's name three times and changed the
+     chrome height by 68px when you switched tabs. What is left is the five things the
+     first second is allowed to contain plus the two destinations: where you are (the
+     breadcrumb), what needs you (the badge), and the one thing you do (start an agent).
+     The page title is gone outright — the island's own plaque names the project. */
+  const chrome = st.chrome ?? { crumbs: [], picker: null };
+  const crumbs = chrome.crumbs ?? [];
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
           <span className="brand-name">Field</span>
-          <span className="brand-sub">{st.config?.field?.name ?? 'connecting…'}</span>
         </div>
 
         <nav className="modes segctl" aria-label="Field view">
@@ -80,6 +103,32 @@ export default function App() {
               {m.name}
               <kbd className="segctl-hint">Ctrl+Alt+{m.key}</kbd>
             </button>
+          ))}
+        </nav>
+
+        {/* Where you are. Rome fills it with the open folder's path; Atlas fills it with
+            the project filter, which is the same question asked the other way round. */}
+        <nav className="crumbs" aria-label="Where you are">
+          {chrome.picker && (
+            <label className="crumb-pick">
+              <span className="label">{chrome.picker.label ?? 'project'}</span>
+              <select
+                value={chrome.picker.value}
+                onChange={(event) => fire('field:pick-project', { value: event.target.value })}
+              >
+                {chrome.picker.options.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {crumbs.map((crumb, index) => (
+            <span key={crumb.key ?? crumb.label} className="crumb-step">
+              {index > 0 && <ChevronRight aria-hidden="true" />}
+              {index === crumbs.length - 1
+                ? <b>{crumb.label}</b>
+                : <button type="button" onClick={() => fire('field:navigate', { dir: crumb.dir })}>{crumb.label}</button>}
+            </span>
           ))}
         </nav>
 
@@ -114,10 +163,23 @@ export default function App() {
           )}
         </div>
 
-        <button type="button" className="topbar-signout" onClick={async () => {
-          try { await api.logout(); setLoggedOut(true); }
-          catch { setLogoutError('Sign out failed. Check the Field server and try again.'); }
-        }}>Sign out</button>
+        {/* The one primary per screen, and the gear. Both reach whichever screen is
+            mounted through the same events the keyboard already used. */}
+        <button
+          type="button"
+          className={`btn topbar-primary${chrome.primaryQuiet ? '' : ' primary'}`}
+          disabled={chrome.primaryDisabled}
+          title={chrome.primaryHint || undefined}
+          aria-keyshortcuts="Control+Alt+N"
+          onClick={() => fire('field:start-agent')}
+        ><Plus aria-hidden="true" /><span>Start an agent</span></button>
+
+        <button
+          type="button"
+          className="btn ghost icon topbar-gear"
+          aria-label="Field settings"
+          onClick={() => fire('field:open-settings')}
+        ><Settings aria-hidden="true" /></button>
       </header>
 
       <main className="stage">

@@ -14,8 +14,7 @@
    columns. */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Settings } from 'lucide-react';
-import { useField } from '../state/store.js';
+import { setChrome, useField } from '../state/store.js';
 import useFieldSettings from '../theater/useFieldSettings.js';
 import FieldSettings from '../theater/FieldSettings.jsx';
 import PermissionRequests from '../hud/PermissionRequests.jsx';
@@ -81,40 +80,45 @@ export default function AtlasMode() {
   const columns = focused ? 1 : Math.min(3, panels.length || 1);
   const projectOf = (session) => workspaces.find((item) => item.id === session.workspaceId) ?? null;
 
+  /* The identical chrome. Atlas used to carry its own 44px action row under the topbar,
+     so switching tabs changed the chrome height by 68px; it now fills the one bar that
+     Rome fills. "Where you are" on Atlas is which project you are looking at, so the
+     project filter sits in the breadcrumb's slot rather than a row of its own. */
+  const pickerKey = `${project}|${workspaces.map((item) => item.id).join(',')}|${all.length > 0}`;
+  useEffect(() => {
+    const filterable = workspaces.length > 1 && all.length > 0;
+    setChrome({
+      picker: filterable
+        ? {
+          label: 'project',
+          value: project,
+          options: [
+            { value: 'all', label: 'All projects' },
+            ...workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name })),
+          ],
+        }
+        : null,
+      crumbs: filterable
+        ? []
+        : [{ key: 'root', label: workspaces[0]?.name ?? 'No project open', dir: '' }],
+      primaryDisabled: workspaces.length === 0,
+      primaryHint: workspaces.length ? '' : 'Mount a project before starting an agent.',
+    });
+  }, [pickerKey]);
+
+  useEffect(() => {
+    const onPick = (event) => { setProject(event.detail?.value ?? 'all'); setFocusedId(null); };
+    const onSettings = () => setSettingsOpen(true);
+    window.addEventListener('field:pick-project', onPick);
+    window.addEventListener('field:open-settings', onSettings);
+    return () => {
+      window.removeEventListener('field:pick-project', onPick);
+      window.removeEventListener('field:open-settings', onSettings);
+    };
+  }, []);
+
   return (
     <div className="atlas-board">
-      {/* One row: which project you are looking at, the primary action, the gear. */}
-      <header className="atlas-head">
-        {workspaces.length > 1 && all.length > 0 && (
-          <label className="convo-filter">
-            <span className="label">project</span>
-            {/* The per-project tallies that used to hang off each option said the same
-                thing the panels below already say, in a place you had to open a menu to
-                read. The names are the filter; the conversations are the count. */}
-            <select value={project} onChange={(e) => { setProject(e.target.value); setFocusedId(null); }}>
-              <option value="all">All projects</option>
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        <span className="grow" />
-        <div className="atlas-actions">
-          {workspaces.length > 0 && all.length > 0 && (
-            <button
-              type="button"
-              className="btn primary"
-              onClick={(e) => startAgent(workspaces.find((item) => item.id === project) ?? workspaces[0], e)}
-              aria-keyshortcuts="Control+Alt+N"
-            >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
-          )}
-          <button type="button" className="btn ghost icon" aria-label="Field settings" onClick={() => setSettingsOpen(true)}>
-            <Settings aria-hidden="true" />
-          </button>
-        </div>
-      </header>
-
       <div className="atlas-scroll">
         {/* The approvals block owns its own heading now, so it can stay on screen for
             the moment after a decision instead of vanishing mid-click. */}
@@ -166,20 +170,12 @@ export default function AtlasMode() {
           </EmptyState>
         )}
 
+        {/* The bar already carries the primary, so this empty state points at it rather
+            than putting a second orange button on the same screen. */}
         {panels.length === 0 && workspaces.length > 0 && all.length === 0 && (
-          <EmptyState
-            title="No agents running"
-            action={(
-              <button
-                type="button"
-                className="btn primary"
-                onClick={(e) => startAgent(workspaces.find((item) => item.id === project) ?? workspaces[0], e)}
-                aria-keyshortcuts="Control+Alt+N"
-              >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
-            )}
-          >
+          <EmptyState title="No agents running">
             Atlas is a conversation per agent: talk to it, choose the files it should work on, and pause or stop
-            it from the same panel. Start one to open the first conversation.
+            it from the same panel. The button in the bar above opens the first one.
           </EmptyState>
         )}
 

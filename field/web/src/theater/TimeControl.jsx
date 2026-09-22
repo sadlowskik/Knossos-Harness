@@ -157,12 +157,11 @@ export default function TimeControl({ onReplay }) {
 
   if (!loaded) return null;
   if (error) {
-    return <div className="time-rail" role="status"><span className="label">time</span><span className="mono">history unavailable — {error}</span></div>;
+    return <div className="time-rail" role="status"><span className="time-hint">History unavailable — {error}</span></div>;
   }
   if (!events.length) {
     return (
       <div className="time-rail" role="status">
-        <span className="label">time</span>
         <span className="time-hint">Nothing has happened yet. As agents work, this rail becomes the history of the map.</span>
       </div>
     );
@@ -172,23 +171,20 @@ export default function TimeControl({ onReplay }) {
   const value = pos ?? last;
   const replaying = pos != null && pos < last;
 
+  /* One label. It said `live 3811 / 3811 now End` — a label, two sequence numbers, a
+     word for the same thing and a disabled button for the same thing again, and in
+     replay it printed the moment twice. It says where you are, once: Live, or when. */
   return (
     <div className={`time-rail${replaying ? ' replaying' : ''}`}>
-      {replaying && (
-        <span className="time-badge" role="status">
-          Replay · {stamp(folded?.at)}
-        </span>
-      )}
       <ReplayRail
         className="time-scrubber"
-        label={replaying ? 'replay' : 'live'}
+        label={replaying ? stamp(folded?.at) : 'Live'}
         ariaLabel="Time on the map"
+        ariaValueText={replaying ? stamp(folded?.at) : 'Live'}
         min={1}
         max={last}
         value={value}
         onChange={(next) => setPos(next >= last ? null : next)}
-        onEnd={toLive}
-        detail={replaying ? stamp(folded?.at) : 'now'}
       />
       {replaying && (
         <button type="button" className="btn sm time-live" onClick={toLive}>Back to live</button>
