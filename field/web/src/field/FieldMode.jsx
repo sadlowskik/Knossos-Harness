@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { computeLayout, pulseOf } from './layout.js';
 import { draw, minimapRect, minimapToWorld, toScreen, toWorld } from './renderer.js';
 import {
@@ -61,6 +62,12 @@ export default function FieldMode() {
       world: null,
     });
   };
+  // Ctrl+Alt+N from App.jsx: the Map answers it on the first mounted project.
+  useEffect(() => {
+    const open = () => { if (workspaces.length) startAgent(workspaces[0], null); };
+    window.addEventListener('field:start-agent', open);
+    return () => window.removeEventListener('field:start-agent', open);
+  }, [workspaces, view.w, view.h]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   dirtyRef.current = true;
@@ -538,7 +545,18 @@ function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSele
   return (
     <section className={`field-card${sessions.length ? '' : ' idle'}${attention ? ' attention' : ''}`} aria-label={`${workspace.name} project`}>
       <header>
-        <button type="button" className="field-card-name" onClick={onOpen} title={`${workspace.path} — open files`}>{workspace.name}</button>
+        <div className="field-card-title">
+          <button type="button" className="field-card-name" onClick={onOpen} title={`${workspace.path} — open files`}>{workspace.name}</button>
+          {/* The one filled button on the Map belongs to the empty state, not to every
+              card; starting an agent here is a quiet icon action. */}
+          <button
+            type="button"
+            className="btn quiet-add"
+            aria-label={`Start an agent on ${workspace.name}`}
+            title={`Start an agent on ${workspace.name}`}
+            onClick={onStart}
+          ><Plus aria-hidden="true" /></button>
+        </div>
         <span className="field-card-git mono" title={workspace.git?.branch ?? ''}>
           {workspace.git?.branch ?? 'no git'}
           {changed
@@ -558,7 +576,6 @@ function ProjectCard({ workspace, sessions, stamps, now, onStart, onOpen, onSele
       </div>
       <footer>
         <span className="field-card-when">{sessions.length ? `${sessions.length} working` : 'idle'} · {ago(last, now)}</span>
-        <button type="button" className={`btn sm ${sessions.length ? 'ghost' : 'primary'}`} onClick={onStart}>Start an agent</button>
       </footer>
     </section>
   );

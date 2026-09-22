@@ -3,17 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>Field</title>
     <link rel="preload" as="image" href="/assets/living-rome/modules/forum.webp" type="image/webp" />
     <link rel="preload" as="image" href="/assets/living-rome/modules/works.webp" type="image/webp" />
     <link rel="preload" as="image" href="/assets/living-rome/modules/archive.webp" type="image/webp" />
     <link rel="preload" as="image" href="/assets/living-rome/modules/gate.webp" type="image/webp" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Field runs offline inside a Tauri shell, so the type is self-hosted: the IBM Plex
+         subsets in /fonts, declared with @font-face in src/styles/app.css. Do not put a
+         fonts.googleapis.com <link> back here; it fails silently and drops the whole app
+         to system-ui. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/IBMPlexSans-Regular-Latin1.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/IBMPlexSans-SemiBold-Latin1.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/IBMPlexMono-Regular-Latin1.woff2" crossorigin />
   </head>
   <body>
     <div id="root"></div>

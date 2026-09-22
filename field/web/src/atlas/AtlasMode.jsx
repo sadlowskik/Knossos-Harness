@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Settings } from 'lucide-react';
 import { api, on } from '../net/client.js';
 import { openChanges, openInWorkspace, selectAgent, useField } from '../state/store.js';
 import {
@@ -7,6 +8,7 @@ import {
   identityHue,
   saveFieldSettings,
 } from '../theater/fieldPreferences.js';
+import FieldSettings from '../theater/FieldSettings.jsx';
 import PermissionRequests, { isPrivilegedTool } from '../hud/PermissionRequests.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
@@ -40,6 +42,7 @@ export default function AtlasMode({ settings, setSettings }) {
   const st = useField();
   const selectedId = st.activeSessionId;
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [starter, setStarter] = useState(null); // { workspace, screen }
   const workspaces = st.snap.workspaces.filter((item) => item.mounted);
   const startAgent = (workspace, e, pane = 'spawn') => setStarter({
@@ -47,8 +50,16 @@ export default function AtlasMode({ settings, setSettings }) {
     pane,
     screen: { x: e?.clientX ?? window.innerWidth / 2 - 140, y: e?.clientY ?? 120 },
   });
-  // Defining an agent needs no project; it is anchored to the first one only for "Save and start".
-  const newAgent = (e) => startAgent(workspaces[0] ?? null, e, 'new-agent');
+  // Ctrl+Alt+N from App.jsx: open the starter on the first mounted project. Defining a new
+  // agent now lives inside that dialog rather than as a second header button.
+  useEffect(() => {
+    const open = () => {
+      if (!workspaces.length) return;
+      setStarter({ workspace: workspaces[0], pane: 'spawn', screen: { x: Math.max(8, window.innerWidth / 2 - 180), y: 120 } });
+    };
+    window.addEventListener('field:start-agent', open);
+    return () => window.removeEventListener('field:start-agent', open);
+  }, [workspaces]);
   const sessions = useMemo(
     () => [...st.snap.sessions].sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)),
     [st.snap.sessions],
@@ -77,14 +88,19 @@ export default function AtlasMode({ settings, setSettings }) {
           <span className={`atlas-chip${attention.length ? ' tone-attention' : ''}`}><i aria-hidden="true" /><b>{attention.length}</b> need you</span>
           <span className="atlas-chip"><i aria-hidden="true" /><b>{workspaces.length}</b> {workspaces.length === 1 ? 'project' : 'projects'}</span>
         </div>
+        {/* One filled accent button on this screen. Defining an agent is a pane of the
+            starter dialog; Models and the Rome map live behind the gear. */}
         <div className="atlas-actions">
           {workspaces.length > 0 && (
-            <button type="button" className="btn primary" onClick={(e) => startAgent(workspaces[0], e)}>Start an agent</button>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={(e) => startAgent(workspaces[0], e)}
+              aria-keyshortcuts="Control+Alt+N"
+            >Start an agent<kbd className="btn-hint">Ctrl+Alt+N</kbd></button>
           )}
-          <button type="button" className="btn ghost" onClick={newAgent}>New agent</button>
-          <button type="button" className="btn ghost" onClick={() => setModelsOpen(true)}>Models</button>
-          <button type="button" className="btn ghost" onClick={() => setSettings((current) => ({ ...current, theme: 'rome' }))}>
-            Rome map
+          <button type="button" className="btn ghost icon" aria-label="Field settings" onClick={() => setSettingsOpen(true)}>
+            <Settings aria-hidden="true" />
           </button>
         </div>
       </header>
@@ -128,12 +144,23 @@ export default function AtlasMode({ settings, setSettings }) {
             <b>No project open</b>
             <p>Add a project folder under <code>workspaces</code> in <code>field/field.yaml</code>, then restart Field. Each project gets a card here, and each agent working on it gets its own.</p>
             <div className="atlas-empty-actions">
-              <button type="button" className="btn" onClick={() => setModelsOpen(true)}>Set up a model</button>
+              <button type="button" className="btn primary" onClick={() => setModelsOpen(true)}>Set up a model</button>
             </div>
           </div>
         )}
       </div>
       {modelsOpen && <PowerSources onClose={() => setModelsOpen(false)} />}
+      {settingsOpen && (
+        <FieldSettings
+          standalone
+          settings={settings}
+          setSettings={setSettings}
+          selected={sessions.find((session) => session.id === selectedId) ?? null}
+          config={st.config}
+          onClose={() => setSettingsOpen(false)}
+          onOpenModels={() => { setSettingsOpen(false); setModelsOpen(true); }}
+        />
+      )}
       {starter && (
         <ContextMenu
           fixed
@@ -175,7 +202,12 @@ function buildColumns(workspaces, live, allSessions) {
       });
     }
   }
-  return columns;
+  // Cards that need a decision sort to the front of the grid. That, and a hairline in the
+  // attention colour, replaces the border that used to pulse forever.
+  const needsYou = (column) => Number(Boolean(
+    column.session && (ATTENTION.has(column.session.state) || column.session.pendingPermission),
+  ));
+  return columns.sort((a, b) => needsYou(b) - needsYou(a));
 }
 
 function AgentColumn({ column, identity, selected, permissions, campaigns, now, onStart }) {
@@ -212,6 +244,15 @@ function AgentColumn({ column, identity, selected, permissions, campaigns, now, 
           </div>
         )}
         <span className={`atlas-pill tone-${state.tone}`}><i aria-hidden="true" />{state.label}</span>
+        {!session && (
+          <button
+            type="button"
+            className="btn quiet-add"
+            aria-label={`Start an agent on ${workspace?.name ?? 'this project'}`}
+            title={`Start an agent on ${workspace?.name ?? 'this project'}`}
+            onClick={(e) => onStart(workspace, e)}
+          ><Plus aria-hidden="true" /></button>
+        )}
       </header>
       {(workspace || session?.cwd) && (
         <div className="atlas-context">
@@ -251,9 +292,8 @@ function AgentColumn({ column, identity, selected, permissions, campaigns, now, 
           : (
             <div className="atlas-idle">
               <b>No agent working on this project yet.</b>
-              <p>Start one with orders, a model and a thinking level. It shows up here the moment it begins; routines and plans can also assign agents.</p>
+              <p>Use the + above to start one with orders, a model and a thinking level. It shows up here the moment it begins; routines and plans can also assign agents.</p>
               <div className="atlas-idle-actions">
-                <button type="button" className="btn primary" onClick={(e) => onStart(workspace, e)}>Start an agent</button>
                 <button type="button" className="btn ghost" onClick={() => openInWorkspace({ type: 'workspace', workspaceId: workspace?.id, path: '' })}>Open files</button>
               </div>
             </div>

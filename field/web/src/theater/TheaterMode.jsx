@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BookOpen, Box, Check, Container, Database, GitBranch, Globe2,
+  BookOpen, Box, Container, Database, GitBranch, Globe2,
   Landmark, Network, Plus, RadioTower, Settings, ShieldCheck,
-  TerminalSquare, Upload, UserRound, Wrench, X,
+  UserRound, Wrench, X,
 } from 'lucide-react';
 import { api } from '../net/client.js';
 import { clearActiveAgent, openCity, openSenate, selectAgent, useField } from '../state/store.js';
 import { useModalFocus } from '../ui/useModalFocus.js';
+import ToolIcon from '../ui/ToolIcon.jsx';
 import AtlasMode from '../atlas/AtlasMode.jsx';
 import CityPanel from '../city/CityPanel.jsx';
 import PowerSources from '../setup/PowerSources.jsx';
 import ContextMenu from '../hud/ContextMenu.jsx';
 import AgentControls from '../hud/AgentControls.jsx';
+import FieldSettings from './FieldSettings.jsx';
 import {
-  DEFAULT_FIELD_SETTINGS,
-  agentPreferenceKey,
+  applyTypeface,
   identityFor,
   identityHue,
   initials,
@@ -385,12 +386,6 @@ function MaturityCard({ cluster, agents, onClose }) {
   </aside>;
 }
 
-function ToolIcon({ name }) {
-  const lower = String(name).toLowerCase();
-  const Icon = /git/.test(lower) ? GitBranch : /docker|container|podman/.test(lower) ? Container : /web|browser|fetch|search/.test(lower) ? Globe2 : /read|grep|glob/.test(lower) ? BookOpen : /edit|write/.test(lower) ? Wrench : TerminalSquare;
-  return <Icon aria-hidden="true" />;
-}
-
 function conversationText(event) {
   return event.data?.text ?? event.data?.content ?? event.data?.summary ?? '';
 }
@@ -419,44 +414,6 @@ function AgentInspector({ session, identity, settings, role, agent, trace, colla
   </aside>;
 }
 
-function ChoiceGroup({ value, options, onChange }) { return <div className="settings-choice">{options.map((option) => <button type="button" key={option.value} className={value === option.value ? 'on' : ''} onClick={() => onChange(option.value)}>{option.label}</button>)}</div>; }
-
-function FieldSettings({ settings, setSettings, selected, config, onClose }) {
-  const [tab, setTab] = useState('identity'), [saving, setSaving] = useState(false), [message, setMessage] = useState('');
-  const key = selected ? agentPreferenceKey(selected) : null;
-  const override = key ? settings.agentOverrides?.[key] ?? {} : {};
-  const configuredAgent = selected ? config?.agents?.find((agent) => agent.id === selected.agentId) : null;
-  const role = selected ? config?.roles?.find((item) => item.id === selected.role) : null;
-  const roleTools = role?.tools_allow ?? [];
-  const selectedTools = override.toolsAllow ?? configuredAgent?.tools_allow ?? roleTools;
-  const oxAlpha = settings.modelRegistry['ox-alpha'];
-  function patchSettings(patch) { setSettings((current) => normalizeFieldSettings({ ...current, ...patch })); }
-  function patchAgent(patch) { if (key) patchSettings({ agentOverrides: { ...settings.agentOverrides, [key]: { ...override, ...patch } } }); }
-  function patchOx(patch) { patchSettings({ modelRegistry: { ...settings.modelRegistry, 'ox-alpha': { ...oxAlpha, ...patch } } }); }
-  function toggleTool(tool) { patchAgent({ toolsAllow: selectedTools.includes(tool) ? selectedTools.filter((item) => item !== tool) : [...selectedTools, tool] }); }
-  function upload(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (file.size > 256 * 1024) { setMessage('Icon must be smaller than 256 KB.'); return; }
-    const reader = new FileReader();
-    reader.onload = () => patchAgent({ iconDataUrl: String(reader.result), iconUrl: '' });
-    reader.readAsDataURL(file);
-  }
-  async function save() {
-    setSaving(true); setMessage('');
-    try {
-      const persisted = saveFieldSettings(settings); setSettings(persisted);
-      if (configuredAgent) await api.updateAgent({ agentId: configuredAgent.id, name: override.displayName || configuredAgent.name, toolsAllow: selectedTools });
-      setMessage(configuredAgent ? 'Saved. Tool authority applies to future deployments.' : 'Presentation saved on this device.');
-    } catch (error) { setMessage(error.message); } finally { setSaving(false); }
-  }
-  return <aside className="field-side-panel settings-panel" onClick={(event) => event.stopPropagation()}><header><div><span>FIELD</span><h2>Settings</h2></div><button type="button" onClick={onClose} aria-label="Close settings"><X /></button></header><nav>{['world', 'identity', 'models'].map((item) => <button type="button" key={item} className={tab === item ? 'on' : ''} onClick={() => setTab(item)}>{item}</button>)}</nav><div className="settings-scroll">
-    {tab === 'world' && <><section><label>Theme</label><p className="settings-help">Atlas is the parallel agent board. Rome is the operations map.</p><ChoiceGroup value={settings.theme} options={[{ value: 'atlas', label: 'Atlas' }, { value: 'rome', label: 'Rome' }]} onChange={(theme) => patchSettings({ theme })} /></section><section><label>World density</label><ChoiceGroup value={settings.density} options={[{ value: 'quiet', label: 'Quiet' }, { value: 'balanced', label: 'Balanced' }, { value: 'dense', label: 'Dense' }]} onChange={(density) => patchSettings({ density })} /></section><section className="settings-toggle"><div><label>World motion</label><p>Animate active routes and status pulses.</p></div><button type="button" className={settings.motion ? 'on' : ''} onClick={() => patchSettings({ motion: !settings.motion })}><i /></button></section></>}
-    {tab === 'identity' && <><section><label>Agent identity</label><ChoiceGroup value={settings.identityMode} options={[{ value: 'portrait', label: 'Portrait' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(identityMode) => patchSettings({ identityMode })} /></section><section><label>Map markers</label><ChoiceGroup value={settings.markerMode} options={[{ value: 'person', label: 'Person' }, { value: 'model', label: 'Model' }, { value: 'both', label: 'Both' }]} onChange={(markerMode) => patchSettings({ markerMode })} /></section><section><label>Emblem source</label><select value={settings.emblemSource} onChange={(event) => patchSettings({ emblemSource: event.target.value })}><option value="auto">Auto</option><option value="huggingface">Hugging Face</option><option value="endpoint">Endpoint</option><option value="upload">Upload</option><option value="initials">Initials</option></select><small>HF avatar › endpoint › upload › initials</small></section>{selected ? <section className="agent-settings"><label>Selected agent</label><h3>{override.displayName || selected.name}</h3><div className="settings-field"><span>Display name</span><input value={override.displayName ?? selected.name ?? ''} onChange={(event) => patchAgent({ displayName: event.target.value })} /></div><div className="settings-field"><span>Endpoint alias</span><input value={override.endpointAlias ?? ''} placeholder="Use endpoint name" onChange={(event) => patchAgent({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={override.hfRepo ?? ''} placeholder="owner/model" onChange={(event) => patchAgent({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Icon URL</span><input value={override.iconUrl ?? ''} placeholder="https://…" onChange={(event) => patchAgent({ iconUrl: event.target.value, iconDataUrl: '' })} /></div><label className="upload-control"><Upload />Upload icon<input type="file" accept="image/*" onChange={upload} /></label></section> : <section><p>Select an agent to edit its persistent name and emblem.</p></section>}{selected && <section><label>Tool authority</label><p className="settings-help">A configured agent may receive a subset of its role&apos;s real allowlist. Changes apply on its next deployment.</p><div className="authority-grid">{roleTools.map((tool) => <button type="button" key={tool} className={selectedTools.includes(tool) ? 'on' : ''} onClick={() => toggleTool(tool)}><ToolIcon name={tool} />{tool}<Check /></button>)}</div>{!configuredAgent && <small>Ad-hoc sessions cannot persist tool changes.</small>}</section>}</>}
-    {tab === 'models' && <section className="model-registry-card"><label>Distillation teacher</label><h3>OX Alpha is GLM 5.3 Flash</h3><p>OX Alpha is the endpoint alias. It serves GLM 5.3 Flash and supplies teacher traces for the Ornith student.</p><div className="settings-field"><span>Teacher endpoint</span><input value={oxAlpha.endpointAlias} onChange={(event) => patchOx({ endpointAlias: event.target.value })} /></div><div className="settings-field"><span>Model served</span><input value={oxAlpha.servedModel} onChange={(event) => patchOx({ servedModel: event.target.value })} /></div><div className="settings-field"><span>HF repository</span><input value={oxAlpha.hfRepo} onChange={(event) => patchOx({ hfRepo: event.target.value })} /></div><div className="settings-field"><span>Student target</span><input value={oxAlpha.studentTarget} onChange={(event) => patchOx({ studentTarget: event.target.value })} /></div><div className="settings-toggle"><div><label>Collect teacher traces</label><p>Mark OX Alpha traces as distillation source data.</p></div><button type="button" className={oxAlpha.collectTeacherTraces ? 'on' : ''} onClick={() => patchOx({ collectTeacherTraces: !oxAlpha.collectTeacherTraces })}><i /></button></div></section>}
-  </div><footer><button type="button" className="restore" onClick={() => setSettings(normalizeFieldSettings(DEFAULT_FIELD_SETTINGS))}>Restore defaults</button><span>{message}</span><button type="button" className="save" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save settings'}</button></footer></aside>;
-}
-
 function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onStart }) {
   return <section className={`agent-roster${sessions.length ? '' : ' quiet'}`} onClick={(event) => event.stopPropagation()} aria-label={settings.theme === 'rome' ? 'Senate roster' : 'Agent roster'}>
     <header><i /><span>{settings.theme === 'rome' ? 'SENATE' : 'AGENTS'}{sessions.length ? ` · ${sessions.length}` : ''}</span><i /></header>
@@ -475,7 +432,7 @@ function AgentRoster({ sessions, identities, settings, selectedId, onSelect, onS
         <b>{identity.displayName}</b><small>{identity.endpointAlias}</small>
         <span role="img" aria-label={`${pct}% complete`}>{[0, 1, 2, 3].map((n) => <i key={n} className={n < Math.max(1, Math.round((pct / 100) * 4)) ? 'on' : ''} />)}</span>
       </button>;
-    }) : <p className="roster-empty">No agents yet.<button type="button" className="btn sm primary" onClick={(e) => onStart?.(e)}><Plus aria-hidden="true" />Start an agent</button></p>}</div>
+    }) : <p className="roster-empty">No agents yet.<button type="button" className="btn sm plain" onClick={(e) => onStart?.(e)}>Start an agent</button></p>}</div>
   </section>;
 }
 
@@ -521,6 +478,17 @@ export default function TheaterMode() {
     api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId }) => ({ clusterKey, label, kind, workspaceId }))).catch(() => { reconcileRef.current = ''; });
   }, [clusters, world.assignments, world.capitalWorkspaceId]);
   useEffect(() => { saveFieldSettings(settings); }, [settings]);
+  // The typeface choice drives --font-sans. A stored custom blob that no longer parses
+  // quietly reverts to Plex rather than leaving the app on the fallback stack.
+  useEffect(() => {
+    let alive = true;
+    applyTypeface(settings).then((effective) => {
+      if (alive && effective !== settings.typeface) {
+        setSettings((current) => normalizeFieldSettings({ ...current, typeface: effective }));
+      }
+    });
+    return () => { alive = false; };
+  }, [settings.typeface, settings.customFont?.dataUrl]);
   const sessions = useMemo(() => view.sessions.filter((session) => !TERMINAL_STATES.has(session.state)).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0)).slice(0, 40), [view.sessions]);
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   useEffect(() => { let alive = true; if (!selectedId) { setTrace([]); return () => { alive = false; }; } api.trace(selectedId, 0, 2000).then((result) => { if (alive) setTrace(result.events ?? []); }).catch(() => { if (alive) setTrace([]); }); return () => { alive = false; }; }, [selectedId, selected?.messageCount, selected?.toolCount, selected?.state, selected?.progress?.done]);
@@ -539,6 +507,18 @@ export default function TheaterMode() {
   const selectedCluster = selectedRegion ? clusterByRegion.get(selectedRegion) : null, selectedRegionAgents = selectedRegion ? agentsByRegion.get(selectedRegion) ?? [] : [];
   const selectedRole = selected ? st.config?.roles?.find((item) => item.id === selected.role) : null;
   const selectedAgent = selected ? st.config?.agents?.find((item) => item.id === selected.agentId) : null;
+  // The global "new agent" shortcut (Ctrl+Alt+N, wired in App.jsx) reaches whichever Field
+  // screen is mounted. The Board answers it in AtlasMode; this is Rome's half.
+  useEffect(() => {
+    if (settings.theme !== 'rome') return undefined;
+    const open = () => {
+      const workspace = workspaces.find((item) => item.id === world.capitalWorkspaceId) ?? workspaces[0];
+      if (!workspace) return;
+      setStarter({ workspace, screen: { x: Math.max(8, window.innerWidth / 2 - 180), y: 120 } });
+    };
+    window.addEventListener('field:start-agent', open);
+    return () => window.removeEventListener('field:start-agent', open);
+  }, [settings.theme, workspaces, world.capitalWorkspaceId]);
   async function chooseCapital(workspaceId) { setPendingCapital(true); setCapitalError(''); try { await api.selectCapital(workspaceId); await api.reconcileWorld(clusters.map(({ clusterKey, label, kind, workspaceId: ws }) => ({ clusterKey, label, kind, workspaceId: ws }))); reconcileRef.current = ''; setChoosingCapital(false); } catch (error) { setCapitalError(error.message); } finally { setPendingCapital(false); } }
   const themeLabel = settings.theme === 'rome' ? 'ROME' : 'ATLAS';
   if (settings.theme === 'atlas') {
@@ -567,7 +547,7 @@ export default function TheaterMode() {
     {trace.length >= 2000 && <div className="world-notice" role="status">Showing the first 2,000 events. Open History to load the rest.</div>}
     {!workspaces.length && <div className="world-notice" role="status">No project is mounted. Add one under <code>workspaces</code> in <code>field/field.yaml</code> and restart Field.</div>}
     {capitalError && !choosingCapital && <div className="world-notice bad" role="alert">{capitalError}</div>}
-    {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <FieldSettings settings={settings} setSettings={setSettings} selected={selected} config={st.config} onClose={() => setSettingsOpen(false)} onOpenModels={() => { setSettingsOpen(false); setPowerOpen(true); }} />}
     {citiesOpen && <CityPanel onClose={() => setCitiesOpen(false)} />}
     {powerOpen && <PowerSources onClose={() => setPowerOpen(false)} />}
     {starter && <ContextMenu fixed initialPane="spawn" screen={starter.screen} target={{ type: 'workspace', id: starter.workspace.id, workspaceId: starter.workspace.id, label: starter.workspace.name }} onClose={() => setStarter(null)} onOpenModels={() => { setStarter(null); setPowerOpen(true); }} />}

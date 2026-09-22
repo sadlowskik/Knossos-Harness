@@ -1,7 +1,16 @@
 const STORAGE_KEY = 'knossos.field.presentation.v3';
 
+// The sans stacks the typeface setting switches between. --font-mono is never touched:
+// numbers, paths and tool names stay on IBM Plex Mono whatever the operator picks.
+export const CUSTOM_FONT_FAMILY = 'Field Custom';
+export const CUSTOM_FONT_MAX_BYTES = 1_572_864; // ~1.5 MB; the blob shares localStorage
+const PLEX_SANS_STACK = '"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+const SYSTEM_SANS_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+
 export const DEFAULT_FIELD_SETTINGS = Object.freeze({
   theme: 'atlas',
+  typeface: 'plex',
+  customFont: { name: '', dataUrl: '' },
   identityMode: 'both',
   markerMode: 'both',
   emblemSource: 'auto',
@@ -24,12 +33,28 @@ function safeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+// A stored custom font is a name plus a data: URL. Anything else is dropped, so a
+// corrupted or hand-edited entry can never be handed to FontFace.
+function safeCustomFont(value) {
+  const input = safeObject(value);
+  const name = typeof input.name === 'string' ? input.name.slice(0, 120) : '';
+  const dataUrl = typeof input.dataUrl === 'string' && /^data:[^;,]*;base64,/.test(input.dataUrl)
+    ? input.dataUrl
+    : '';
+  return dataUrl ? { name, dataUrl } : { name: '', dataUrl: '' };
+}
+
 export function normalizeFieldSettings(value = {}) {
   const input = safeObject(value);
+  const customFont = safeCustomFont(input.customFont);
+  const typeface = ['plex', 'system', 'custom'].includes(input.typeface) ? input.typeface : DEFAULT_FIELD_SETTINGS.typeface;
   return {
     ...DEFAULT_FIELD_SETTINGS,
     ...input,
     theme: ['rome', 'atlas'].includes(input.theme) ? input.theme : DEFAULT_FIELD_SETTINGS.theme,
+    // "custom" without a usable blob is just the default.
+    typeface: typeface === 'custom' && !customFont.dataUrl ? DEFAULT_FIELD_SETTINGS.typeface : typeface,
+    customFont,
     identityMode: ['portrait', 'model', 'both'].includes(input.identityMode) ? input.identityMode : DEFAULT_FIELD_SETTINGS.identityMode,
     markerMode: ['person', 'model', 'both'].includes(input.markerMode) ? input.markerMode : DEFAULT_FIELD_SETTINGS.markerMode,
     emblemSource: ['auto', 'huggingface', 'endpoint', 'upload', 'initials'].includes(input.emblemSource) ? input.emblemSource : DEFAULT_FIELD_SETTINGS.emblemSource,
@@ -53,6 +78,50 @@ export function saveFieldSettings(settings) {
   const normalized = normalizeFieldSettings(settings);
   if (typeof window !== 'undefined') window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
   return normalized;
+}
+
+// ---- typeface ---------------------------------------------------------------
+
+export function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('unreadable'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Rejects when the bytes are not a font the engine can parse, which is how the
+// settings panel knows to keep the default.
+export async function loadCustomFont(dataUrl) {
+  if (typeof window === 'undefined' || !window.FontFace || !document.fonts) throw new Error('no font loader');
+  for (const face of [...document.fonts]) {
+    if (face.family === CUSTOM_FONT_FAMILY) document.fonts.delete(face);
+  }
+  const face = new FontFace(CUSTOM_FONT_FAMILY, `url("${dataUrl}")`);
+  await face.load();
+  document.fonts.add(face);
+  return face;
+}
+
+// Applies the stored choice to --font-sans and answers with the typeface that is
+// actually in force, so a blob that no longer loads can be reconciled back to Plex.
+export async function applyTypeface(settings = DEFAULT_FIELD_SETTINGS) {
+  if (typeof document === 'undefined') return 'plex';
+  const root = document.documentElement;
+  if (settings.typeface === 'system') {
+    root.style.setProperty('--font-sans', SYSTEM_SANS_STACK);
+    return 'system';
+  }
+  if (settings.typeface === 'custom' && settings.customFont?.dataUrl) {
+    try {
+      await loadCustomFont(settings.customFont.dataUrl);
+      root.style.setProperty('--font-sans', `"${CUSTOM_FONT_FAMILY}", ${PLEX_SANS_STACK}`);
+      return 'custom';
+    } catch { /* fall through to the default below */ }
+  }
+  root.style.removeProperty('--font-sans');
+  return 'plex';
 }
 
 export function agentPreferenceKey(session) {

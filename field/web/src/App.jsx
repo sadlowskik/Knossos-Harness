@@ -37,6 +37,14 @@ export default function App() {
       if (hit) {
         e.preventDefault();
         setMode(hit.id);
+        return;
+      }
+      // N — start an agent. Whichever Field screen is mounted opens its starter on the
+      // first mounted project; from Routines or History, come back to the Board first.
+      if (e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        if (!FIELD_MODES.has(st.mode)) setMode('theater');
+        requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('field:start-agent')));
       }
     };
     window.addEventListener('keydown', onKey);
